@@ -16,6 +16,14 @@
 - 新导出及其搬移副本必须真正执行 `python3 -B verify_bundle.py .`；不得 monkeypatch 或改写旧审核包冒充通过。无研究授权时只用新的、无运行及无 program Review 的验收夹具。
 - 保持精确 `ID@rev`、人工审核权限、`local_claim`、R1/R2 及导出边界；不把程序通过、过程图或模型自评称为全局证明。
 - 不自动启动研究调用或 75 格计算；不修改原始审核文件、历史 run、研究数据、旧包或第三方插件源码。`modelRuns: []` 的验收配置保持关闭研究能力。
-- 安装到 Desktop 仅限用户已授权的隔离配置，不擅自启用另一条 math 实例或修改其他插件；重启另行确认。
+- 每次版本验收通过后，默认更新本机 Desktop 的 `dsh-math` 到该版本并推送 GitHub（见下节），无需再次询问；更新只替换 `dsh-math`，不改 Desktop 其他插件、模型设置或研究数据。
+
+## Desktop 更新与 GitHub 同步
+
+- 用户于 2026-10-31 授权：每个版本在隔离 `math-dev` 完成既定验收（`npm run build && npm test`、真实界面、无 Better Sidebar 回退、源码／tgz／实际安装文件哈希、新导出及搬移副本的 `verify_bundle.py`）后，即可更新本机 Desktop 并提交、推送 `origin/main`。
+- 更新 Desktop 前先备份 `~/.dsh/profiles/desktop/package.json`、`pnpm-lock.yaml` 及旧安装版本证据到被忽略的 `dist/`；只改 `dsh-math` 依赖行，安装后用同一份清单核对源码、tgz 与实际安装文件的 SHA-256。
+- 安装成功不等于已生效：Desktop 需重启才能加载新版。先完成当前回复并提示用户保存，不在对话中途强制退出应用；下次启动后核对插件页版本与数学研究入口，再报告“已生效”。
+- 若安装或启动失败，按备份恢复依赖与锁文件并报告；不得用另一条 math 实例顶替，也不得为此修改第三方插件。
+- 验收通过后按上节规则提交并推送；`Desktop 已安装`、`Desktop 已生效`、`已推送到 GitHub` 是三个独立事实，分别核对后再陈述。
 
 构建与产品使用说明见 [README.md](<README.md>)。历史许可检查记录保留在 [LICENSE-STATUS.md](<LICENSE-STATUS.md>)、[NOTICE](<NOTICE>) 与 [PROVENANCE.json](<PROVENANCE.json>)；当前指定仓库的公开上传确认以 [PUBLICATION.md](<PUBLICATION.md>) 为补充，不更改那些文件的历史内容。
