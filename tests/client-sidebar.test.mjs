@@ -82,6 +82,9 @@ function loadPlugin({react = hooks(), globals = {}} = {}) {
   const context = {
     DshMathForms: {},
     DshMathFormUI: () => ({}),
+    DshMathPreview: () => ({Preview: function Preview() {}}),
+    DshMathProjectForm: () => ({ProjectForm: function ProjectForm() {}}),
+    DshMathWorkbenchUI: () => ({Scratchpad: function Scratchpad() {}, LegacyImport: function LegacyImport() {}}),
     DshMathTheme: '.dsh-math-view{}',
     document: undefined,
     ...globals,
@@ -174,8 +177,8 @@ function sidebarStub() {
     openTab: (seed, scope) => { opened.push({seed, scope}); },
   };
 }
-function entryTest(sidebar) {
-  const react = hooks(), plugin = loadPlugin({react}), ctx = contextWith(sidebar);
+function entryTest(sidebar, {react = hooks(), globals = {}} = {}) {
+  const plugin = loadPlugin({react, globals}), ctx = contextWith(sidebar);
   plugin.apply(ctx);
   const entry = ctx.slots.rows.find(row => row.descriptor.id === 'math-projects');
   assert.ok(entry);
@@ -192,7 +195,7 @@ function nodes(tree) {
   return [tree, ...nodes(tree.children || [])];
 }
 function button(tree, label) {
-  const found = nodes(tree).find(node => node.children.includes(label) && typeof node.props.onClick === 'function');
+  const found = nodes(tree).find(node => (node.children.includes(label) || node.props['aria-label'] === label) && typeof node.props.onClick === 'function');
   assert.ok(found, `Missing button: ${label}`);
   return found;
 }
@@ -215,7 +218,8 @@ function overview(id) {
   const problem = {id: `P-${id}`, rev: 1, kind: 'Problem', data: {title: id}};
   const obligation = {id: `O-${id}`, rev: 1, kind: 'Obligation', data: {statement: '待审核', problem_ref: {id: problem.id, rev: 1}, candidates: [{id: `N-${id}`, rev: 1}]}};
   const note = {id: `N-${id}`, rev: 1, kind: 'Note', data: {title: '候选', problem_ref: {id: problem.id, rev: 1}}};
-  return {project: {id, campaign_id: id, schema_version: 4}, snapshot: {state: {seq: 3}}, objects: [problem, obligation, note], links: [],
+  for (const object of [problem, obligation, note]) object.schema_version = 4;
+  return {project: {id, campaign_id: id, schema_version: 4, mode: 'daily_research'}, snapshot: {usable: true, state: {seq: 3}}, objects: [problem, obligation, note], links: [],
     groups: {targets: [{object: problem}], accepted: [], candidates: [], obligations: [{object: obligation}], failed_routes: [], notes: [{object: note}]}};
 }
 // Synthetic projection inputs only. Hash-shaped constants model an already-checked
@@ -451,7 +455,7 @@ test('theme disposal removes only the style node owned by that plugin generation
   assert.equal(foreign.textContent, 'foreign style');
 });
 
-test('an empty workspace has one primary create action and a collapsed legacy import', async () => {
+test('an empty workspace has one primary create action and a secondary import modal entry', async () => {
   const t = viewTest({effects: true, handle: body => body.action === 'list' ? [] : undefined});
   t.render('session-empty'); await settle();
   const tree = t.render(), start = welcome(tree), header = nodes(tree).find(node => node.type === 'header');
@@ -467,28 +471,28 @@ test('an empty workspace has one primary create action and a collapsed legacy im
   assert.ok(nodes(start).some(node => node.children.includes('新建与浏览不调用模型，也不会自动开始研究。')));
 
   const legacy = byClass(tree, 'dm-import');
-  assert.equal(legacy.type, 'details');
-  assert.ok(legacy.props.open === undefined || legacy.props.open === false, 'Native details must start collapsed');
-  assert.equal(legacy.children[0].type, 'summary');
-  assert.ok(legacy.children[0].children.includes('导入旧研究库（只读副本）'));
-  assert.equal(tree.children.at(-1), legacy, 'Legacy import belongs after the main workflow');
-  assert.ok(nodes(legacy).some(node => node.props.label === 'schema 3 研究库完整路径'));
-  assert.ok(nodes(legacy).some(node => node.children.includes('仅适用于已有 schema 3 研究库；导入不会改写原始数据。')));
-  assert.equal(button(legacy, '导入只读副本').props.disabled, true);
+  assert.equal(legacy.type, 'div');
+  assert.equal(button(legacy, '导入旧研究库（只读副本）').props.variant, 'ghost');
+  assert.equal(nodes(tree).some(node => node.type?.name === 'LegacyImport'), false);
+  await button(legacy, '导入旧研究库（只读副本）').props.onClick();
+  const imported = nodes(t.render()).find(node => node.type?.name === 'LegacyImport');
+  assert.equal(imported.props.sessionId, 'session-empty');
+  imported.props.close();
+  assert.equal(nodes(t.render()).some(node => node.type?.name === 'LegacyImport'), false);
 
   button(start, '新建项目').props.onClick();
-  const creating = t.render(), createPrimary = nodes(creating).filter(node => node.props.variant === 'primary');
+  const creating = t.render(), form = nodes(creating).find(node => node.type?.name === 'ProjectForm');
   assert.equal(welcome(creating), undefined);
   assert.equal(picker(creating), undefined);
-  assert.ok(byTitle(creating, '精确研究目标'));
-  assert.equal(createPrimary.length, 1);
-  assert.equal(createPrimary[0].props.type, 'submit');
-  assert.ok(createPrimary[0].children.includes('创建并关联当前会话'));
+  assert.ok(byTitle(creating, '项目准备'));
+  assert.equal(form.props.sessionId, 'session-empty');
+  assert.equal(typeof form.props.request, 'function');
+  assert.equal(typeof form.props.registerGuard, 'function');
   const cancel = button(nodes(creating).find(node => node.type === 'header'), '取消新建');
   assert.equal(cancel.props.variant, 'ghost');
-  cancel.props.onClick();
+  await cancel.props.onClick();
   assert.ok(welcome(t.render()));
-  assert.equal(byTitle(t.render(), '精确研究目标'), undefined);
+  assert.equal(byTitle(t.render(), '项目准备'), undefined);
   assert.equal(nodes(t.render()).filter(node => node.props.variant === 'primary').length, 1);
   assert.deepEqual(t.requests.map(request => request.action), ['list'], 'Opening and cancelling forms must not create research data');
 });
@@ -661,13 +665,13 @@ test('session key remounts isolate all local state and initialize the matching p
   assert.deepEqual(t.requests.map(request => request.action), ['list', 'overview']);
   button(t.render(), '登记笔记').props.onClick();
   button(t.render(), '新建项目').props.onClick();
-  nodes(t.render()).find(node => node.props.label === '题目').props.change('session A draft');
+  assert.equal(nodes(t.render()).find(node => node.type?.name === 'ProjectForm').key, 'session-a');
   button(t.render(), '回放与导出').props.onClick();
   button(t.render(), '添加回放来源').props.onClick();
   const empty = t.render('session-b');
   assert.equal(picker(empty), undefined, 'New scope must not expose the previous project choices');
   assert.ok(welcome(empty));
-  assert.equal(byTitle(empty, '精确研究目标'), undefined);
+  assert.equal(byTitle(empty, '项目准备'), undefined);
   assert.equal(byTitle(empty, '当前目标'), undefined);
   assert.equal(byClass(empty, 'dm-goal'), undefined);
   await settle();
@@ -680,7 +684,8 @@ test('session key remounts isolate all local state and initialize the matching p
   button(t.render(), '回放与导出').props.onClick();
   assert.equal(nodes(t.render()).some(node => node.props.label === '来源 1 完整路径'), false);
   button(t.render(), '新建项目').props.onClick();
-  assert.equal(nodes(t.render()).find(node => node.props.label === '题目').props.value, '');
+  assert.equal(nodes(t.render()).find(node => node.type?.name === 'ProjectForm').key, 'session-b');
+  assert.equal(nodes(t.render()).find(node => node.type?.name === 'ProjectForm').props.sessionId, 'session-b');
   assert.equal(t.requests.length, 4, 'Rerenders must not restart initialization');
 });
 
@@ -952,7 +957,46 @@ test('fallback modal still opens and closes without Better Sidebar', () => {
   assert.equal(dialog(t.render()), undefined);
 });
 
-test('form presentation preserves historical exact references and stable requests', () => {
+test('fallback uses the native top layer and Escape reuses the guarded close action', () => {
+  const react = hooks({effects: true});
+  let focused = 0, shown = 0, closed = 0, clicked = 0, prevented = 0;
+  const trigger = {isConnected: true, focus() { focused++; }};
+  const document = {activeElement: trigger, createElement: () => ({remove() {}}), head: {appendChild() {}}};
+  const t = entryTest(undefined, {react, globals: {document}});
+  button(t.render(), '数学项目').props.onClick();
+  const modal = dialog(t.render());
+  assert.equal(modal.type, 'dialog');
+  assert.equal(modal.props['aria-modal'], true);
+  const native = {open: false, showModal() { this.open = true; shown++; }, close() { this.open = false; closed++; },
+    querySelector(selector) { assert.equal(selector, 'button[title="关闭数学工作台"]'); return {click() { clicked++; }}; }};
+  modal.props.ref.current = native;
+  react.flushEffects();
+  assert.equal(shown, 1);
+  modal.props.onCancel({preventDefault() { prevented++; }});
+  assert.equal(prevented, 1); assert.equal(clicked, 1);
+  modal.props.onCancel({target: {}, currentTarget: {}, preventDefault() { prevented++; }});
+  assert.equal(prevented, 1); assert.equal(clicked, 1, 'Nested import cancel must not close the workbench');
+  assert.ok(dialog(t.render()), 'Escape waits for the draft-flushing close action, not a direct unmount');
+  modal.children[0].props.onClose();
+  assert.equal(dialog(t.render()), undefined);
+  react.flushEffects();
+  assert.equal(closed, 1); assert.equal(focused, 1);
+  react.unmount();
+  assert.equal(react.writesAfterUnmount.length, 0);
+});
+
+test('fallback reports unsupported native dialog without leaving an invisible open view', () => {
+  const react = hooks({effects: true});
+  const document = {activeElement: null, createElement: () => ({remove() {}}), head: {appendChild() {}}};
+  const t = entryTest(undefined, {react, globals: {document}});
+  button(t.render(), '数学项目').props.onClick();
+  dialog(t.render()).props.ref.current = {};
+  react.flushEffects();
+  assert.equal(dialog(t.render()), undefined);
+  assert.ok(alerts(t.render()).some(node => node.children.join('').includes('不支持原生模态窗口')));
+});
+
+test('form presentation preserves historical exact references and blocks busy saves', async () => {
   const react = hooks(), context = {};
   vm.runInNewContext(readFileSync(new URL('../form-ui.cjs', import.meta.url), 'utf8'), context);
   const {Text, Refs} = context.DshMathFormUI(react, Forms);
@@ -965,21 +1009,26 @@ test('form presentation preserves historical exact references and stable request
   assert.equal(refs.props.className, 'dm-fieldset');
   assert.ok(nodes(refs).some(node => node.type === 'span' && node.children[0].includes('N@1')));
   const draft = Forms.draft('Note', problem, () => 'stable-id');
+  Object.assign(draft.data, {title: '合成笔记', summary: '仅测试', body: '合成正文', statement: '合成主张'});
   const fresh = hooks(), ui = context.DshMathFormUI(fresh, Forms);
   let saved;
   const editor = ui.Editor({initial: draft, objects: [], busy: true, save: request => { saved = request; }, cancel: () => {}});
   assert.equal(editor.props.className, 'dm-editor');
   assert.equal(nodes(editor).find(node => node.type === 'h3').props.tabIndex, -1);
   assert.equal(nodes(editor).find(node => node.props.type === 'submit').props.disabled, true);
-  editor.props.onSubmit({preventDefault() {}});
+  await editor.props.onSubmit({preventDefault() {}});
+  assert.equal(saved, undefined, 'A stale submit callback cannot ignore busy');
+  fresh.reset();
+  await ui.Editor({initial: draft, objects: [], busy: false, save: request => { saved = request; }, cancel: () => {}}).props.onSubmit({preventDefault() {}});
   assert.equal(saved.operation_id, draft.operation_id);
   assert.equal(saved.changes[0].expected_rev, 0);
   assert.equal(saved.changes[0].data.problem_ref.rev, 1);
 });
 
-test('short Field and Text use inputs but preserve legacy LF and CR values in textareas', () => {
-  const t = viewTest(); button(t.render(), '新建项目').props.onClick();
-  const fields = ['题目', '定义域', '量词', 'schema 3 研究库完整路径'].map(label => nodes(t.render()).find(node => node.props.label === label));
+test('short Field and Text use inputs but preserve legacy LF and CR values in textareas', async () => {
+  const t = viewTest(); await t.choose('a'); button(t.render(), '回放与导出').props.onClick();
+  button(t.render(), '添加回放来源').props.onClick();
+  const fields = [nodes(t.render()).find(node => node.props.label === '来源 1 完整路径')];
   assert.ok(fields.every(field => field && field.props.multiline === false));
   const context = {};
   vm.runInNewContext(readFileSync(new URL('../form-ui.cjs', import.meta.url), 'utf8'), context);
@@ -998,15 +1047,15 @@ test('short Field and Text use inputs but preserve legacy LF and CR values in te
   // Exercise the real parent callbacks too, without submitting to any API.
   const historical = '  标题第一行\n标题第二行\n';
   fields[0].props.change(historical);
-  const field = nodes(t.render()).find(node => node.props.label === '题目');
+  const field = nodes(t.render()).find(node => node.props.label === '来源 1 完整路径');
   assert.equal(field.props.value, historical);
   const fieldControl = field.type(field.props).children[1];
   assert.equal(fieldControl.type, 'textarea');
   fieldControl.props.onChange({target: {value: historical + '末行'}});
-  assert.equal(nodes(t.render()).find(node => node.props.label === '题目').props.value, historical + '末行');
+  assert.equal(nodes(t.render()).find(node => node.props.label === '来源 1 完整路径').props.value, historical + '末行');
   const react = hooks(), ui = context.DshMathFormUI(react, Forms);
   const initial = Forms.draft('Note', {id: 'P-synthetic', rev: 1}, () => 'text-fixture');
-  initial.data.title = historical;
+  Object.assign(initial.data, {title: historical, summary: '合成摘要', body: '合成正文', statement: '合成主张'});
   let saved;
   const renderEditor = () => { react.reset(); return ui.Editor({initial, objects: [], save: request => { saved = request; }, cancel: () => {}}); };
   const title = nodes(renderEditor()).find(node => node.props.label === '笔记标题');
@@ -1015,8 +1064,74 @@ test('short Field and Text use inputs but preserve legacy LF and CR values in te
   assert.equal(titleControl.type, 'textarea');
   assert.equal(titleControl.props.value, historical);
   titleControl.props.onChange({target: {value: historical + '末行'}});
-  renderEditor().props.onSubmit({preventDefault() {}});
+  await renderEditor().props.onSubmit({preventDefault() {}});
   assert.equal(saved.changes[0].data.title, historical + '末行');
+});
+
+test('five compact tabs retain the same scratchpad component and next actions preserve exact refs', async () => {
+  const fixture = overview('a'); fixture.groups.obligations[0].object.data.next_action = '先检查合成条件\n再登记结果';
+  const t = viewTest({handle: body => body.action === 'overview' ? fixture : undefined}); await t.choose('a');
+  const scratch = tree => nodes(tree).find(node => node.type?.name === 'Scratchpad');
+  const first = scratch(t.render()); assert.equal(first.props.active, false);
+  assert.equal(nodes(t.render()).filter(node => node.props.className === 'dm-tab').length, 5);
+  const digest = byClass(t.render(), 'dm-next-action-list'); assert.ok(digest); assert.ok(nodes(digest).some(node => node.children.includes('先检查合成条件\n再登记结果')));
+  button(digest, 'O-a@1').props.onClick(); assert.equal(byTitle(t.render(), 'O-a@1').props.meta, 'Obligation');
+  button(t.render(), '项目草稿本').props.onClick(); assert.equal(scratch(t.render()).key, first.key); assert.equal(scratch(t.render()).props.active, true);
+  button(t.render(), '研究概览').props.onClick(); assert.equal(scratch(t.render()).key, first.key); assert.equal(scratch(t.render()).props.active, false);
+});
+
+test('legacy readonly view suppresses every research mutation but retains explicit audit export', async () => {
+  const fixture = overview('a'); fixture.project.schema_version = 3; fixture.project.mode = 'legacy_readonly_copy'; fixture.objects.forEach(object => { object.schema_version = 3; });
+  const t = viewTest({handle: body => body.action === 'overview' ? fixture : body.action === 'export' ? {path: '/synthetic/derived-audit', exported: true} : undefined}); await t.choose('a');
+  assert.equal(nodes(t.render()).find(node => node.type?.name === 'Scratchpad').props.writable, false);
+  for (const text of ['登记笔记', '登记义务', '登记证据']) assert.equal(nodes(t.render()).some(node => node.children.includes(text)), false);
+  button(t.render(), 'O-a@1').props.onClick();
+  for (const text of ['笔记', '义务', '证据', '修订此记录', '人工审核预览', '本人提交审核记录']) assert.equal(nodes(t.render()).some(node => node.children.includes(text)), false);
+  assert.equal(t.requests.some(body => body.action === 'export'), false); button(t.render(), '回放与导出').props.onClick();
+  assert.equal(t.requests.some(body => body.action === 'export'), false); await button(t.render(), '生成本地审核包').props.onClick();
+  assert.ok(nodes(t.render()).some(node => node.type === 'pre' && node.children.some(text => String(text).includes('/synthetic/derived-audit'))));
+  assert.deepEqual(t.requests.filter(body => !['list', 'overview'].includes(body.action)).map(body => body.action), ['export']);
+});
+
+test('project switches await child flush and failure keeps the active project', async () => {
+  const t = viewTest(); await t.choose('a'); const gate = deferred(); let allowed = false;
+  const child = nodes(t.render()).find(node => node.type?.name === 'Scratchpad');
+  const unregister = child.props.registerGuard('synthetic-scratch', async () => { await gate.promise; return allowed; });
+  const pending = t.choose('b'); await settle(); assert.equal(picker(t.render()).props.value, 'a'); gate.resolve(); await pending;
+  assert.equal(picker(t.render()).props.value, 'a'); assert.ok(alerts(t.render()).some(node => node.children.join('').includes('未保存')));
+  allowed = true; await t.choose('b'); assert.equal(picker(t.render()).props.value, 'b'); unregister();
+});
+
+test('promotion links the exact committed revision and retry never duplicates the formal commit', async () => {
+  const commit = deferred(); let failLink = true;
+  const t = viewTest({handle: body => {
+    if (body.action === 'commit') return commit.promise;
+    if (body.action === 'scratchpad-promote-link') { if (failLink) { failLink = false; return Promise.reject(Error('synthetic link offline')); } return {linked: true, target: body.args.target}; }
+  }}); await t.choose('a'); const pad = {project_id: 'a', rev: 7, title: '合成草稿', body: '精确内容\n'};
+  nodes(t.render()).find(node => node.type?.name === 'Scratchpad').props.onPromote('Note', pad);
+  let editor = nodes(t.render()).find(node => node.type === t.Editor); assert.ok(editor); assert.equal(editor.props.initial.data.body, pad.body);
+  assert.equal(editor.props.initial.data.summary, ''); assert.equal(editor.props.initial.promotion.scratchpad_rev, 7);
+  const request = Forms.request(editor.props.initial), save = editor.props.save(request);
+  assert.equal(t.requests.filter(body => body.action === 'scratchpad-promote-link').length, 0);
+  commit.resolve({versions: [{id: 'unrelated', rev: 99}, {id: editor.props.initial.id, rev: 4}]}); await save;
+  assert.equal(nodes(t.render()).some(node => node.type === t.Editor), false); assert.ok(alerts(t.render()).some(node => node.children.join('').includes('不要重复保存记录')));
+  const firstLink = t.requests.find(body => body.action === 'scratchpad-promote-link');
+  assert.deepEqual(firstLink.args.target, {id: editor.props.initial.id, rev: 4}); assert.equal(firstLink.args.scratchpad_rev, 7);
+  assert.equal(firstLink.args.project_id, 'a'); assert.equal(firstLink.args.session_id, 'test-session');
+  await t.choose('b'); assert.equal(picker(t.render()).props.value, 'a', 'Unfinished source link blocks in-UI project switch');
+  await button(t.render(), '重试来源链接').props.onClick();
+  assert.equal(t.requests.filter(body => body.action === 'commit').length, 1); const links = t.requests.filter(body => body.action === 'scratchpad-promote-link');
+  assert.equal(links.length, 2); assert.deepEqual(links[0], links[1]); assert.equal(nodes(t.render()).some(node => node.children.includes('重试来源链接')), false);
+});
+
+test('promotion completion after session unmount never dispatches a stale source link', async () => {
+  const commit = deferred(); const t = viewTest({effects: true, handle: body => body.action === 'commit' ? commit.promise : undefined});
+  t.render('session-a'); await settle();
+  nodes(t.render()).find(node => node.type?.name === 'Scratchpad').props.onPromote('Obligation', {project_id: 'a', rev: 3, title: 'synthetic', body: 'synthetic'});
+  const editor = nodes(t.render()).find(node => node.type === t.Editor), pending = editor.props.save(Forms.request(editor.props.initial));
+  t.render('session-b'); await settle(); commit.resolve({versions: [{id: editor.props.initial.id, rev: 1}]}); await pending;
+  assert.equal(t.requests.some(body => body.action === 'scratchpad-promote-link'), false); assert.equal(t.react.writesAfterUnmount.length, 0);
+  assert.equal(picker(t.render()).props.value, 'b');
 });
 
 test('narrow layout follows the math container and uses inspected theme aliases', () => {

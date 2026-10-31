@@ -1,0 +1,24 @@
+{
+  "format": "dsh-math-project-fields-v1",
+  "fields": [
+    {"key":"title","label":"项目标题","type":"string","required":true,"group":"problem","help":"用一句话概括研究目标。","placeholder":"例如：满足指定条件的图的构造"},
+    {"key":"statement","label":"精确命题或构造要求","type":"string","required":true,"group":"problem","help":"保留原始条件与数学符号；不确定的部分请先澄清。","placeholder":"需要证明、反驳或探索的具体问题"},
+    {"key":"quantifiers","label":"量词与变量范围","type":"string","required":true,"group":"problem","help":"说明对所有、存在或固定参数，以及变量的取值范围。","placeholder":"例如：对任意正整数 n，是否存在……"},
+    {"key":"domain","label":"定义域与研究对象","type":"string","required":true,"group":"problem","help":"明确整数、实数、有限图等对象及其限制。","placeholder":"例如：有限无向简单图"},
+    {"key":"target_type","label":"任务类型","type":"enum","required":true,"group":"goal","help":"目标分类，不会切换求解算法或自动启动研究。","default":"prove_or_disprove"},
+    {"key":"completion_criteria","label":"完成标准","type":"string[]","required":true,"group":"goal","help":"每行一项，说明什么样的结果才算完成；探索任务可以设定阶段目标。","placeholder":"例如：给出满足全部约束的对象及可核查的验证过程"},
+    {"key":"sources","label":"问题来源","type":"string[]","required":true,"group":"source","help":"每行一项。用户自拟的问题可如实注明；不必编造论文或链接。","placeholder":"论文题名与链接，或如实注明用户自拟问题"},
+    {"key":"conventions","label":"符号与约定","type":"string[]","required":false,"group":"source","help":"可选，每行一项。","placeholder":"例如：图均指无向简单图"},
+    {"key":"knowledge_status","label":"问题状态","type":"enum","required":true,"group":"source","help":"“开放性尚未核实”不等于已确认是开放问题。","default":"unverified_open"}
+  ],
+  "target_types": [
+    {"value":"construct","label":"构造","description":"给出满足条件的对象或见证。","example":"例如：构造具有指定性质的图。"},
+    {"value":"prove_or_disprove","label":"证明或反驳","description":"给出证明，或者给出严格反例。","example":"例如：证明一个不等式，或找到不满足它的实例。"},
+    {"value":"exploratory","label":"探索","description":"整理现象、猜想、研究路线及障碍。","example":"例如：分析小规模情形，提出可继续核查的猜想。"}
+  ],
+  "knowledge_statuses": [
+    {"value":"unverified_open","label":"开放性尚未核实"},
+    {"value":"known_result","label":"已知结果的研究或复现"},
+    {"value":"synthetic_fixture","label":"合成示例／界面验收"}
+  ]
+}

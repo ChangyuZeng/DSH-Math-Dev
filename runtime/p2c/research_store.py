@@ -90,7 +90,9 @@ class ResearchStore:
         require(self.root.is_dir(), "NOT_FOUND", "Campaign directory does not exist")
         try:
             lock = safe_path(self.root, ".writer.lock")
-            flags = os.O_RDWR | os.O_NOFOLLOW | (os.O_CREAT if writable else 0)
+            # A shared lock needs no write-capable descriptor. Keep readers usable
+            # under real read-only OS policies and on read-only source copies.
+            flags = os.O_NOFOLLOW | os.O_NONBLOCK | (os.O_RDWR | os.O_CREAT if writable else os.O_RDONLY)
             self.lock_fd = os.open(lock, flags, 0o600)
             info = os.fstat(self.lock_fd)
             require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1,

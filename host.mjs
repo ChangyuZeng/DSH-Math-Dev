@@ -4,6 +4,7 @@ import {readFileSync} from 'node:fs';
 import {resolve, dirname, join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {humanApiRejection} from './human-api.mjs';
+import {registerChatTools, CHAT_TOOLS} from './chat-tools.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 export const name = 'dsh-math';
@@ -23,10 +24,10 @@ const DESCRIPTIONS = {
   research_finish: 'End research without further model requests. payload JSON: {classification:"candidate"|"no_progress"|"local_claim"|"known_reproduction"|"valid_below_target",summary:string,references:[{id,rev}]}. All claims remain pending scientific review.',
 };
 
-function spawnPython(script, root, request, python = 'python3', {signal, onChild, timeoutMs = 60000} = {}) {
+function spawnCommand(argv, request, {signal, onChild, timeoutMs = 60000} = {}) {
   return new Promise((resolveCall, reject) => {
     if (signal?.aborted) return reject(Error('Run cancelled before dispatch'));
-    const child = spawn(python, ['-B', join(here, script), root], {
+    const child = spawn(argv[0], argv.slice(1), {
       stdio: ['pipe', 'pipe', 'pipe'], env: {...process.env, PYTHONDONTWRITEBYTECODE: '1'}, detached: Boolean(signal),
     });
     let output = '', error = '', settled = false;
@@ -52,8 +53,13 @@ function spawnPython(script, root, request, python = 'python3', {signal, onChild
         else resolveCall(result.value);
       } catch (failure) { reject(Error(error || failure.message)); }
     });
+    child.stdin.on('error', failure => { error ||= failure.message; });
     child.stdin.end(JSON.stringify(request));
   });
+}
+
+function spawnPython(script, root, request, python = 'python3', options) {
+  return spawnCommand([python, '-B', join(here, script), root], request, options);
 }
 
 export function pythonCall(root, request, python = 'python3') {
@@ -138,6 +144,11 @@ export function apply(ctx, config = {}) {
     });
   }
 
+  if (!config.headless && config.chatPreparation !== false) registerChatTools(ctx, {
+    root, python: config.python, bindings,
+    run: (argv, request, signal) => spawnCommand(argv, request, {signal}),
+  });
+
   function cancelRun(runId, reason = 'user_cancelled') {
     const gate = gates.get(runId);
     if (!gate) throw Error('Unknown run');
@@ -161,5 +172,5 @@ export function apply(ctx, config = {}) {
     })();
     return gate.done;
   }
-  return {cancelRun, modelToolNames: [...MODEL_TOOLS]};
+  return {cancelRun, modelToolNames: [...MODEL_TOOLS], chatToolNames: !config.headless && config.chatPreparation !== false ? [...CHAT_TOOLS] : []};
 }

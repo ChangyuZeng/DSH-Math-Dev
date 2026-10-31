@@ -12,8 +12,9 @@
     {
       "path": "runtime/p2c/research_store.py",
       "origin": "harness/dsh-p2c/research_store.py",
-      "sha256": "004315c08d0470e7146eda9e3021600287d0feacc9a18aa55b1e3c5472f53735",
-      "relationship": "unchanged_snapshot"
+      "base_sha256": "004315c08d0470e7146eda9e3021600287d0feacc9a18aa55b1e3c5472f53735",
+      "sha256": "8b02f5b295fc0f8ced1e7107cdfbd988b39fb3d9cac6ad7b5725f8094b384911",
+      "relationship": "derived_snapshot_0.6.0_readonly_shared_lock_descriptor"
     },
     {
       "path": "runtime/p2c/domain.py",

@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Math Research",
-    "description": "Versioned research records, exact evidence references, human review and self-contained audit exports. Reuses Better Sidebar when available; never starts research automatically."
+    "description": "Conversational project preparation, a mathematical scratchpad, versioned records and human review. Reuses Better Sidebar; project creation requires confirmation and research never starts automatically."
   }
 }

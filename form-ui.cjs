@@ -15,10 +15,11 @@ globalThis.DshMathFormUI = function (React, F) {
   }
   function Editor({initial,objects,save,cancel,inspect,busy}) {
     const [draft,setDraft]=useState(initial),[error,setError]=useState(''),[uploading,setUploading]=useState(false);
-    const heading=useRef(null);
-    useEffect(()=>{heading.current?.focus();},[initial.operation_id]);
+    const heading=useRef(null),life=useRef({active:true,serial:0,uploading:false,submitting:false});
+    useEffect(()=>{life.current.active=true;heading.current?.focus();return()=>{life.current.active=false;life.current.serial++;};},[initial.operation_id]);
     const data=draft.data;
-    const set=patch=>setDraft(prev=>({...prev,data:{...prev.data,...patch}}));
+    const update=change=>{if(life.current.active&&!busy&&!life.current.submitting)setDraft(change);};
+    const set=patch=>update(prev=>({...prev,data:{...prev.data,...patch}}));
     const text=(key,label,required=true,multi=true)=>h(Text,{key,label,value:data[key],required,multi,change:v=>set({[key]:v})});
     const list=(key,label,required=false)=>h(Text,{key,label:label+'（每行一项）',value:data[key].join('\n'),required,change:v=>set({[key]:v.split('\n')})});
     const refs=(key,label,kinds)=>h(Refs,{key,label,objects,kinds,problem:data.problem_ref,self:draft.id,value:data[key],change:v=>set({[key]:v}),inspect});
@@ -26,17 +27,39 @@ globalThis.DshMathFormUI = function (React, F) {
     const citation=(key,label)=>h(Text,{key,label,value:data.citation?.[key],multi:false,change:v=>set({citation:{...data.citation,[key]:v||null}})});
     const conditions=data.citation?.condition_map||[];
     function condition(index,patch){const updated=conditions.map((c,i)=>i===index?{...c,...patch}:c);set({citation:{...data.citation,condition_map:updated},source:{...data.source,conditions:updated.map(c=>c.condition)}});}
-    async function files(event){setUploading(true);setError('');try{const selected=Array.from(event.target.files);let total=0;const encoded=[];for(const file of selected){total+=file.size;if(total>384*1024)throw Error('附件总计最多384 KiB；大文件请先选取相关原文片段');const bytes=new Uint8Array(await file.arrayBuffer());let binary='';for(const b of bytes)binary+=String.fromCharCode(b);encoded.push({logical_name:file.name,base64:btoa(binary)});}setDraft(prev=>({...prev,files:encoded}));}catch(e){setError(e.message);}finally{setUploading(false);}}
-    function submit(event){event.preventDefault();setError('');try{const ready=JSON.parse(JSON.stringify(draft));for(const key of ['assumptions','gaps','completion_criteria','limits'])if(Array.isArray(ready.data[key]))ready.data[key]=ready.data[key].map(x=>x.trim()).filter(Boolean);if(ready.kind==='Note')ready.data.route_id=ready.data.route_id?.trim()||null;if(ready.kind==='Obligation'){ready.data.state=ready.data.state==='candidate'?'candidate':'open';if(ready.data.check_method!=='human')throw Error('程序检查义务必须通过其专用入口修订');}if(ready.kind==='Evidence'&&ready.data.evidence_type==='source_excerpt'&&ready.data.source_status==='provided'&&!ready.excerpt?.trim()&&!ready.data.citation?.excerpt_sha256)throw Error('已提供来源必须粘贴可审核的原文摘录；PDF附件不能替代摘录');save(F.request(ready));}catch(e){setError(e.message);}}
-    return h('form',{onSubmit:submit,className:'dm-editor','aria-label':'编辑研究记录','aria-busy':busy||uploading},h('h3',{ref:heading,tabIndex:-1,className:'dm-editor-title'},`${draft.expected_rev?'修订':'登记'} ${ {Note:'笔记',Obligation:'证明义务',Evidence:'证据'}[draft.kind]}`),h('p',{className:'dm-record-text'},`${draft.id} · 目标 ${F.refKey(data.problem_ref)} · 基于版本 ${draft.expected_rev}`),
+    async function files(event){
+      const state=life.current;if(!state.active||state.submitting||busy)return;const token=++state.serial;
+      state.uploading=true;setUploading(true);setError('');
+      try{const selected=Array.from(event.target.files);let total=0;const encoded=[];
+        for(const file of selected){total+=file.size;if(total>384*1024)throw Error('附件总计最多384 KiB；大文件请先选取相关原文片段');
+          const bytes=new Uint8Array(await file.arrayBuffer());if(!state.active||token!==state.serial)return;
+          let binary='';for(const b of bytes)binary+=String.fromCharCode(b);encoded.push({logical_name:file.name,base64:btoa(binary)});}
+        if(state.active&&token===state.serial)update(prev=>({...prev,files:encoded}));
+      }catch(e){if(state.active&&token===state.serial)setError(e.message);}
+      finally{if(state.active&&token===state.serial){state.uploading=false;setUploading(false);}}
+    }
+    async function submit(event){
+      event.preventDefault();const state=life.current;if(!state.active||busy||state.uploading||state.submitting)return;
+      const token=state.serial;state.submitting=true;setError('');
+      try{const ready=JSON.parse(JSON.stringify(draft));
+        for(const key of ['assumptions','gaps','completion_criteria','limits'])if(Array.isArray(ready.data[key]))ready.data[key]=ready.data[key].map(x=>x.trim()).filter(Boolean);
+        const issues=F.recordErrors(ready);if(issues.length)throw Error(issues.join('；'));
+        if(ready.kind==='Note')ready.data.route_id=ready.data.route_id?.trim()||null;
+        if(ready.kind==='Obligation'){ready.data.state=ready.data.state==='candidate'?'candidate':'open';if(ready.data.check_method!=='human')throw Error('程序检查义务必须通过其专用入口修订');}
+        if(ready.kind==='Evidence'&&ready.data.evidence_type==='source_excerpt'&&ready.data.source_status==='provided'&&!ready.excerpt?.trim()&&!ready.data.citation?.excerpt_sha256)throw Error('已提供来源必须粘贴可审核的原文摘录；PDF附件不能替代摘录');
+        await save(F.request(ready));
+      }catch(e){if(state.active&&token===state.serial)setError(e.message);}
+      finally{if(state.active&&token===state.serial)state.submitting=false;}
+    }
+    return h('form',{onSubmit:submit,className:'dm-editor','aria-label':'编辑研究记录','aria-busy':busy||uploading},h('fieldset',{className:'dm-editor-fields',disabled:busy||uploading},h('h3',{ref:heading,tabIndex:-1,className:'dm-editor-title'},`${draft.expected_rev?'修订':'登记'} ${ {Note:'笔记',Obligation:'证明义务',Evidence:'证据'}[draft.kind]}`),h('p',{className:'dm-record-text'},`${draft.id} · 目标 ${F.refKey(data.problem_ref)} · 基于版本 ${draft.expected_rev}`),
       draft.kind==='Note'&&h(React.Fragment,null,h(Select,{label:'笔记类型',value:data.note_type,change:v=>set({note_type:v,failure:v==='failed_attempt'?(data.failure||{inputs:'',location:'',observed:'',negated_scope:'',retry_change:''}):null}),items:[['observation','观察'],['argument','论证'],['computation','计算记录'],['source','文献笔记'],['failed_attempt','失败尝试']]}),text('title','笔记标题',true,false),text('summary','简述'),text('body','完整正文'),text('statement','主张'),list('assumptions','假设'),list('gaps','尚存缺口'),text('route_id','路线标识',false,false),refs('uses','依赖前提',['Note','Obligation']),refs('candidate_for','拟解决的义务',['Obligation']),refs('evidence','支撑证据',['Evidence']),data.failure&&Object.entries({inputs:'失败输入',location:'失败位置',observed:'观察结果',negated_scope:'否定范围',retry_change:'再次尝试应改变什么'}).map(([key,label])=>h(Text,{key,label,value:data.failure[key],required:true,change:v=>set({failure:{...data.failure,[key]:v}})}))),
       draft.kind==='Obligation'&&h(React.Fragment,null,text('statement','义务陈述'),text('scope','适用范围'),list('completion_criteria','完成条件',true),text('next_action','下一步'),text('reason','登记原因'),h(Select,{label:'当前提交状态',value:data.state==='candidate'?'candidate':'open',change:v=>set({state:v}),items:[['open','开放'],['candidate','已有候选，等待审核']]}),h('p',null,'由人工审核；接受和待复核状态由系统派生。'),refs('uses','依赖前提',['Note','Obligation']),refs('candidates','候选笔记',['Note']),refs('evidence','支撑证据',['Evidence'])),
       draft.kind==='Evidence'&&h(React.Fragment,null,h(Select,{label:'证据类型',value:data.evidence_type,change:v=>set({evidence_type:v,citation:null}),items:[['source_excerpt','来源摘录'],['proof_text','证明原文'],['computation','计算记录'],['witness','有限见证'],['figure','示意图']]}),source('locator','来源地址或出处',true),source('version','版本 / commit'),source('accessed_at','访问日期'),text('support_scope','支持范围'),list('limits','局限与未核实项',true),h(Select,{label:'来源材料状态',value:data.source_status,change:v=>set({source_status:v}),items:[['unverified_source','待核实来源线索'],['provided','已归档材料（不代表审核通过）']]}),
         h(Text,{label:'生产或导入方式',value:data.production.method,required:true,change:v=>set({production:{...data.production,method:v}})}),h(Text,{label:'生产方式版本',value:data.production.version,required:true,multi:false,change:v=>set({production:{...data.production,version:v}})}),
-        h(Text,{label:'原文摘录 / 证明全文',value:draft.excerpt||'',change:v=>setDraft(prev=>({...prev,excerpt:v||null}))}),h(Text,{label:'摘录附件名称',value:draft.logical_name,multi:false,required:true,change:v=>setDraft(prev=>({...prev,logical_name:v}))}),
+        h(Text,{label:'原文摘录 / 证明全文',value:draft.excerpt||'',change:v=>update(prev=>({...prev,excerpt:v||null}))}),h(Text,{label:'摘录附件名称',value:draft.logical_name,multi:false,required:true,change:v=>update(prev=>({...prev,logical_name:v}))}),
         h('label',{className:'dm-field'},'附加文件（总计384 KiB，保留原始字节）',h('input',{type:'file',multiple:true,onChange:files})),h('p',{className:'dm-record-text'},draft.files.map(f=>f.logical_name).join('、')),
         data.evidence_type==='source_excerpt'&&h(React.Fragment,null,h('label',null,h('input',{type:'checkbox',checked:!!data.citation,onChange:e=>set({citation:e.target.checked?{title:'',page:null,section:null,theorem:null,excerpt_sha256:'0'.repeat(64),condition_map:[]}:null,source:{...data.source,conditions:[]}})}),' 添加精确定位与适用条件'),data.citation&&h(React.Fragment,null,citation('title','文献标题'),citation('page','页码'),citation('section','章节'),citation('theorem','命题 / 定理 / 开放问题编号'),...conditions.map((c,i)=>h('fieldset',{key:i,className:'dm-fieldset'},h(Text,{label:`条件 ${i+1}`,value:c.condition,required:true,change:v=>condition(i,{condition:v})}),h(Select,{label:`条件 ${i+1} 的适用判断`,value:c.assessment,change:v=>condition(i,{assessment:v}),items:[['unresolved','未解决'],['not_satisfied','不满足'],['claimed_satisfied','提交者声称满足（仍需审核）']]}),h(Text,{label:`条件 ${i+1} 的解释`,value:c.explanation,required:true,change:v=>condition(i,{explanation:v})}),h(Refs,{label:`条件 ${i+1} 对应的义务`,objects,kinds:['Obligation'],problem:data.problem_ref,value:c.obligation?[c.obligation]:[],single:true,change:v=>condition(i,{obligation:v[0]||null}),inspect}),h('button',{type:'button',className:'dm-button dm-small',onClick:()=>{const updated=conditions.filter((_,j)=>j!==i);set({citation:{...data.citation,condition_map:updated},source:{...data.source,conditions:updated.map(x=>x.condition)}});}},'移除此条件'))),h('button',{type:'button',className:'dm-button dm-small',onClick:()=>{const updated=[...conditions,{condition:'',assessment:'unresolved',explanation:'',obligation:null}];set({citation:{...data.citation,condition_map:updated},source:{...data.source,conditions:updated.map(c=>c.condition)}});}},'添加适用条件')))),
-      error&&h('p',{role:'alert',className:'dm-error'},error),h('div',{className:'dm-actions'},h('button',{type:'submit',className:'dm-button dm-primary',disabled:busy||uploading},busy?'保存中':uploading?'读取附件中…':'保存记录'),h('button',{type:'button',className:'dm-button',onClick:cancel,disabled:busy},'取消')));
+      error&&h('p',{role:'alert',className:'dm-error'},error),h('div',{className:'dm-actions'},h('button',{type:'submit',className:'dm-button dm-primary',disabled:busy||uploading},busy?'保存中':uploading?'读取附件中…':'保存记录'),h('button',{type:'button',className:'dm-button',onClick:()=>{if(life.current.active&&!life.current.submitting&&!busy)cancel();},disabled:busy},'取消'))));
   }
   return {Editor,Refs,Text,Select};
 };

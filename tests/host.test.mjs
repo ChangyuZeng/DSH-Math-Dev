@@ -19,7 +19,9 @@ test('authenticated Web and native-shaped HTTP requests use the same real backen
   const apiPeer = {id: 'api', principal: {kind: 'owner'}, interactions: 'answer'};
   const connection = {browserPeer, admit: req => req.headers.cookie === 'fixture-browser' ? {peer: browserPeer} :
     req.headers.cookie === 'fixture-api' ? {peer: apiPeer} : {rejection: 401}};
+  const chatTools = new Map();
   apply({get: name => name === 'connection' ? connection : undefined, effect(fn) {fn();},
+    tools: {register(definition) {chatTools.set(definition.name, definition);}},
     webServer: {getOrigin: () => origin, register(route) {handler = route.handler; return () => {};}}},
   {root, python: process.env.DSH_MATH_PYTHON || 'python3'});
   const call = (action, args = {}, {native = false, headers = {}, body} = {}) => fetch(origin + '/dsh-math/api', {

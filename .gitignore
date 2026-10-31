@@ -11,6 +11,15 @@
 !/PROVENANCE.json
 !/cordis.patch.yml
 !/icon.svg
+!/project-fields.json
+!/project-form.cjs
+!/workbench-ui.cjs
+!/workbench_store.py
+!/preparation_tools.py
+!/chat-tools.mjs
+!/math-preview.cjs
+!/pnpm-lock.yaml
+!/THIRD-PARTY-NOTICES.txt
 !/human-api.mjs
 !/host.mjs
 !/live_plugin.mjs
@@ -55,6 +64,7 @@
 !/contracts/
 /contracts/*
 !/contracts/*.json
+!/contracts/workbench-v1.md
 !/contracts/cards/
 /contracts/cards/*
 !/contracts/cards/*.md

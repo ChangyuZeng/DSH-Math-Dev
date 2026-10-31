@@ -7,7 +7,13 @@ const json = name => JSON.parse(readFileSync(new URL(name, root), 'utf8'));
 
 test('rc5 preview declares its runtime target and includes the admission module', () => {
   const manifest = json('package.json');
-  assert.equal(manifest.version, '0.5.0');
+  assert.equal(manifest.version, '0.6.0');
+  for (const file of ['chat-tools.mjs', 'preparation_tools.py', 'workbench_store.py', 'project-fields.json', 'project-form.cjs', 'workbench-ui.cjs', 'math-preview.cjs', 'THIRD-PARTY-NOTICES.txt']) {
+    assert.ok(manifest.files.includes(file), `${file} must be packaged`);
+    assert.ok(statSync(new URL(file, root)).isFile());
+  }
+  assert.equal(manifest.devDependencies.katex, '0.19.1');
+  assert.equal(manifest.devDependencies.marked, '18.1.2');
   assert.ok(manifest.files.includes('process-graph.cjs'));
   assert.ok(manifest.files.includes('graph-ui.cjs'));
   assert.equal(manifest.engines.dsh, '0.2.1-rc.5');

@@ -107,7 +107,7 @@ test('a rejected request never reads its body or reaches the backend queue', asy
   f.connection.admit = () => ({rejection: 401});
   f.ctx.effect = fn => fn();
   f.ctx.webServer.register = route => { handler = route.handler; return () => {}; };
-  apply(f.ctx, {root: '/nonexistent/dsh-math-rejection-must-not-write'});
+  apply(f.ctx, {root: '/nonexistent/dsh-math-rejection-must-not-write', chatPreparation: false});
   const request = {...f.request, method: 'POST', async *[Symbol.asyncIterator]() { bodyReads++; throw Error('body must not be read'); }};
   await handler(request, {writeHead: code => { status = code; }, end: () => {}});
   assert.equal(status, 401); assert.equal(bodyReads, 0);
