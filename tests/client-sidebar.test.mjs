@@ -471,10 +471,15 @@ test('an empty workspace has one primary create action and a secondary import mo
   assert.ok(nodes(start).some(node => node.children.includes('新建与浏览不调用模型，也不会自动开始研究。')));
 
   const legacy = byClass(tree, 'dm-import');
-  assert.equal(legacy.type, 'div');
-  assert.equal(button(legacy, '导入旧研究库（只读副本）').props.variant, 'ghost');
+  assert.equal(legacy.type, 'section');
+  assert.equal(legacy.props['aria-label'], '导入旧研究库（只读副本）');
+  assert.equal(button(legacy, '导入旧研究库').props.variant, undefined, 'Import stays secondary to project creation');
+  assert.equal(button(legacy, '导入旧研究库').props.title, '导入旧研究库（只读副本）');
+  assert.ok(byClass(legacy, 'dm-import-mark'));
+  assert.ok(nodes(legacy).some(node => node.children.includes('只读副本')));
+  assert.ok(nodes(legacy).some(node => node.children.includes('仅供查阅与回放，不会自动开始研究。')));
   assert.equal(nodes(tree).some(node => node.type?.name === 'LegacyImport'), false);
-  await button(legacy, '导入旧研究库（只读副本）').props.onClick();
+  await button(legacy, '导入旧研究库').props.onClick();
   const imported = nodes(t.render()).find(node => node.type?.name === 'LegacyImport');
   assert.equal(imported.props.sessionId, 'session-empty');
   imported.props.close();

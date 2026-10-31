@@ -83,7 +83,17 @@ globalThis.DshMathTheme = `
 .dm-code { max-height: 460px; overflow: auto; padding: 10px; border: 1px solid var(--dm-border); border-radius: 7px; background: var(--dm-bg); font: 11px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 .dm-details { margin: 10px 0; }
 .dm-details > summary { cursor: pointer; color: var(--dm-muted); font-size: 12px; }
-.dm-import { margin-top: 16px; padding: 12px 0 0; border-top: 1px solid var(--dm-border); }
+.dm-import { display: grid; grid-template-columns: 36px minmax(0, 1fr); align-items: center; gap: 12px; max-width: 460px; margin: 20px auto 4px; padding: 16px; border: 1px solid var(--dm-border); border-radius: 12px; background: var(--dm-panel); }
+.dm-import-mark { display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; border: 1px solid var(--dm-border); border-radius: 10px; background: var(--dm-bg); color: var(--dm-muted); }
+.dm-import-mark .dm-icon { width: 20px; height: 20px; }
+.dm-import-copy { min-width: 0; }
+.dm-import-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.dm-import-heading h3 { margin: 0; font-size: 13px; font-weight: 650; line-height: 1.5; }
+.dm-import-copy p { margin: 5px 0 0; color: var(--dm-muted); font-size: 11px; line-height: 1.7; overflow-wrap: anywhere; }
+.dm-import-action { grid-column: 2 / -1; }
+.dm-import-action .dm-button { min-height: 32px; padding: 5px 12px; background: var(--dm-bg); }
+.dm-import-action .dm-button:hover:not(:disabled) { background: var(--dm-soft); }
+.dm-import-hint { grid-column: 1 / -1; margin: 0; padding-top: 11px; border-top: 1px solid var(--dm-border); color: var(--dm-muted); font-size: 11px; line-height: 1.6; text-align: center; }
 .dm-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 10px; }
 .dm-form-grid .dm-wide { grid-column: 1 / -1; }
 .dm-sidebar .dm-form-grid { grid-template-columns: 1fr; }
@@ -210,6 +220,9 @@ globalThis.DshMathTheme = `
   .dm-panel, .dm-goal { padding: 10px; }
   .dm-panel-header { flex-wrap: wrap; }
   .dm-target-cards { grid-template-columns: 1fr; }
+  .dm-import { padding: 14px; gap: 10px; }
+  .dm-import-action { grid-column: 1 / -1; }
+  .dm-import-action .dm-button { width: 100%; }
   .dm-graph-board { padding: 10px 5px; }
   .dm-graph-children { padding-left: 10px; margin-left: 5px; }
   .dm-graph-children > .dm-graph-branch::before { left: -11px; width: 10px; }
