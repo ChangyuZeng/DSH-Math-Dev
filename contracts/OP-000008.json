@@ -1,0 +1,49 @@
+{
+  "format": "dsh-math-m-research-contract-v1",
+  "protocol_id": "DSH-MATH-M-PILOT-v1",
+  "op_id": "OP-000008",
+  "legacy_mop_id": "MOP-09-G75-P149",
+  "sequence": 1,
+  "status": "engineering_contract_ready_pending_scientific_review",
+  "curation_state": "needs_review",
+  "problem_card": {"path": "contracts/cards/OP-000008.md", "sha256": "cabfd584b36b70e1a01d0d899995328599a08826ef56720ee9beddea82cb6c6c", "original_path": "report/math-harness-handoff/reviews/2026-10-26-kimi-code/upload-review/ai4math-problems/problems/OP-000008.md"},
+  "problem": {
+    "title": "At least 149 points with no three collinear in a 75 by 75 integer grid",
+    "statement": "Construct 149 or 150 distinct lexicographically ordered integer points in {0,...,74}^2 with no three collinear.",
+    "quantifiers": "there exists a set of 149 or 150 points in the 75 by 75 grid",
+    "domain": "integer coordinate pairs with 0<=x,y<=74",
+    "conventions": ["lexicographic ordering by x then y; every rational slope and every unordered triple is checked"],
+    "target_type": "construct",
+    "parent": null,
+    "relation": "",
+    "completion_criteria": ["Supply exactly 149 or 150 distinct in-bounds lexicographically ordered integer points and pass every exact integer cross-product triple check."],
+    "sources": ["OP-000008 frozen card and R10-R12 snapshots dated 2026-10-26; refresh within 24 hours before launch"],
+    "knowledge_status": "unverified_open"
+  },
+  "problem_ref": {"id": "P", "rev": 1},
+  "checker": {"id": "grid75_p149_v1", "version": "1", "path": "runtime/p2c/checkers/grid75_p149_v1.py", "sha256": "f2e87461be263ae08eda76ce6604984dc046c8ae98f2a3603fd536799eefa413"},
+  "formal_scope": "Formal OP-000008 submission: exactly 149 or 150 lexicographic points and every unordered triple; a program pass is a candidate pending scientific review.",
+  "research_scope": "Research-only grid75 baseline or partial witness: 1..148 lexicographic noncollinear points; never a formal 149/150 submission or a global exclusion.",
+  "success": {"point_counts": [149, 150], "ordering": "lexicographic", "coordinates": "JSON integers, not booleans or floats", "distinct": true, "triple_coverage": "all unordered triples by exact integer cross product", "150_triples": 551300, "149_meaning": "lower-bound improvement candidate", "150_meaning": "attains the elementary upper bound and determines this instance"},
+  "public_baselines": [
+    {"id": "R10", "claim": "148-point public baseline; no public 149 found in directed review", "page_declared": true, "downloaded": false, "independently_recomputed": false, "mathematically_reviewed": false, "accessed_at": "2026-10-26"},
+    {"id": "R11", "claim": "maintainer table dated 2026-10-24 has no n=75 2n=150 entry; this alone does not prove 149 open", "page_declared": true, "downloaded": true, "independently_recomputed": false, "mathematically_reviewed": false, "accessed_at": "2026-10-26"},
+    {"id": "R12", "claim": "related exact ILP comparisons are small-grid only", "page_declared": true, "downloaded": true, "independently_recomputed": false, "mathematically_reviewed": false, "accessed_at": "2026-10-26"}
+  ],
+  "main_obligation": {"id": "O-MAIN", "local": false},
+  "local_obligations": [
+    {"id": "O-BASELINE", "scope": "independently recompute a fixed public 148 object if obtained; known reproduction only", "selected": false},
+    {"id": "O-LOCAL", "scope": "one fixed-seed fixed-neighborhood exhaustive result or one row/slope-conflict lemma with complete proof text; never global nonexistence", "selected": false}
+  ],
+  "result_classes": ["target_candidate_pending_review", "known_reproduction", "valid_below_target", "reviewed_local_result", "no_progress", "technically_unevaluable"],
+  "model": null,
+  "effort": null,
+  "channel": null,
+  "allowed_tools": ["research_read", "note_save", "obligation_save", "evidence_register", "check_witness", "material_read", "file_read", "file_write", "python_run"],
+  "proposed_limits_not_authorized": {"wall_seconds": 2700, "requests": 24, "tools": 80, "cpu_seconds": 1800, "cpu_cores": 1, "memory_bytes": 2147483648, "artifact_bytes": 268435456, "tool_timeout_seconds": 60, "cleanup_seconds": 120, "token_limit": null, "automatic_retries": 0, "cross_problem_transfer": false},
+  "stop_rules": ["stop after a 149 or 150 candidate and receipt; do not automatically continue from 149 to 150", "first exhausted frozen budget stops scheduling without retry or transfer", "source conflict or equivalent public result pauses for scientific review", "identity, integrity, network, authorization or protocol failure stops and isolates the run", "cleanup_unverified pauses the whole pilot", "recovery is read-only and never resumes in-flight inference"],
+  "review": {"R1": null, "R2": null, "source_reviewer": null, "technical_status": "pending", "scientific_status": "needs_review"},
+  "source_refresh": {"required_within_hours": 24, "performed_for_launch": false, "last_directed_review": "2026-10-26"},
+  "execution_authorized": false,
+  "authorization_reference": null
+}

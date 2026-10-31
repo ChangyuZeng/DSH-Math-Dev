@@ -1,0 +1,49 @@
+{
+  "format": "dsh-math-m-research-contract-v1",
+  "protocol_id": "DSH-MATH-M-PILOT-v1",
+  "op_id": "OP-000006",
+  "legacy_mop_id": "MOP-32-RING15-D20",
+  "sequence": 2,
+  "status": "engineering_contract_ready_pending_scientific_review",
+  "curation_state": "needs_review",
+  "problem_card": {"path": "contracts/cards/OP-000006.md", "sha256": "fda4b2aee548cfcfdb0457945f3836487df7efe7fdb912ec5bcc387d07727b09", "original_path": "report/math-harness-handoff/reviews/2026-10-26-kimi-code/upload-review/ai4math-problems/problems/OP-000006.md"},
+  "problem": {
+    "title": "A 15-pair ring-loading construction strictly above 9/8 on a fixed dyadic grid",
+    "statement": "Construct ordered integer pairs (U_i,V_i), i=1..15, with U_i,V_i>=0, U_i+V_i<=2^20, and H>=1179649 under the original min-over-routes max-over-prefixes definition.",
+    "quantifiers": "there exists an ordered sequence of 15 pairs",
+    "domain": "nonnegative integers on the fixed D=2^20 grid",
+    "conventions": ["Z_i is V_i or -U_i; minimize the maximum absolute cut over all routes and prefixes including k=15"],
+    "target_type": "construct",
+    "parent": null,
+    "relation": "",
+    "completion_criteria": ["Supply pairs as exactly 15 JSON integer pairs and reach H>=1179649 by exhaustive exact integer recomputation."],
+    "sources": ["OP-000006 frozen card and R01-R05 snapshots dated 2026-10-26; refresh within 24 hours before launch"],
+    "knowledge_status": "unverified_open"
+  },
+  "problem_ref": {"id": "P", "rev": 1},
+  "checker": {"id": "ring15_d20_v1", "version": "1", "path": "runtime/p2c/checkers/ring15_d20_v1.py", "sha256": "f5a71b38a6509b8286a221764b2c8cb5715799458ad1b0dead4806f96a12c5e2"},
+  "formal_scope": "Formal OP-000006 submission: all 30 ordered integers, all 32768 routes and all 15 prefixes per route; a program pass is a candidate pending scientific review.",
+  "success": {"D": 1048576, "ordered_pairs": 15, "H_minimum": 1179649, "known_baseline_H": 1179648, "assignments": 32768, "prefix_steps": 491520, "all_30_integers_and_order_variable": true, "fixed_core_allowed": false, "float_accepted": false, "general_claim": "direct definition lower-bound candidate only; no optimality or exact general constant"},
+  "public_baselines": [
+    {"id": "R01-R02", "claim": "arXiv v3 and author repository retain older 1.119 construction and original definition", "page_declared": true, "downloaded": true, "independently_recomputed": false, "mathematically_reviewed": false, "accessed_at": "2026-10-26"},
+    {"id": "R03-JSAgent", "claim": "public JSAgent object displays 1.125; zero-model unit test independently recomputed H=1179648=9/8 with all 32768 routes and 491520 prefix steps", "page_declared": true, "downloaded": true, "independently_recomputed": true, "mathematically_reviewed": false, "accessed_at": "2026-10-26", "recomputed_at": "2026-10-27"},
+    {"id": "R03-Wilhelmina", "claim": "public Wilhelmina object displays 1.125; exact score not independently replayed", "page_declared": true, "downloaded": true, "independently_recomputed": false, "mathematically_reviewed": false, "accessed_at": "2026-10-26"},
+    {"id": "R04", "claim": "public exact 9/8 fixed-core and limited exclusion statement", "page_declared": true, "downloaded": false, "independently_recomputed": false, "mathematically_reviewed": false, "accessed_at": "2026-10-26"}
+  ],
+  "main_obligation": {"id": "O-MAIN", "local": false},
+  "local_obligations": [
+    {"id": "O-BASELINE", "scope": "exactly reproduce 9/8 with minimizing mask, 32768 routes and 491520 prefix steps; known reproduction only", "selected": false},
+    {"id": "O-LOCAL", "scope": "one explicitly bounded subspace/exchange certificate or one cut/invariant lemma with exact scope; never global nonexistence", "selected": false}
+  ],
+  "result_classes": ["target_candidate_pending_review", "known_reproduction", "valid_below_target", "reviewed_local_result", "no_progress", "technically_unevaluable"],
+  "model": null,
+  "effort": null,
+  "channel": null,
+  "allowed_tools": ["research_read", "note_save", "obligation_save", "evidence_register", "check_witness", "material_read", "file_read", "file_write", "python_run"],
+  "proposed_limits_not_authorized": {"wall_seconds": 2700, "requests": 24, "tools": 80, "cpu_seconds": 1800, "cpu_cores": 1, "memory_bytes": 2147483648, "artifact_bytes": 268435456, "tool_timeout_seconds": 60, "cleanup_seconds": 120, "token_limit": null, "automatic_retries": 0, "cross_problem_transfer": false},
+  "stop_rules": ["stop after an H>=1179649 candidate and receipt; do not raise the threshold", "first exhausted frozen budget stops scheduling without retry or transfer", "fixed-core exclusion or low scores never imply global nonexistence", "source conflict or equivalent public result pauses for scientific review", "identity, integrity, network, authorization or protocol failure stops and isolates the run", "cleanup_unverified pauses the whole pilot", "recovery is read-only and never resumes in-flight inference"],
+  "review": {"R1": null, "R2": null, "source_reviewer": null, "technical_status": "pending", "scientific_status": "needs_review"},
+  "source_refresh": {"required_within_hours": 24, "performed_for_launch": false, "last_directed_review": "2026-10-26"},
+  "execution_authorized": false,
+  "authorization_reference": null
+}

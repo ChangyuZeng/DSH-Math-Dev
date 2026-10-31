@@ -1,0 +1,27 @@
+dsh-math — internal development and review package
+
+This package includes local Math Harness P2-C runtime files under runtime/p2c.
+It also includes new fixed checkers whose exact Ring15, Q7 and grid75 algorithms
+were derived from harness/dsh-p3a/image/math/checker.py, and new M-pilot files
+using design patterns from the local preflight and P2-C adapter. Original paths,
+current hashes and reference hashes are recorded in PROVENANCE.json. No legacy
+six-task executor, live entry, authorization data, credentials or model catalog
+is bundled.
+
+No explicit license grant covering these local prototype files was found.
+This notice does not grant redistribution rights or relicense those files.
+The package is private and marked UNLICENSED. Public redistribution requires
+confirmation from the relevant rights holders, including the project's local
+prototype contributors. No copyright owner is inferred from a filesystem path.
+
+Runtime peers (not bundled): DeepSeek Harness / Cordis packages (MIT), React
+(MIT). dsh-codex (Apache-2.0) is an optional separately installed companion;
+its code and credentials are not bundled. The original notices of any peers
+remain in their separately installed packages. Python and Node runtimes are
+also external requirements and are not included in this archive.
+
+Research contracts contain byte-preserved copies of the three local candidate
+problem cards. Research materials, papers, attachments, run logs and exports
+are user data with separate rights and are not otherwise included in the plugin
+installation archive. Scientific review and execution authorization remain
+separate from this package notice.

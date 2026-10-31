@@ -1,0 +1,203 @@
+{
+  "format": "dsh-math-local-runtime-provenance-v2",
+  "origin": "Math Harness P2-C schema 3 plus new DSH-MATH-M-PILOT-v1 preview",
+  "license_status": "no_explicit_grant_found_public_redistribution_pending",
+  "files": [
+    {
+      "path": "runtime/p2c/schema.py",
+      "origin": "harness/dsh-p2c/schema.py",
+      "sha256": "a9c5f96985d23c7b3d98798dc0d308c229eb07fee5b1ed864414be7e1c4ac9a7",
+      "relationship": "unchanged_snapshot"
+    },
+    {
+      "path": "runtime/p2c/research_store.py",
+      "origin": "harness/dsh-p2c/research_store.py",
+      "sha256": "004315c08d0470e7146eda9e3021600287d0feacc9a18aa55b1e3c5472f53735",
+      "relationship": "unchanged_snapshot"
+    },
+    {
+      "path": "runtime/p2c/domain.py",
+      "origin": "harness/dsh-p2c/domain.py",
+      "sha256": "6ba3ca2ee464e89ff4a0f6beaa51eae353efb2d129e9727b146e3cf724aad2ca",
+      "relationship": "derived_snapshot_0.3.1"
+    },
+    {
+      "path": "runtime/p2c/render.py",
+      "origin": "harness/dsh-p2c/render.py",
+      "sha256": "c6fb1c611b17f27e6f144e498965e7c97f0aa661b3c41edd61ab78ba80089efc",
+      "relationship": "unchanged_snapshot"
+    },
+    {
+      "path": "runtime/p2c/exporting.py",
+      "origin": "harness/dsh-p2c/exporting.py",
+      "sha256": "b1abd07c67c49bb5084d7c7d9aebe2a7215ca0bea7b78682583a47b8eef19467",
+      "relationship": "derived_snapshot_0.3.1"
+    },
+    {
+      "path": "runtime/p2c/verify_export.py",
+      "origin": "harness/dsh-p2c/verify_export.py",
+      "sha256": "b790738a6e4c293a245dd877161b63ecd82d644c1275a50a9fdff95b7277e4c9",
+      "relationship": "unchanged_snapshot"
+    },
+    {
+      "path": "runtime/p2c/cli.py",
+      "origin": "harness/dsh-p2c/cli.py",
+      "sha256": "c2aba863ef1922c82a079100d3555233c6e7715e4affbbc5fc5bc184136ea314",
+      "relationship": "unchanged_snapshot"
+    },
+    {
+      "path": "runtime/p2c/checkers/primitive_pythagorean_v1.py",
+      "origin": "harness/dsh-p2c/checkers/primitive_pythagorean_v1.py",
+      "sha256": "9a6039b56fc4e5583f3475472687a14e2263de98faed3798f43c78e5c1933a77",
+      "relationship": "unchanged_snapshot"
+    },
+    {
+      "path": "runtime/p2c/checking.py",
+      "origin": "harness/dsh-p2c/checking.py",
+      "base_sha256": "bf70e230d119893803b7860c15a48ebf0ba80915fbe0c53a979b4c8473e0a756",
+      "sha256": "0843bdf36ca659dcdaca4ea4595b496d8b04ff27c851ed8ed9ee91ebc115ae47",
+      "relationship": "generalized_fixed_registry_preserving_two_commit_semantics"
+    },
+    {
+      "path": "runtime/p2c/checkers/ring15_d20_v1.py",
+      "origin": "new fixed checker; exact algorithms derived from harness/dsh-p3a/image/math/checker.py",
+      "algorithm_source_sha256": "6b1e9ca21516af229c0e39211e4827bbcd6d0449eeec4bf3ce00ee5540f44a75",
+      "sha256": "f5a71b38a6509b8286a221764b2c8cb5715799458ad1b0dead4806f96a12c5e2",
+      "relationship": "new_allowlisted_algorithm_only_no_legacy_executor"
+    },
+    {
+      "path": "runtime/p2c/checkers/q7_e305_v1.py",
+      "origin": "new fixed checker; exact algorithms derived from harness/dsh-p3a/image/math/checker.py",
+      "algorithm_source_sha256": "6b1e9ca21516af229c0e39211e4827bbcd6d0449eeec4bf3ce00ee5540f44a75",
+      "sha256": "f103c84f8037386a05e3ee535bd79748016f6b2bb53c60237b6404ea1af2d11a",
+      "relationship": "new_allowlisted_algorithm_only_no_legacy_executor"
+    },
+    {
+      "path": "runtime/p2c/checkers/grid75_p149_v1.py",
+      "origin": "new fixed checker; exact algorithms derived from harness/dsh-p3a/image/math/checker.py",
+      "algorithm_source_sha256": "6b1e9ca21516af229c0e39211e4827bbcd6d0449eeec4bf3ce00ee5540f44a75",
+      "sha256": "f2e87461be263ae08eda76ce6604984dc046c8ae98f2a3603fd536799eefa413",
+      "relationship": "new_allowlisted_algorithm_only_no_legacy_executor"
+    },
+    {
+      "path": "runtime/p2c/checkers/registry.py",
+      "origin": "new DSH-MATH-M-PILOT-v1 fixed registry",
+      "sha256": "85b44568e15af96d5c106cb1b861da5c28499498ce218e22196011b135ff2306"
+    },
+    {
+      "path": "model_tools.py",
+      "origin": "new DSH-MATH-M-PILOT-v1 host-bound implementation",
+      "sha256": "c2a24fb3eb937dd3997f57eb4dada417ef2bda16f8d4ee5eebbf3002ee327c71"
+    },
+    {
+      "path": "m_runner.py",
+      "origin": "new DSH-MATH-M-PILOT-v1 host-bound implementation",
+      "sha256": "65bcb927a01838181707bf2df97a88336634fabc604f05b34e9c1f7dfe2a3435"
+    },
+    {
+      "path": "run_ledger.py",
+      "origin": "new DSH-MATH-M-PILOT-v1 host-bound implementation",
+      "sha256": "bfbd5f0db5fbdd0d1dd253d0a614911cf956d8a2f002802bf66a90d104460163"
+    },
+    {
+      "path": "run_closeout.py",
+      "origin": "new DSH-MATH-M-PILOT-v1 host-bound implementation",
+      "sha256": "72024b793086a6d7e6cb62bbf6587b4bdf61c6308762370f78f3c53016567579"
+    },
+    {
+      "path": "run_recovery.py",
+      "origin": "new DSH-MATH-M-PILOT-v1 host-bound implementation",
+      "sha256": "b102284c14c37c32c706370487425854940c2a44f570fb7bca6b8420bde37231"
+    },
+    {
+      "path": "isolated_tools.py",
+      "origin": "new DSH-MATH-M-PILOT-v1 host-bound implementation",
+      "sha256": "ff9ec93d46f3ff794e7d6c1728463c7c7e1a796b0b52b45e331217f37696a8b4"
+    },
+    {
+      "path": "run_control.py",
+      "origin": "new DSH-MATH-M-PILOT-v1 host-bound implementation",
+      "sha256": "3432e7c6b7177107572b33796c4545cc14b258a63272d4317cea666f35b0caff"
+    },
+    {
+      "path": "live_plugin.mjs",
+      "origin": "new DSH-MATH-M-PILOT-v1 host-bound implementation",
+      "sha256": "e0fb5103e352095b64b77f71351c85c628d3fcf5fc65bd9dd702b4601f6eef77"
+    },
+    {
+      "path": "live_runner.mjs",
+      "origin": "new DSH-MATH-M-PILOT-v1 host-bound implementation",
+      "sha256": "bc6d0d1e0397ee0e0ffd37e681f69b4a9c20383e8536da0cc1c693f744eb4f36"
+    },
+    {
+      "path": "contracts/OP-000006.json",
+      "origin": "new engineering research contract; scientific review and execution remain pending",
+      "sha256": "791b1cddfd147b043e9bded0f00293263d68613d373c484fe1d84e6f0aa5b19a"
+    },
+    {
+      "path": "contracts/cards/OP-000006.md",
+      "origin": "byte-preserved copy of ../../report/math-harness-handoff/reviews/2026-10-26-kimi-code/upload-review/ai4math-problems/problems/OP-000006.md",
+      "sha256": "fda4b2aee548cfcfdb0457945f3836487df7efe7fdb912ec5bcc387d07727b09",
+      "relationship": "unchanged_card_copy"
+    },
+    {
+      "path": "contracts/OP-000007.json",
+      "origin": "new engineering research contract; scientific review and execution remain pending",
+      "sha256": "422b93aef5f09a444c558522e0da73c8c0efc2501ef542f927435774eae31ab1"
+    },
+    {
+      "path": "contracts/cards/OP-000007.md",
+      "origin": "byte-preserved copy of ../../report/math-harness-handoff/reviews/2026-10-26-kimi-code/upload-review/ai4math-problems/problems/OP-000007.md",
+      "sha256": "3573048cd3620e31447d52eae5caa5f9689e1a415888d6541c0aa71e5e3e1085",
+      "relationship": "unchanged_card_copy"
+    },
+    {
+      "path": "contracts/OP-000008.json",
+      "origin": "new engineering research contract; scientific review and execution remain pending",
+      "sha256": "72a27e69fda54e3bcecd141bf083f2e47da4f3703309331f2807f7f0fd03ea87"
+    },
+    {
+      "path": "contracts/cards/OP-000008.md",
+      "origin": "byte-preserved copy of ../../report/math-harness-handoff/reviews/2026-10-26-kimi-code/upload-review/ai4math-problems/problems/OP-000008.md",
+      "sha256": "cabfd584b36b70e1a01d0d899995328599a08826ef56720ee9beddea82cb6c6c",
+      "relationship": "unchanged_card_copy"
+    }
+  ],
+  "references": [
+    {
+      "path": "harness/dsh-ring15-preflight/dsh-plugin.mjs",
+      "sha256": "28c5f7c26ae6cfa28db012d13a4d31d8cae02b4495cbbe319a129fb2a98d5222",
+      "use": "design pattern only; no live entry, whitelist, fetch interception, credentials, budget, or authorization inherited"
+    },
+    {
+      "path": "harness/dsh-ring15-preflight/adapter.mjs",
+      "sha256": "9d27b1130ce5909176e26e291aca9af372d3370374cc40d537eace8686f8722a",
+      "use": "design pattern only; no live entry, whitelist, fetch interception, credentials, budget, or authorization inherited"
+    },
+    {
+      "path": "harness/dsh-ring15-preflight/ledger.py",
+      "sha256": "cec6ce8ee7c2f4fadeb842f41abb0242a25f05aea89ba70f6b208b3d2360dd31",
+      "use": "design pattern only; no live entry, whitelist, fetch interception, credentials, budget, or authorization inherited"
+    },
+    {
+      "path": "harness/dsh-ring15-preflight/closeout.mjs",
+      "sha256": "1cf157dfade70f05192794a5a0b1adff4e52d2ffc3f21d5ca12ff6e1c8485089",
+      "use": "design pattern only; no live entry, whitelist, fetch interception, credentials, budget, or authorization inherited"
+    },
+    {
+      "path": "harness/dsh-ring15-preflight/recovery.py",
+      "sha256": "39f04a9b319b45ab31142f2d6f7c575ee9779ae71fdf5f2f8fe1387a0c1b2974",
+      "use": "design pattern only; no live entry, whitelist, fetch interception, credentials, budget, or authorization inherited"
+    },
+    {
+      "path": "harness/dsh-ring15-preflight/artifacts.py",
+      "sha256": "6653e26a033c7ec1b1a3a25d2b161a5dac047e733370bd938d3b0be6d738393e",
+      "use": "design pattern only; no live entry, whitelist, fetch interception, credentials, budget, or authorization inherited"
+    },
+    {
+      "path": "harness/dsh-p2c/tools.py",
+      "sha256": "3b4899dded858bb3a528ca0ce73cb357665da939e027f31457b401be1d0a05c0",
+      "use": "offline model adapter pattern only"
+    }
+  ]
+}

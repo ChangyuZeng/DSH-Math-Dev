@@ -1,0 +1,115 @@
+# dsh-math 0.5.0 私有本地研究预览
+
+0.5.0 新增“研究过程”只读图：从已有研究账本重建项目 → 来源 → 已记录动作 → 版本产物，用节点卡与细线分组，点击查看摘要、精确 `ID@rev`、原始记录定位和显式引用。借鉴 Archify 的阅读方式，自行实现原生 Client 组件；不依赖其私有模板、不嵌 HTML、不修改第三方插件。
+
+0.4.1 调整信息层级而不改研究语义：空项目时只有一个“新建项目”主入口，不显示空选择器；旧库导入是底部折叠次入口。项目概览先呈现目标与登记操作，统计合并为紧凑条带，空分组不占卡片；完整分组仍在“记录与审核”，概览超过三条时提供“查看全部”。标题优先、精确 `ID@rev` 次级展示，引用和人工审核仍完整可达。
+
+0.4.0 是面向 DSH 0.2.1-rc.5 的 Desktop / Web 验收版，不是对所有 rc5 场景的兼容保证。沿用原研究后端、schema 4、固定 checker 和导出语义，新增受信浏览器入口校验、会话隔离与 Better Sidebar 可选依赖生命周期。包的精确运行时要求不继承 0.3.2 的版本例外；其他 DSH 版本需另行验证。
+
+0.3.2 新增 `DSH-MATH-M-SELF-DIRECTED-v2`：保留 `gpt6.1-sol-max` → `openai-codex/gpt-6.1-sol/max`，新增 `gpt6-astra-max` → `openai-codex/gpt-6-astra/max` 和 `gpt6-astra-ultra` → `openai-codex/gpt-6-astra/ultra`，路由均由 manifest 显式冻结并在宿主核对；当前 dsh-codex 未暴露 ultra 时会失败关闭，不自动降级。材料工具支持空名称列出精确清单，未知名称返回可用名称；研究工具说明补充版本和 checker 关联要求。Python 长调用要求增量写检查点，外层宿主在内层工具超时后额外保留30秒回执时间，避免 timeout 变成 unknown；主动取消仍立即封锁并清理。
+
+0.3.1 新增真实 SDK 运行器与 `DSH-MATH-M-SELF-DIRECTED-v1`：用户指定 `gpt6.1-sol-max` 对应 `openai-codex/gpt-6.1-sol/max`，整次墙钟/请求/工具/累计CPU总额度显式为 null，人工审核后置。本轮用户指令作为新授权，不另要求逐hash确认；24小时来源刷新保留。单工具60秒、2GiB RSS软上限、256MiB工作区及120秒清理是机器保护。`research_finish` 或模型final/idle结束，精确达标回执触发封口，技术异常不自动重试。
+
+`live_runner.mjs` 使用隔离profile和实际DSH registry，`live_plugin.mjs` 在LLM stream前reserve、终态settle，并核对模型/effort/工具集合。缺少runtime.ready则不发送提示。0.3.0验收中的工具槽是Map夹具；0.3.1新增真实runtime零供应方请求验证。以下旧pilot数值和合同描述仅适用于保留兼容的v1协议，不能覆盖新self-directed清单。
+
+本插件最初基于 DSH 0.2.1-rc.2 Web，与 dsh-codex 分别安装。保留 0.2 的 schema 4 表单、精确版本引用、人工审核预览、联合回放和自包含导出，以及后续三题最小 M 型研究闭环。`private: true`、`UNLICENSED` 和公开再分发许可待确认保持不变。
+
+人工界面采用上下文式卡片布局，分为研究概览、研究过程、记录与审核、回放与导出。安装 `dsh-better-sidebar` 时，`dsh-math:projects` 注册为当前会话/表面的单例侧边栏标签页，页头“数学项目”负责唤起该标签；未安装或服务卸载时保留原会话视图与浮窗回退。推荐保留 Better Sidebar 在前的加载顺序；0.4.0 同时处理服务迟加载、卸载和重新挂载，并清理自己注册的标签及样式。标签禁用、尚未就绪或缺少会话时显示明确提示；不会把 `openTab` 的 void 返回值当作可见成功回执。
+
+侧栏布局按面板本身的宽度响应，长 `ID@rev` 和引用列表允许换行，使用宿主的明暗主题色。点击登记会切到“记录与审核”，编辑器置于列表之前并聚焦标题；表单保存、取消及附件读取使用统一控件样式。同项目刷新保留未保存草稿及回放来源，切换或取消选择项目则清空它们，请先保存再切换。已接受和已关闭记录在同组展示，但程序检查通过不等于全局证明或 R1/R2 通过。
+
+会话变更会重挂载项目视图，旧请求不能填入新会话的界面或继续派发后续请求；同一视图在操作未结束时不重复派发。已经发往 Host 的写入仍可能完成，关闭界面不等于撤销。短标题和路径使用单行输入，历史值包含换行时仍用多行控件保留原文。
+
+自动测试中的 hook/元素断言不代替真实浏览器或原生 Desktop 验收。先在 math-dev 检查窄侧栏、项目选择、记录编辑/取消、人工预览及新项目导出，再经用户授权安装 Desktop，并配置新的隔离验收目录及 `modelRuns: []`。需要重启时另行确认。验证含 program Review 的包会独立复算 checker；无研究授权时仅使用新建的无运行、无 program Review 验收夹具，不重验历史包或重跑开放题。
+
+三题原合同位于 `contracts/`，保持原历史提案与 `needs_review`；新的self-directed运行使用独立冻结快照。模型和effort按用户最新决定执行，人工审核后置，来源仍在启动前刷新。旧Ring15 live入口不使用，Q7本轮不启动。
+
+## 模型工具与人工权限
+
+人工 API 继续使用 `x-dsh-math: human-ui-v1` 和原 [backend.py](<backend.py>)。入口由 [human-api.mjs](<human-api.mjs>) 校验：本地监听地址、真实 loopback socket、精确 Host、JSON 与 UI 标记均必需；存在 Origin 时必须严格匹配，不接受空字符串、字面值 `null` 或跨站来源。在此基础上调用 DSH `connection.admit` 验证原始请求凭据，并要求返回的 peer 与 `connection.browserPeer` 是同一对象。API peer 即使是 owner / answer 也不放行；连接服务缺失或异常时失败关闭。
+
+原生 Desktop 协议桥会移除 Origin 并注入 Host 签名的浏览器 cookie。缺失 Origin 仅在上述全部检查通过后可接受，绝非单凭缺失 Origin 或标记放行；不修改 Desktop 桥、不直接绕行 streamBaseUrl。此校验认证浏览器会话，不证明每次操作一定来自真人点击。POST、1 MiB 限制、串行队列与后端人工审核规则保持不变。
+
+模型工具经独立 [model_tools.py](<model_tools.py>) 入口执行，宿主从 `exec.agent.id/callId` 绑定 session/run/tool_call、project 和 `actor=model`，模型参数不能指定这些身份或宿主路径。
+
+固定工具为 `research_read`、`note_save`、`obligation_save`、`evidence_register`、`check_witness`、`material_read`、`file_read`、`file_write`、`python_run`。模型不能改 Problem、提交 human/program Review、撤 Review、导出、改授权/预算、跨项目访问或调用 shell/子代理。程序 Review 只表示固定技术检查；即使 `target_met=true`，状态仍为“程序通过/候选待审”，不是数学接受。
+
+只有显式配置宿主绑定时才注册模型工具：
+
+```yaml
+config:
+  root: /absolute/local/research-data
+  python: /absolute/path/to/python3
+  modelRuns:
+    - projectId: existing-project-uuid
+      sessionId: host-session-uuid
+      runId: one-explicit-run-id
+      manifest: /absolute/host-owned/run-manifest.json
+```
+
+保留兼容的 `DSH-MATH-M-PILOT-v1` 不变；新 `DSH-MATH-M-SELF-DIRECTED-v1` 使用用户本轮指令作为授权依据，显式null研究总额度。`live_runner.mjs`/`live_plugin.mjs`提供真实接入，零模型验收仍必须标注requests=0和禁止真实推理。三份原合同的45分钟/24请求/80工具不被继承。
+
+## 三题固定 checker
+
+- `ring15_d20_v1`：15 对有序整数，完整枚举 32,768 个选择和 491,520 个前缀步骤，`H>=1179649` 才达标。
+- `q7_e305_v1`：合法 Q7 边域、去重、`u<v` 和字典序，全部 672 个二维面；formal 至少 305 边。
+- `grid75_p149_v1`：整数坐标、边界、去重和字典序，全部三元组精确叉积；formal 恰为 149/150 点。
+
+Q7 的 0–304 边与 75 格的 1–148 点只能在明确 research scope 中作基线/部分对象反馈，不能作为 formal 提交，不能关闭主目标。非法输入、执行错误、合法未达标和达标候选分开。测试阈值函数或合成样例不是数学见证。
+
+## 隔离材料、文件和 Python
+
+材料只能按清单中的名称读取并逐次核对 SHA；`material_read` 的 `name:""` 返回精确名称、字节和 hash，未知名称错误列出可用名称。文件工具只接受运行工作区内的规范相对路径，拒绝链接、穿越和敏感文件名。`python_run` 不开放 shell，在 macOS 使用 `/usr/bin/sandbox-exec`：拒绝网络、`/Users` 下工作区外读取、工作区外写入及子进程 fork；环境不含凭据。CPU 和单文件限制由 OS rlimit 执行，内存由宿主 RSS 轮询软上限执行，超限终止，不声称这是内核硬内存限制。长计算应增量写检查点；内层 timeout 先于外层宿主回执期限返回。其他平台没有已验收沙箱时失败关闭。
+
+## 预算、取消和只读恢复
+
+`run_ledger.py` 使用逐 run 哈希链，请求先 reserve、工具先记账后执行，各上限先到先停。缺失 usage 保持 `null`，不把零模型操作标签当作整次 session 用量。取消先在宿主同步封住新模型/工具，再取消在途进程；清理不发起新推理或 checker。`cleanup_unverified` 必须暂停后续试点。
+
+`run_recovery.py` 只读核对清单、材料、账本、研究日志、最后完成工具、unknown 和 `check.started` 后的 incomplete，不重放在途调用。损坏日志、附件或来源变化失败关闭。
+
+## 研究过程图与独立快照
+
+- 首次进入“研究过程”只调用现有只读 `replay`，`sources: []`；已有研究事件才是动作，一个事件可生成多个精确版本。不会从标题、时间先后或所有 revision 猜测执行因果，也不调用 `run_control`、模型工具、checker 或导出。
+- 项目、来源是布局分组；细线表示分组/产物归属。点击卡片查看状态、摘要、原始 `seq/hash` 定位以及显式引用；点击 `ID@rev` 回到该精确研究记录。交叉引用可以有环，不宣称整图是因果树或 DAG。来源内按序排列，不建立跨来源统一时钟。
+- 在“回放与导出”中手动添加文件后，回到过程图点“加入所选来源”。仅有明确项目、会话、run 绑定的工具账本提供执行元数据；原生会话与传输审计第一版仅保留来源及遗漏说明，不解析消息、`service.frame` 或模型推理流。工具参数/结果原文不进入图，图不是完整思维链或原始日志的替代品。
+- 状态只说明记录情况：开始记录而无结束时仍未知，`tool.finished` 不等于执行成功，更不等于数学通过。历史版本不套用最新审核状态；人工审核、`local_claim` 与 R1/R2 边界不变。图和概览的 research head 不一致时拒绝混合，提示先刷新。
+- 已有账本仍是持久化来源，重开工作台可重新读取成图。图是手动读取的快照，不是实时监控；改来源列表不自动改图，刷新/换项目会清除旧图。折叠、当前选择与展示分页只是本地视图状态，JSON 包含完整投影而非当前可见几张卡片。
+- “保存 JSON 快照”通过浏览器下载带 format、项目、研究 head、来源 hash、节点与边的独立文件；不修改研究数据或审核包、不启动其 verifier。下载请求不等于磁盘保存确认；不支持下载的客户端可展开 JSON 手动保存。它未经独立签名，不是审核证据；包含记录摘要和来源路径，分享前需自行检查。此版不生成 Archify HTML，也不声称自动跟踪所有会话/子代理。
+
+## 回放与自包含导出
+
+原 `native-v4`、`audit-js-v1`、`ledger-py-v1` 显式适配器保留。回放新增 run/session/project/tool_call 关联。导出可附 `run={manifest,closeout,recovery}`，包含冻结合同、材料、实际账本、停止/清理回执、恢复、工作区、候选和 checker 原输出。搬移后运行：
+
+```bash
+python3 -B verify_bundle.py .
+```
+
+验证器核对全部哈希、研究状态和运行关联，并用归档的可信 checker 源码及输入独立复算非执行错误回执。运行账本与验证器统一使用 UTF-8、`ensure_ascii=False` 的 JSON 规范化。导出在返回成功前必须在临时目录实际执行上述命令；正式验收在搬移后必须再次执行并保存 stdout/stderr 和退出码，进程内 `verify()` 或修改 JSON 行为不能替代这个门槛。任一命令失败时不得写“导出验证通过”。
+
+工作区导出不复制 basename 为 `._*` 的 AppleDouble 文件，验证器也只忽略这类转移元数据；其他任何额外或缺失文件仍失败。跨文件系统转移可使用 `COPYFILE_DISABLE=1`，但不能用忽略 `._*` 的规则隐藏研究文件。
+
+固定 checker 的 `independent_checks` 只复算其登记对象；对 75 格基线而言，它只确认 148 点合法且 `target_met=false`，不证明任何局部排除。`local_claim` 必须同时给出固定基线、删除半径、完整枚举证据和“非全局不存在、未构造 149/150”的限制；证据不完整时保持 `needs_more_evidence`，不得写成已接受定理或“双独立证明”。离线的 `grid75_independent_check.py` 从基线独立重建 blocker，不读取原 pair graph/checkpoint，也不调用原 cover/DFS；部分输出仍为 `in_progress`，只有完整 `completed` 才支持相应局部命题。
+
+长计算只把完整根/锚点写入原子 checkpoint，并绑定输入、代码和参数哈希；绑定不匹配必须换新输出路径。超时后从下一未完成项恢复，部分项重跑，timeout 永不作为排除证据。陈旧 `*_progress.json` 不得覆盖最终 `*_checkpoint_*.json` 或独立结果的状态。
+
+原包 `REVIEW-RECORD.json` 的 R1/R2 始终为空。只有在原始命令通过、局部命题的完整独立证据齐备后，人工 R1/R2 才能审核数学归约、枚举完备性和表述范围，并在包外另存签核记录；技术通过、固定 checker 通过或模型自评均不替代科学审核。
+
+## 构建、私有包与许可
+
+需要 Node、Python 3.10+、本地 POSIX 文件系统和 DSH 0.2.1-rc.5。实际验收覆盖范围以本轮报告为准：
+
+```bash
+npm run build
+npm test
+npm pack --pack-destination dist
+```
+
+`npm test` 会依次查找 `python3.14`、`python3.13`、`python3.12`、`python3.11`、`python3.10` 和 `python3`，拒绝低于 3.10 的解释器，并在日志中打印实际路径与版本。正式验收可用绝对路径固定解释器，无需修改 `PATH`：
+
+```bash
+DSH_MATH_PYTHON=/opt/homebrew/bin/python3.14 npm test
+```
+
+插件运行配置的 `python` 同样必须填写 Python 3.10+ 的绝对路径。当前输出包名为 `dsh-math-0.5.0.tgz`，本轮过程图验收证据写入独立目录 `dist/process-graph-20261031/`；此前 UI 对标结果保留在 `dist/ui-benchmark-20261031/`。旧安装包、历史验收、原始审核记录及研究数据全部保留不改。安装后须比对源码、包内容与实际安装文件哈希，不能只依据安装日志判断版本已更新。
+
+包内 P2-C 固定源文件、P3-A 精确算法来源、预检设计参考和新合同均记录于 `PROVENANCE.json`；见 `NOTICE`、`LICENSE-STATUS.md`。未获得公开再分发授权，打包成功不等于许可完成。旧 schema 不迁移，旧 execution 锁和 G01–G07 不作为新授权。
