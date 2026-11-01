@@ -2242,6 +2242,106 @@ summary.dm-editor-section-heading { cursor: pointer; }
 .dm-graph-row { margin-bottom: 10px; }
 .dm-graph-row-meta { display: block; margin-bottom: 4px; }
 .dm-import-compact { display: flex; justify-content: flex-end; margin-top: 16px; padding-top: 8px; border-top: 1px solid var(--dm-border); }
+/* Research desk / quiet editorial system. The host owns the palette; the content owns the hierarchy. */
+.dsh-math-view, .dm-dialog, .dm-button {
+  --dm-hairline: color-mix(in srgb, var(--dm-text) 12%, transparent);
+  --dm-raised: color-mix(in srgb, var(--dm-text) 4%, var(--dm-bg));
+  --dm-hover: color-mix(in srgb, var(--dm-text) 8%, var(--dm-bg));
+}
+.dsh-math-view {
+  padding: 28px clamp(16px, 4%, 48px) 48px;
+  font-size: 13px; line-height: 1.6;
+  letter-spacing: -.005em;
+}
+.dsh-math-view.dm-sidebar { padding: 24px clamp(14px, 3%, 42px) 48px; }
+.dsh-math-view > .dm-header, .dsh-math-view > .dm-project-picker,
+.dsh-math-view > .dm-stats, .dsh-math-view > .dm-tabs,
+.dsh-math-view > [role="tabpanel"], .dsh-math-view > .dm-import-compact,
+.dsh-math-view > .dm-error, .dsh-math-view > .dm-operation-status,
+.dsh-math-view > .dm-local-hint, .dsh-math-view > .dm-readonly,
+.dsh-math-view > .dm-conflict { max-width: 960px; margin-left: auto; margin-right: auto; }
+.dm-header { min-height: 58px; margin-bottom: 24px; padding: 0 0 18px; border-color: var(--dm-hairline); }
+.dm-heading { display: flex; min-width: 0; align-items: center; gap: 11px; }
+.dm-header-mark { display: grid; width: 36px; height: 36px; flex: none; place-items: center; border: 1px solid var(--dm-hairline); border-radius: 10px; background: var(--dm-raised); color: var(--dm-text); }
+.dm-header-mark .dm-icon { width: 18px; height: 18px; }
+.dm-heading-copy { display: flex; flex-direction: column; min-width: 0; gap: 1px; }
+.dm-eyebrow { color: var(--dm-muted); font-size: 9px; font-weight: 600; line-height: 1.4; letter-spacing: .16em; }
+.dm-title { font-size: 15px; font-weight: 600; line-height: 1.35; letter-spacing: -.025em; }
+.dm-header .dm-actions { gap: 2px; }
+.dm-button { min-height: 34px; padding: 6px 12px; border-color: var(--dm-hairline); border-radius: 8px; background: var(--dm-raised); font-size: 12px; font-weight: 500; transition: background .18s ease, border-color .18s ease, color .18s ease, transform .18s ease; }
+.dm-button:hover:not(:disabled) { border-color: color-mix(in srgb, var(--dm-text) 26%, transparent); background: var(--dm-hover); }
+.dm-button.dm-primary { border-color: var(--dm-text); background: var(--dm-text); color: var(--dm-bg); }
+.dm-button.dm-primary:hover:not(:disabled) { border-color: color-mix(in srgb, var(--dm-text) 82%, var(--dm-bg)); background: color-mix(in srgb, var(--dm-text) 82%, var(--dm-bg)); color: var(--dm-bg); transform: translateY(-1px); }
+.dm-button.dm-ghost { color: var(--dm-muted); }
+.dm-button.dm-ghost:hover:not(:disabled) { border-color: transparent; background: var(--dm-hover); color: var(--dm-text); }
+.dm-button.dm-small { font-size: 11px; }
+.dm-button-arrow { margin-left: 17px; font-size: 16px; line-height: .8; font-weight: 400; }
+.dm-welcome { width: 100%; max-width: 700px; margin: clamp(70px, 12vh, 150px) auto 0; padding: 0 24px 36px; text-align: left; }
+.dm-welcome-overline { display: flex; align-items: center; gap: 10px; color: var(--dm-muted); font-size: 11px; font-weight: 500; letter-spacing: .035em; }
+.dm-welcome-line { width: 22px; height: 1px; flex: none; background: var(--dm-text); }
+.dm-welcome h3 { max-width: 610px; margin: 24px 0 15px; color: var(--dm-text); font-size: clamp(32px, 4.5vw, 48px); font-weight: 600; line-height: 1.2; letter-spacing: -.055em; white-space: pre-line; }
+.dm-welcome-text { max-width: 32em; margin: 0 0 27px; color: var(--dm-muted); font-size: 14px; line-height: 1.8; }
+.dm-welcome-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.dm-welcome-actions .dm-button { min-height: 42px; padding: 9px 15px; font-size: 13px; }
+.dm-draft-summary { margin-top: 14px; font-size: 11px; }
+.dm-start-steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 22px; margin: clamp(50px, 9vh, 108px) 0 0; padding: 18px 0 0; border-top: 1px solid var(--dm-hairline); }
+.dm-start-steps li { gap: 10px; }
+.dm-step-number { display: grid; width: 23px; height: 23px; flex: none; place-items: center; border: 1px solid var(--dm-hairline); border-radius: 50%; color: var(--dm-muted); font: 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.dm-start-steps strong { color: var(--dm-text); font-size: 12px; font-weight: 550; }
+.dm-start-steps li div > span { margin-top: 4px; font-size: 11px; line-height: 1.5; }
+.dm-welcome > .dm-local-hint { margin-top: 23px; font-size: 11px; }
+.dm-import { max-width: 652px; margin: 20px auto 0; padding: 17px 20px; gap: 12px; border-color: var(--dm-hairline); border-radius: 10px; background: var(--dm-raised); }
+.dm-import-mark { border-color: var(--dm-hairline); background: var(--dm-bg); }
+.dm-import-copy p { font-size: 11px; }
+.dm-import-action .dm-button { background: var(--dm-bg); }
+.dm-import-hint { border-color: var(--dm-hairline); }
+.dm-project-picker { margin-bottom: 23px; padding: 0 0 18px; border-bottom: 1px solid var(--dm-hairline); }
+.dm-project-picker select { max-width: 520px; }
+.dm-stats { gap: 0; margin: 8px auto 25px !important; border: 0; border-radius: 0; background: transparent; }
+.dm-stat { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 2px; padding: 8px 16px; }
+.dm-stat:first-child { padding-left: 0; }
+.dm-stat + .dm-stat { border-left: 1px solid var(--dm-hairline); }
+.dm-stat-value { font-size: 23px; font-weight: 550; line-height: 1.3; letter-spacing: -.04em; font-variant-numeric: tabular-nums; }
+.dm-stat-label { font-size: 11px; }
+.dm-tabs { display: flex; gap: 26px; margin-bottom: 20px; padding-top: 5px; border-color: var(--dm-hairline); background: var(--dm-bg); }
+.dm-tab { width: auto; min-height: 39px; padding: 7px 1px 12px; font-size: 12px; font-weight: 500; }
+.dm-tab[data-active="true"] { color: var(--dm-text); font-weight: 600; }
+.dm-tab[data-active="true"]::after { right: 0; left: 0; height: 1px; background: var(--dm-text); }
+.dm-goal { margin: 8px 0 28px; padding: clamp(20px, 3vw, 32px); border-color: var(--dm-hairline); border-radius: 12px; background: var(--dm-raised); }
+.dm-section-label { color: var(--dm-muted); font-size: 11px; letter-spacing: .03em; }
+.dm-goal-title { margin: 18px 0 10px; font-size: clamp(21px, 2.8vw, 29px); font-weight: 600; letter-spacing: -.035em; line-height: 1.3; }
+.dm-goal-statement { max-width: 68ch; line-height: 1.8; }
+.dm-panel { margin-bottom: 8px; padding: 18px 0 20px; border: 0; border-top: 1px solid var(--dm-hairline); border-radius: 0; background: transparent; }
+.dm-panel-header { margin-bottom: 8px; }
+.dm-panel-title { font-size: 13px; font-weight: 600; }
+.dm-record { padding: 13px 0; border-color: var(--dm-hairline); }
+.dm-record-title { font-size: 13px; }
+.dm-record-text { line-height: 1.75; }
+.dm-badge { border-radius: 5px; background: var(--dm-raised); }
+.dm-ref { background: var(--dm-raised); }
+.dm-scratchpad, .dm-record-browser, .dm-record-reader, .dm-export-scope, .dm-export-receipt, .dm-context-pack, .dm-candidate, .dm-graph-board { border-color: var(--dm-hairline); background: var(--dm-raised); }
+.dm-input, .dsh-math-view input, .dsh-math-view textarea, .dsh-math-view select { border-color: var(--dm-hairline); border-radius: 8px; background: var(--dm-bg); }
+.dsh-math-view input:focus, .dsh-math-view textarea:focus, .dsh-math-view select:focus { border-color: color-mix(in srgb, var(--dm-text) 48%, transparent); }
+.dm-target-card { border-color: var(--dm-hairline); border-radius: 8px; background: var(--dm-raised); }
+.dm-target-card[data-active="true"] { border-color: var(--dm-accent); }
+.dm-dialog { border-color: var(--dm-hairline); }
+@container dsh-math (max-width: 640px) {
+  .dm-header { gap: 8px; margin-bottom: 20px; }
+  .dm-welcome { margin-top: clamp(40px, 9vh, 90px); padding: 0 3px 28px; }
+  .dm-welcome h3 { font-size: clamp(30px, 7vw, 42px); }
+  .dm-start-steps { gap: 12px; }
+  .dm-tabs { gap: 18px; overflow-x: auto; scrollbar-width: none; }
+  .dm-tab { flex: none; }
+}
+@container dsh-math (max-width: 420px) {
+  .dm-header .dm-actions { width: 100%; justify-content: flex-start; }
+  .dm-header .dm-actions .dm-button:first-child { padding-left: 0; }
+  .dm-start-steps { grid-template-columns: 1fr; gap: 16px; margin-top: 50px; }
+  .dm-start-steps li > div { display: block; }
+  .dm-stat { padding: 7px 8px; }
+  .dm-stat-value { font-size: 19px; }
+  .dm-stat-label { font-size: 10px; }
+}
 @container dsh-math (min-width: 900px) {
   .dm-record-layout[data-detail="true"] { display: grid; grid-template-columns: minmax(220px, .7fr) minmax(0, 1.6fr); gap: 16px; align-items: start; }
   .dm-record-layout[data-detail="true"] > .dm-record-list { display: block; max-height: 75vh; overflow: auto; }
@@ -2261,9 +2361,10 @@ summary.dm-editor-section-heading { cursor: pointer; }
   .dm-tab { font-size: 12px; }
 }
 @container dsh-math (max-width: 380px) {
-  .dm-tabs { gap: 2px; }
+  .dm-tabs { gap: 14px; }
   .dm-tab { font-size: 11px; }
-  .dm-panel, .dm-goal { padding: 10px; }
+  .dm-panel { padding: 16px 0; }
+  .dm-goal { padding: 18px; }
   .dm-panel-header { flex-wrap: wrap; }
   .dm-target-cards { grid-template-columns: 1fr; }
   .dm-import { padding: 14px; gap: 10px; }
@@ -2272,11 +2373,11 @@ summary.dm-editor-section-heading { cursor: pointer; }
   .dm-graph-board { padding: 10px 5px; }
   .dm-graph-children { padding-left: 10px; margin-left: 5px; }
   .dm-graph-children > .dm-graph-branch::before { left: -11px; width: 10px; }
-  .dm-start-steps { grid-template-columns: 1fr; gap: 12px; max-width: 230px; margin-left: auto; margin-right: auto; }
-  .dm-start-steps li > div { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px; }
-  .dm-start-steps li div > span { margin-top: 0; }
-  .dm-stat { flex-direction: column; align-items: center; }
-  .dm-welcome { padding-top: 16px; }
+  .dm-start-steps { grid-template-columns: 1fr; gap: 14px; max-width: none; margin-left: 0; margin-right: 0; }
+  .dm-start-steps li > div { display: block; }
+  .dm-start-steps li div > span { margin-top: 4px; }
+  .dm-stat { flex-direction: column; align-items: flex-start; }
+  .dm-welcome { padding-top: 0; }
 }
 @media (max-width: 680px) {
   .dsh-math-view { padding: 12px; }
@@ -2602,7 +2703,9 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
     return h('div', {ref: root, className: `dsh-math-view ${sidebar ? 'dm-sidebar' : ''}`, 'aria-busy': busy},
       decision && h(UnsavedPrompt, {decision, finish: finishDecision}),
       h('header', {className: 'dm-header'},
-        h('h2', {className: 'dm-title'}, h(MathIcon), '数学研究'),
+        h('div', {className: 'dm-heading'},
+          h('span', {className: 'dm-header-mark', 'aria-hidden': 'true'}, h(MathIcon)),
+          h('div', {className: 'dm-heading-copy'}, h('span', {className: 'dm-eyebrow'}, 'RESEARCH / MATH'), h('h2', {className: 'dm-title'}, '数学研究'))),
         h('div', {className: 'dm-actions'},
           (projects.length > 0 || creating) && h(Button, {variant: 'ghost', size: 'small', disabled: busy, onClick: () => creating ? leave(() => setCreating(false)) : setCreating(true)}, creating ? '取消新建' : creationLabel),
           h(Button, {variant: 'ghost', size: 'small', onClick: () => { readDraftSummary(); return run(() => load(), '刷新研究记录'); }, disabled: busy}, '刷新'),
@@ -2613,10 +2716,10 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
           h('option', {value: ''}, '选择研究项目'), ...projects.map(p => h('option', {key: p.id, value: p.id}, `${p.title} · ${p.id.slice(0, 8)}${p.mode === 'legacy_readonly_copy' ? ' · 只读' : ''}${p.session_id === sessionId ? ' · 当前会话' : ''}`))),
         h('span', {className: 'dm-panel-meta'}, `${projects.length} 个项目`)),
       !view && !creating && h('section', {className: 'dm-welcome', 'aria-label': '研究起点'},
-        h('div', {className: 'dm-welcome-mark'}, h(MathIcon, {size: 24})),
-        h('h3', null, projects.length ? '继续你的研究' : '从一个明确的问题开始'),
-        h('p', {className: 'dm-welcome-text'}, projects.length ? '在上方选择项目，继续整理推导、证据与待验证结论。' : '把问题、推导和证据整理在一起。每一步有据可查，结论留给验证与人工审核。'),
-        h(Button, {variant: 'primary', icon: true, onClick: () => setCreating(true)}, creationLabel),
+        h('div', {className: 'dm-welcome-overline'}, h('span', {className: 'dm-welcome-line', 'aria-hidden': 'true'}), '一个问题，一条清晰的路径'),
+        h('h3', null, projects.length ? '继续你的研究。' : '从一个明确的\n问题开始。'),
+        h('p', {className: 'dm-welcome-text'}, projects.length ? '选择一个项目，继续整理推导、证据与待验证结论。' : '让问题有边界，让尝试有来源。把推导与证据放在一起，结论留给验证和人工审核。'),
+        h('div', {className: 'dm-welcome-actions'}, h(Button, {variant: 'primary', onClick: () => setCreating(true)}, creationLabel, h('span', {className: 'dm-button-arrow', 'aria-hidden': 'true'}, '→'))),
         draft && draft.status !== 'committed' && h('p', {className: 'dm-draft-summary'}, `${draft.fields?.title || '当前会话草稿'} · v${draft.rev} · 尚未创建项目`),
         draftError && h('p', {className: 'dm-field-error', role: 'status'}, `会话草稿暂未读到：${draftError}。可点击刷新重试。`),
         h('ol', {className: 'dm-start-steps'},
