@@ -42,10 +42,6 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
       h('path', {d: 'M3 15.5 7.2 4.5h2.3l2 6.2c.5 1.7 1 2.7 1.7 2.7.8 0 1.4-1 2-3.1l1.1-4h2.5', stroke: 'currentColor', strokeWidth: 1.6, strokeLinecap: 'round', strokeLinejoin: 'round'}),
       h('path', {d: 'M3 17h14', stroke: 'currentColor', strokeWidth: 1.6, strokeLinecap: 'round'}));
   }
-  function ImportIcon() {
-    return h('svg', {className: 'dm-icon', width: 20, height: 20, viewBox: '0 0 20 20', fill: 'none', 'aria-hidden': 'true'},
-      h('path', {d: 'M3.5 8v7.5a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1V8M2.5 3.5h15v4h-15zM10 9.5v4m-2-2 2 2 2-2', stroke: 'currentColor', strokeWidth: 1.4, strokeLinecap: 'round', strokeLinejoin: 'round'}));
-  }
   function Button({children, onClick, disabled, variant = '', size = '', icon = false, title, type = 'button'}) {
     return h('button', {type, onClick, disabled, title, className: `dm-button ${variant ? `dm-${variant}` : ''} ${size ? `dm-${size}` : ''}`}, icon && h(MathIcon), children);
   }
@@ -341,7 +337,7 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
       error && h('p', {className: 'dm-error', role: 'alert'}, error),
       busy && h('p', {className: 'dm-operation-status', role: 'status'}, `正在${operation || '处理本地操作'}，请稍候…`),
       localNotice && h('p', {className: 'dm-local-hint', role: 'status'}, localNotice),
-      creating && h(Panel, {title: '项目准备', meta: '聊天草稿与手动填写统一保存'}, h(ProjectForm, {
+      creating && h(Panel, {title: '项目准备'}, h(ProjectForm, {
         key: sessionId, request: workbenchRequest.current, sessionId, registerGuard,
         onDraftState: state => { if (lifetime.current.active && state.loaded) setDraftSummary({draft: state.draft, validation: state.validation || F.projectValidation(globalThis.DshMathProjectFields, state.fields), pending_finalization: state.finalizeAttempt}); },
         onCreated: project => run(async () => { setCreating(false); await load(project.id); setTab('overview'); }),
@@ -428,12 +424,10 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
           receipt && h(ExportReceipt, {receipt})))),
       view && h('div', {className: 'dm-import-compact'}, h(Button, {variant: 'ghost', size: 'small', disabled: busy, onClick: () => leave(() => setImporting(true))}, '导入旧研究库（只读副本）')),
       !view && h('section', {className: 'dm-import', 'aria-label': '导入旧研究库（只读副本）'},
-        h('div', {className: 'dm-import-mark', 'aria-hidden': 'true'}, h(ImportIcon)),
         h('div', {className: 'dm-import-copy'},
           h('div', {className: 'dm-import-heading'}, h('h3', null, '延续已有研究'), h('span', {className: 'dm-badge'}, '只读副本')),
-          h('p', null, '导入本地旧研究库，保留原始文件与记录。')),
-        h('div', {className: 'dm-import-action'}, h(Button, {disabled: busy, title: '导入旧研究库（只读副本）', onClick: () => leave(() => setImporting(true))}, '导入旧研究库')),
-        h('p', {className: 'dm-import-hint'}, '仅供查阅与回放，不会自动开始研究。')),
+          h('p', null, '原库不变；不自动开始研究。')),
+        h('div', {className: 'dm-import-action'}, h(Button, {disabled: busy, title: '导入旧研究库（只读副本）', onClick: () => leave(() => setImporting(true))}, '导入旧研究库'))),
       importing && h(LegacyImport, {key: sessionId, request: workbenchRequest.current, sessionId, close: () => setImporting(false),
         onImported: project => leave(() => run(async () => { setImporting(false); await load(project.id); setTab('overview'); }))}));
   }

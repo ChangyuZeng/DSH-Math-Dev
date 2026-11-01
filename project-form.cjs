@@ -158,7 +158,7 @@
         if (field.key === 'target_type') input = h('div', {className: 'dm-target-cards', role: 'radiogroup', 'aria-label': field.label},
           ...descriptor.target_types.map(option => h('label', {className: 'dm-target-card', key: option.value, 'data-active': value === option.value},
             h('input', {type: 'radio', name: 'target_type', value: option.value, checked: value === option.value, disabled, onChange: () => edit(field.key, option.value)}),
-            h('span', null, h('strong', null, option.label), h('span', null, option.description), h('small', null, option.example)))));
+            h('span', null, h('strong', null, option.label), h('span', null, option.description)))));
         else if (field.key === 'knowledge_status') input = h('select', props, ...descriptor.knowledge_statuses.map(option => h('option', {key: option.value, value: option.value}, option.label)));
         else input = h(field.type === 'string[]' || field.key === 'statement' || /[\r\n]/.test(value || '') ? 'textarea' : 'input', {...props, rows: 3});
         return h('div', {key: field.key, className: 'dm-project-field'},
@@ -171,7 +171,7 @@
         const project = await control?.finalize(); if (project && controller.current === control) callbacks.current.onCreated?.(project);
       }},
         h('h3', {ref: heading, tabIndex: -1}, '明确研究目标'),
-        h('p', {className: 'dm-record-text'}, '先保存草稿，再由你确认创建项目。默认任务类型与问题状态可修改；不会自动开始研究。'),
+        h('p', {className: 'dm-record-text'}, '先存草稿，确认后才建项；不会自动研究。'),
         h('div', {className: 'dm-actions'}, h('button', {type: 'button', className: 'dm-button dm-small', disabled: state.busy || state.loading, onClick: () => controller.current?.load()}, '读取会话草稿'),
           h('button', {type: 'button', className: 'dm-button dm-ghost dm-small', disabled: state.busy || !!state.finalizeAttempt, onClick: () => {
             if (!(state.dirty || state.uncertain) || typeof window !== 'undefined' && window.confirm('本地修改尚未保存。确定另建空白草稿？')) { controller.current?.fresh(); setShowErrors(false); setAllowLeave(false); }

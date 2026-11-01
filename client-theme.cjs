@@ -83,17 +83,14 @@ globalThis.DshMathTheme = `
 .dm-code { max-height: 460px; overflow: auto; padding: 10px; border: 1px solid var(--dm-border); border-radius: 7px; background: var(--dm-bg); font: 11px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 .dm-details { margin: 10px 0; }
 .dm-details > summary { cursor: pointer; color: var(--dm-muted); font-size: 12px; }
-.dm-import { display: grid; grid-template-columns: 36px minmax(0, 1fr); align-items: center; gap: 12px; max-width: 460px; margin: 20px auto 4px; padding: 16px; border: 1px solid var(--dm-border); border-radius: 12px; background: var(--dm-panel); }
-.dm-import-mark { display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; border: 1px solid var(--dm-border); border-radius: 10px; background: var(--dm-bg); color: var(--dm-muted); }
-.dm-import-mark .dm-icon { width: 20px; height: 20px; }
+.dm-import { display: flex; align-items: center; justify-content: space-between; gap: 20px; max-width: 700px; margin: 22px auto 0; padding: 20px 0 0; border-top: 1px solid var(--dm-border); }
 .dm-import-copy { min-width: 0; }
-.dm-import-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
-.dm-import-heading h3 { margin: 0; font-size: 13px; font-weight: 650; line-height: 1.5; }
-.dm-import-copy p { margin: 5px 0 0; color: var(--dm-muted); font-size: 11px; line-height: 1.7; overflow-wrap: anywhere; }
-.dm-import-action { grid-column: 2 / -1; }
-.dm-import-action .dm-button { min-height: 32px; padding: 5px 12px; background: var(--dm-bg); }
-.dm-import-action .dm-button:hover:not(:disabled) { background: var(--dm-soft); }
-.dm-import-hint { grid-column: 1 / -1; margin: 0; padding-top: 11px; border-top: 1px solid var(--dm-border); color: var(--dm-muted); font-size: 11px; line-height: 1.6; text-align: center; }
+.dm-import-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; }
+.dm-import-heading h3 { margin: 0; font-size: 13px; font-weight: 600; line-height: 1.5; }
+.dm-import-copy p { margin: 4px 0 0; color: var(--dm-muted); font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; }
+.dm-import-action { flex: none; }
+.dm-import-action .dm-button { background: transparent; }
+.dm-import-action .dm-button::after { content: '→'; margin-left: 5px; font-size: 14px; line-height: 1; font-weight: 400; }
 .dm-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 10px; }
 .dm-form-grid .dm-wide { grid-column: 1 / -1; }
 .dm-sidebar .dm-form-grid { grid-template-columns: 1fr; }
@@ -357,11 +354,12 @@ summary.dm-editor-section-heading { cursor: pointer; }
 .dm-start-steps strong { color: var(--dm-text); font-size: 12px; font-weight: 550; }
 .dm-start-steps li div > span { margin-top: 4px; font-size: 11px; line-height: 1.5; }
 .dm-welcome > .dm-local-hint { margin-top: 23px; font-size: 11px; }
-.dm-import { max-width: 652px; margin: 20px auto 0; padding: 17px 20px; gap: 12px; border-color: var(--dm-hairline); border-radius: 10px; background: var(--dm-raised); }
-.dm-import-mark { border-color: var(--dm-hairline); background: var(--dm-bg); }
-.dm-import-copy p { font-size: 11px; }
-.dm-import-action .dm-button { background: var(--dm-bg); }
-.dm-import-hint { border-color: var(--dm-hairline); }
+.dm-import { max-width: 652px; border-color: var(--dm-hairline); }
+.dm-import-action .dm-button { border-color: var(--dm-hairline); }
+@container dsh-math (max-width: 520px) {
+  .dm-import { align-items: flex-start; flex-wrap: wrap; gap: 14px; }
+  .dm-import-action { flex-basis: 100%; }
+}
 .dm-project-picker { margin-bottom: 23px; padding: 0 0 18px; border-bottom: 1px solid var(--dm-hairline); }
 .dm-project-picker select { max-width: 520px; }
 .dm-stats { gap: 0; margin: 8px auto 25px !important; border: 0; border-radius: 0; background: transparent; }
@@ -434,8 +432,7 @@ summary.dm-editor-section-heading { cursor: pointer; }
   .dm-goal { padding: 18px; }
   .dm-panel-header { flex-wrap: wrap; }
   .dm-target-cards { grid-template-columns: 1fr; }
-  .dm-import { padding: 14px; gap: 10px; }
-  .dm-import-action { grid-column: 1 / -1; }
+  .dm-import { padding-top: 18px; gap: 12px; }
   .dm-import-action .dm-button { width: 100%; }
   .dm-graph-board { padding: 10px 5px; }
   .dm-graph-children { padding-left: 10px; margin-left: 5px; }

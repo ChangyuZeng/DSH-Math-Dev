@@ -496,9 +496,10 @@ test('an empty workspace has one primary create action and a secondary import mo
   assert.equal(legacy.props['aria-label'], '导入旧研究库（只读副本）');
   assert.equal(button(legacy, '导入旧研究库').props.variant, undefined, 'Import stays secondary to project creation');
   assert.equal(button(legacy, '导入旧研究库').props.title, '导入旧研究库（只读副本）');
-  assert.ok(byClass(legacy, 'dm-import-mark'));
+  assert.equal(byClass(legacy, 'dm-import-mark'), undefined, 'Import does not duplicate the page icon');
   assert.ok(nodes(legacy).some(node => node.children.includes('只读副本')));
-  assert.ok(nodes(legacy).some(node => node.children.includes('仅供查阅与回放，不会自动开始研究。')));
+  assert.ok(nodes(legacy).some(node => node.children.includes('原库不变；不自动开始研究。')));
+  assert.equal(byClass(legacy, 'dm-import-hint'), undefined, 'Safety note is stated once, beside the action');
   assert.equal(nodes(tree).some(node => node.type?.name === 'LegacyImport'), false);
   await button(legacy, '导入旧研究库').props.onClick();
   const imported = nodes(t.render()).find(node => node.type?.name === 'LegacyImport');
