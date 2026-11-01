@@ -60,3 +60,55 @@ test('optional native renderer is used only for safe non-embedded Markdown', () 
   assert.ok(nodes(withNative({text: '**普通文本**'})).some(node => node.type === Native));
   for (const source of ['![x](https://bad.invalid)', '$x$', '<b>x</b>', '[x](https://example.org)']) assert.equal(nodes(withNative({text: source})).some(node => node.type === Native), false);
 });
+
+function withoutStyles(tree) {
+  if (tree == null || tree === false || tree?.type === 'style') return null;
+  if (typeof tree !== 'object') return tree;
+  return {...tree, children: tree.children.flat(Infinity).map(withoutStyles).filter(value => value != null)};
+}
+
+test('shared styles return the complete supplied font CSS once while default previews remain self-contained', t => {
+  const previous = globalThis.DshMathKatexCSS;
+  t.after(() => { if (previous === undefined) delete globalThis.DshMathKatexCSS; else globalThis.DshMathKatexCSS = previous; });
+  delete globalThis.DshMathKatexCSS;
+  const fallback = preview.styles();
+  assert.match(fallback, /\.dm-preview\{/); assert.match(fallback, /\.dm-preview \.katex\{/);
+  // Synthetic bundled data: exercise the full 500KiB payload, not a shortened
+  // font URL. Packaging/font production is unchanged by this rendering mode.
+  const bundled = '@font-face{font-family:KaTeX_Main;src:url(data:font/woff2;base64,' + 'A'.repeat(500 * 1024) + ')}';
+  globalThis.DshMathKatexCSS = bundled;
+  assert.equal(preview.styles(), bundled + fallback);
+  const defaultPreview = preview(React).Preview, explicitDefault = preview(React, undefined, {sharedStyles: false}).Preview;
+  for (const render of [defaultPreview, explicitDefault]) {
+    const styleNodes = nodes(render({text: '$x$'})).filter(node => node.type === 'style');
+    assert.equal(styleNodes.length, 1); assert.equal(styleNodes[0].children[0], bundled + fallback);
+  }
+  const Shared = preview(React, undefined, {sharedStyles: true}).Preview;
+  const documents = ['# 标题\n\n$x^2$ 与 **正文**', '$$\\sum_{i=1}^n i$$', '普通正文'];
+  const trees = documents.map(source => Shared({text: source}));
+  assert.equal(trees.flatMap(nodes).filter(node => node.type === 'style').length, 0);
+  assert.equal(trees.some(tree => text(tree).includes(bundled)), false, 'Large CSS never becomes repeated body text');
+  for (let index = 0; index < documents.length; index++)
+    assert.deepEqual(withoutStyles(trees[index]), withoutStyles(defaultPreview({text: documents[index]})));
+  assert.doesNotMatch(preview.styles(), /url\(["']?https?:|@import/);
+  globalThis.DshMathKatexCSS = bundled + '/*updated host bundle*/';
+  assert.equal(preview.styles(), globalThis.DshMathKatexCSS + fallback, 'Host registration reads current complete CSS, not a stale cached payload');
+});
+
+test('shared local and native previews preserve rendering safety and existing resource limits', () => {
+  const Native = () => null;
+  for (const renderer of [undefined, Native]) {
+    const ordinary = preview(React, renderer).Preview, shared = preview(React, renderer, {sharedStyles: true}).Preview;
+    for (const source of ['**普通文本**', '# h\n\n- [x] task\n\n```js\nx < y\n```',
+      '<script>alert(1)</script>\n\n![x](https://bad.invalid/x)\n\n[bad](javascript:alert) [ok](https://example.org)',
+      '$\\includegraphics{https://bad.invalid/x}$ 与 $x$', 'x'.repeat(256 * 1024 + 1), Array(260).fill('$x$').join(' ')]) {
+      const tree = shared({text: source});
+      assert.equal(nodes(tree).some(node => node.type === 'style'), false);
+      assert.deepEqual(withoutStyles(tree), withoutStyles(ordinary({text: source})));
+      assert.equal(nodes(tree).some(node => ['script', 'img', 'iframe', 'object'].includes(node.type)), false);
+      for (const node of nodes(tree).filter(node => node.props.dangerouslySetInnerHTML))
+        assert.doesNotMatch(node.props.dangerouslySetInnerHTML.__html, /<script|<iframe|<img|<object|onerror=/);
+    }
+    assert.equal(nodes(shared({text: '**普通文本**'})).some(node => node.type === Native), Boolean(renderer));
+  }
+});

@@ -36,17 +36,20 @@
     return safe;
   }
   const fallbackStyle = '.dm-preview{font-size:13px;line-height:1.7;overflow-wrap:anywhere;min-width:0}.dm-preview p{margin:0 0 .75em}.dm-preview pre{overflow:auto;padding:10px;border:1px solid var(--dsw-alias-border-l1,#ddd);border-radius:8px;white-space:pre}.dm-preview code{font-size:.92em}.dm-preview blockquote{margin:8px 0;padding:0 12px;border-left:3px solid var(--dsw-alias-border-l1,#aaa)}.dm-preview table{border-collapse:collapse;display:block;overflow:auto}.dm-preview th,.dm-preview td{border:1px solid var(--dsw-alias-border-l1,#ddd);padding:5px 8px}.dm-preview .dm-math-block{overflow:auto;padding:5px 0}.dm-preview .dm-literal-resource{opacity:.75}.dm-preview .katex{font-size:1.1em}';
-  function factory(React, MarkdownText) {
+  const styles = () => (globalThis.DshMathKatexCSS || '') + fallbackStyle;
+  function factory(React, MarkdownText, {sharedStyles = false} = {}) {
     const h = React.createElement;
     function Preview({text = ''}) {
       const source = String(text);
-      const style = (globalThis.DshMathKatexCSS || '') + fallbackStyle;
+      // Shared mode is styled once by the host; standalone callers retain the
+      // original self-contained CSS, including all locally bundled fonts.
+      const style = sharedStyles ? null : h('style', {}, styles());
       if (new TextEncoder().encode(source).byteLength > 256 * 1024) return h('div', {className: 'dm-preview'}, h('p', {role: 'status'}, '内容超过预览上限，请在编辑区查看原文。'));
       let tokens;
       try { tokens = parser.lexer(source); } catch { return h('div', {className: 'dm-preview'}, h('pre', {}, source)); }
       // Use a confirmed public host renderer only for safe non-embedded Markdown.
       // Current hosts without an injected MarkdownText use the complete local renderer below.
-      if (typeof MarkdownText === 'function' && safeForNative(tokens)) return h('div', {className: 'dm-preview'}, h('style', {}, style), h(MarkdownText, {text: source, labels: {code: {copyLabel: '复制', copiedLabel: '已复制', toolbarLabels: {codeLabel: '代码', wrapLabel: '自动换行', unwrapLabel: '取消换行'}}, footnotes: ''}}));
+      if (typeof MarkdownText === 'function' && safeForNative(tokens)) return h('div', {className: 'dm-preview'}, style, h(MarkdownText, {text: source, labels: {code: {copyLabel: '复制', copiedLabel: '已复制', toolbarLabels: {codeLabel: '代码', wrapLabel: '自动换行', unwrapLabel: '取消换行'}}, footnotes: ''}}));
       const budget = {math: 256, nodes: 12000};
       function inline(list, key) { return render(list || [], key); }
       function render(list, prefix = 'p') {
@@ -78,10 +81,11 @@
           }
         });
       }
-      return h('div', {className: 'dm-preview'}, h('style', {}, style), ...render(tokens));
+      return h('div', {className: 'dm-preview'}, style, ...render(tokens));
     }
     return {Preview};
   }
+  factory.styles = styles;
   factory.mathToken = mathToken;
   factory.mathHtml = mathHtml;
   factory.safeHref = safeHref;

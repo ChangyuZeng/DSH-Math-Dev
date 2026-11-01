@@ -1,12 +1,14 @@
 (function (publish) {
   const retained = new Map(), retainedImports = new Map();
   const clone = value => JSON.parse(JSON.stringify(value));
+  const hasCandidate = state => !!(state.candidateText || state.candidateSource);
+  const appendCandidate = (body, candidate, source) => `${body}${body ? '\n\n' : ''}---\n\n候选（未经审核）${source ? `\n\n来源备注：${source}` : ''}\n\n${candidate}`;
   let unloadInstalled = false;
   function installUnload() {
     if (unloadInstalled || typeof window === 'undefined' || !window.addEventListener) return;
     unloadInstalled = true;
     window.addEventListener('beforeunload', event => {
-      if ([...retained.values(), ...retainedImports.values()].some(state => state.dirty || state.attempt)) { event.preventDefault(); event.returnValue = ''; }
+      if ([...retained.values(), ...retainedImports.values()].some(state => state.dirty || state.attempt || hasCandidate(state))) { event.preventDefault(); event.returnValue = ''; }
     });
   }
   function createScratchpadController({request, sessionId, projectId, writable, uuid, notify = () => {}, setTimer = setTimeout, clearTimer = clearTimeout}) {
@@ -14,6 +16,7 @@
     let state = previous ? {...clone(previous), busy: false, loading: false, preview: null} : {
       pad: null, title: '', body: '', history: [], preview: null, loaded: false, dirty: false,
       busy: false, loading: false, error: '', notice: '', incoming: null, attempt: null, blocked: false,
+      candidateText: '', candidateSource: '', candidatePreview: null,
     };
     let active = true, generation = 0, reading = 0, historyRead = 0, pending = null, timer = null;
     const current = token => active && token === generation;
@@ -40,7 +43,33 @@
     }
     function edit(field, value) {
       if (!active || !writable || !['title', 'body'].includes(field)) return;
-      emit({[field]: value, dirty: true, notice: '未保存 · 停止输入 800ms 后保存'}); schedule();
+      emit({[field]: value, dirty: true, ...(field === 'body' ? {candidatePreview: null} : {}), notice: '未保存 · 停止输入 800ms 后保存'}); schedule();
+    }
+    function editCandidate(field, value) {
+      if (!active || !writable || !['candidateText', 'candidateSource'].includes(field)) return;
+      emit({[field]: String(value), candidatePreview: null});
+    }
+    const candidateAllowed = () => active && writable && state.loaded && !state.loading && !state.busy && !state.blocked && !state.incoming && !state.attempt;
+    function previewCandidate() {
+      if (!candidateAllowed() || !state.candidateText?.trim()) return false;
+      emit({candidatePreview: {body: state.body, rev: state.pad?.rev || 0, text: state.candidateText, source: state.candidateSource || '',
+        result: appendCandidate(state.body, state.candidateText, state.candidateSource)}, error: ''});
+      return true;
+    }
+    function adoptCandidate() {
+      if (!candidateAllowed()) return false;
+      const preview = state.candidatePreview;
+      if (!preview || preview.body !== state.body || preview.rev !== (state.pad?.rev || 0) || preview.text !== state.candidateText || preview.source !== (state.candidateSource || '')) {
+        emit({candidatePreview: null, error: '原稿或候选已改变，请重新预览后再追加。'}); return false;
+      }
+      // Append through the ordinary edit/autosave path; no formal-record or review write.
+      edit('body', appendCandidate(state.body, state.candidateText, state.candidateSource));
+      emit({candidateText: '', candidateSource: '', candidatePreview: null, error: '', notice: '候选已追加到草稿，未经审核；将按原有自动保存规则保存，不会登记正式记录。'});
+      return true;
+    }
+    function cancelCandidate() {
+      if (!active) return;
+      emit({candidateText: '', candidateSource: '', candidatePreview: null});
     }
     function write(action, args) {
       if (!active || !writable || pending) return pending || Promise.resolve(false);
@@ -109,9 +138,9 @@
         notice: keepLocal ? '本地内容保留，已采用服务器新基线；请核对后点击“立即保存”。' : '已采用服务器草稿本。'});
     }
     installUnload();
-    return {get: () => state, load, edit, save, flush, history, restore, useIncoming,
+    return {get: () => state, load, edit, save, flush, history, restore, useIncoming, editCandidate, previewCandidate, adoptCandidate, cancelCandidate,
       clearPreview() { historyRead++; emit({preview: null}); },
-      canLeave: async () => !state.dirty && !state.attempt || await flush(),
+      canLeave: async () => { if (hasCandidate(state)) return false; const saved = !state.dirty && !state.attempt || await flush(); return saved && !hasCandidate(state); },
       dispose() { if (!active) return; cancelTimer(); retained.set(key, clone(state)); active = false; generation++; reading++; historyRead++; },
     };
   }
@@ -154,6 +183,11 @@
   }
   function factory(React, F, Preview) {
     const {createElement: h, useState, useEffect, useRef} = React;
+    const Comparison = globalThis.DshMathComparisonUI?.(React);
+    const compare = props => Comparison ? h(Comparison.FieldComparison, props) : h('div', {className: 'dm-comparison-fields'},
+      ...props.fields.map(field => h('section', {key: field.key}, h('h4', null, field.label),
+        h('p', null, `${props.localLabel || '我的内容'} · ${props.localVersion || ''}`), h('pre', {className: 'dm-code'}, props.local[field.key] || '（空）'),
+        h('p', null, `${props.remoteLabel || '服务器内容'} · ${props.remoteVersion || ''}`), h('pre', {className: 'dm-code'}, props.remote[field.key] || '（空）'))));
     const button = (text, onClick, disabled = false, primary = false) => h('button', {type: 'button', className: `dm-button${primary ? ' dm-primary' : ''}`, disabled, onClick}, text);
     const renderPreview = text => Preview ? h(Preview, {text}) : h('pre', {className: 'dm-code'}, text);
     function Scratchpad({request, sessionId, projectId, writable, onPromote, registerGuard, active = true}) {
@@ -161,7 +195,7 @@
       const controller = useRef(null), promoting = useRef(false), callbacks = useRef({onPromote}); callbacks.current = {onPromote};
       useEffect(() => {
         const control = createScratchpadController({request, sessionId, projectId, writable, uuid: () => crypto.randomUUID(), notify: setState});
-        controller.current = control; setState(control.get()); control.load();
+        controller.current = control; setAllowLeave(false); setState(control.get()); control.load();
         const focus = () => control.load();
         if (typeof window !== 'undefined') window.addEventListener?.('focus', focus);
         return () => { control.dispose(); controller.current = null; if (typeof window !== 'undefined') window.removeEventListener?.('focus', focus); };
@@ -175,6 +209,9 @@
       };
       if (!state) return h('section', {hidden: !active, role: 'status'}, '正在读取草稿本…');
       const edit = (field, value) => { setAllowLeave(false); controller.current?.edit(field, value); };
+      const editCandidate = (field, value) => { setAllowLeave(false); controller.current?.editCandidate(field, value); };
+      const candidateBlocked = !writable || !state.loaded || state.loading || state.busy || state.blocked || !!state.incoming || !!state.attempt;
+      const candidateCurrent = state.candidatePreview && state.candidatePreview.body === state.body && state.candidatePreview.rev === (state.pad?.rev || 0);
       return h('section', {hidden: !active, className: 'dm-scratchpad', 'aria-label': '项目草稿本', 'aria-busy': state.busy},
         h('div', {className: 'dm-panel-header'}, h('h3', {className: 'dm-panel-title'}, '草稿本'), h('span', {className: 'dm-panel-meta', role: 'status'}, state.busy ? '正在保存…' : state.dirty ? '未保存' : state.pad ? `v${state.pad.rev} 已保存` : '尚无版本')),
         h('p', {className: 'dm-record-text'}, writable ? '随手整理 Markdown 与公式。停止输入 800ms 后保存；不进入正式研究记录或默认导出。' : '此项目只读。草稿本、正式记录及审核均不可写。'),
@@ -185,10 +222,22 @@
         previewMode ? renderPreview(state.body) : h('label', {className: 'dm-field'}, '草稿正文', h('textarea', {className: 'dm-input dm-scratch-body', rows: 14, value: state.body, disabled: !writable || !state.loaded, placeholder: '支持 Markdown 和 $公式$；不确定的想法也可以先记录。', onChange: event => edit('body', event.target.value)})),
         state.notice && h('p', {role: 'status', className: 'dm-record-text'}, state.notice),
         state.error && h('p', {role: 'alert', className: 'dm-error'}, state.error),
-        state.incoming && h('div', {className: 'dm-conflict'}, h('p', null, '版本冲突：本地内容未丢失，自动保存已暂停。'),
-          h('details', null, h('summary', null, '查看服务器版本'), renderPreview(state.incoming.scratchpad?.body || '')),
-          button('保留本地并采用新基线', () => controller.current?.useIncoming(true), state.busy || !writable),
-          button('采用服务器版本', () => { if (window.confirm('确定用服务器版本替换本地未保存内容？')) controller.current?.useIncoming(false); }, state.busy)),
+        state.incoming && h('div', {className: 'dm-conflict'}, h('p', null, '版本冲突：本地内容未丢失，自动保存已暂停。比较后选择；不会自动合并。保留我的修改后，请点击“立即保存”。'),
+          compare({fields: [{key: 'title', label: '标题'}, {key: 'body', label: '正文'}], local: state, remote: state.incoming.scratchpad || {},
+            localVersion: `v${state.pad?.rev || 0}（本地编辑）`, remoteVersion: `v${state.incoming.scratchpad?.rev || 0}`}),
+          button('保留我的修改，稍后重新保存', () => controller.current?.useIncoming(true), state.busy || !writable),
+          button('使用服务器版本', () => { if (window.confirm('确定用服务器版本替换本地未保存内容？')) controller.current?.useIncoming(false); }, state.busy)),
+        (writable || hasCandidate(state)) && h('section', {className: 'dm-candidate', 'aria-label': '粘贴候选到草稿'},
+          h('h4', null, '粘贴候选到草稿'),
+          h('p', {className: 'dm-record-text'}, '只处理你粘贴的内容，不读取其他会话、不调用模型。先预览，再明确追加到草稿；未经审核，不会直接登记正式记录或提交审核。未采用候选仅在本窗口保留，刷新或关闭可能丢失。'),
+          h('label', {className: 'dm-field'}, '候选内容', h('textarea', {className: 'dm-input dm-candidate-input', rows: 5, value: state.candidateText || '', disabled: !writable, onChange: event => editCandidate('candidateText', event.target.value)})),
+          h('label', {className: 'dm-field'}, '来源备注（可选）', h('textarea', {className: 'dm-input', rows: 2, value: state.candidateSource || '', disabled: !writable, onChange: event => editCandidate('candidateSource', event.target.value)})),
+          h('div', {className: 'dm-actions'}, button('预览原稿与追加结果', () => controller.current?.previewCandidate(), candidateBlocked || !state.candidateText?.trim()),
+            hasCandidate(state) && button('取消并丢弃候选', () => { if (window.confirm('确定丢弃尚未采用的候选及来源备注？原稿不会改变。')) controller.current?.cancelCandidate(); })),
+          state.candidatePreview && h('div', {className: 'dm-candidate-preview'},
+            compare({fields: [{key: 'body', label: '正文'}], local: {body: state.candidatePreview.body}, remote: {body: state.candidatePreview.result}, localLabel: '原稿', remoteLabel: '追加后的草稿（未经审核）', localVersion: `v${state.candidatePreview.rev} + 本地编辑`}),
+            !candidateCurrent && h('p', {role: 'alert', className: 'dm-local-hint'}, '原稿版本已改变，请重新预览。'),
+            button('追加到草稿（未经审核）', () => { setAllowLeave(false); controller.current?.adoptCandidate(); }, candidateBlocked || !candidateCurrent, true))),
         writable && h('div', {className: 'dm-actions dm-promotion'}, button('整理为笔记', () => promote('Note'), state.busy || !state.loaded || !state.body.trim()),
           button('整理为证明义务', () => promote('Obligation'), state.busy || !state.loaded || !state.body.trim())),
         h('details', {className: 'dm-details'}, h('summary', null, `历史版本（${state.history.length}）`),
@@ -197,7 +246,7 @@
         state.preview && h('section', {className: 'dm-panel', 'aria-label': '草稿本历史预览'}, h('h4', null, `历史 v${state.preview.rev} · ${state.preview.title}`), renderPreview(state.preview.body),
           h('div', {className: 'dm-actions'}, writable && button('恢复为新版本', () => controller.current?.restore(state.preview.rev), state.busy || state.dirty || !!state.attempt), button('关闭历史预览', () => controller.current?.clearPreview())),
           state.dirty && h('p', {className: 'dm-local-hint'}, '请先保存当前本地修改，恢复不会抹去历史。')),
-        (state.dirty || state.attempt) && h('p', {className: 'dm-local-hint'}, '切换项目前会尝试保存；失败时不会离开。',
+        (state.dirty || state.attempt || hasCandidate(state)) && h('p', {className: 'dm-local-hint'}, hasCandidate(state) ? '尚有未采用的候选。请追加、明确丢弃，或选择仅保留本窗口再离开；候选不会自动写入草稿。' : '切换项目前会尝试保存；失败时不会离开。',
           button('仅保留本窗口并允许离开', () => setAllowLeave(true)), allowLeave && ' 本地稿已保留在本窗口；刷新或关闭窗口可能丢失。'));
     }
     function LegacyImport({request, sessionId, close, onImported}) {

@@ -5,7 +5,7 @@ import {dirname, join} from 'node:path';
 import {build} from 'esbuild';
 
 const require = createRequire(import.meta.url);
-const sources = ['forms.cjs', 'form-ui.cjs', 'project-form.cjs', 'workbench-ui.cjs', 'process-graph.cjs', 'graph-ui.cjs', 'client-theme.cjs', 'client-main.cjs'];
+const sources = ['forms.cjs', 'form-ui.cjs', 'comparison-ui.cjs', 'project-form.cjs', 'workbench-ui.cjs', 'record-ui.cjs', 'process-graph.cjs', 'graph-ui.cjs', 'client-theme.cjs', 'client-main.cjs'];
 for (const source of [...sources, 'math-preview.cjs', 'host.mjs', 'human-api.mjs', 'chat-tools.mjs']) {
   const result = spawnSync(process.execPath, ['--check', source], {stdio: 'inherit'});
   if (result.error) throw result.error;

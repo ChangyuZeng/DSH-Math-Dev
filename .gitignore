@@ -30,6 +30,8 @@
 !/client-theme.cjs
 !/forms.cjs
 !/form-ui.cjs
+!/record-ui.cjs
+!/comparison-ui.cjs
 !/process-graph.cjs
 !/graph-ui.cjs
 !/build.mjs

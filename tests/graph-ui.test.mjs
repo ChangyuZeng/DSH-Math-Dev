@@ -36,6 +36,12 @@ function toggle(tree, label) {
   const found = nodes(tree).find(node => node.props['aria-label'] === label && node.type === 'button');
   assert.ok(found, `Missing graph toggle: ${label}`); return found;
 }
+function filter(tree, label, value) {
+  const field = nodes(tree).find(node => ['input', 'select'].includes(node.type) && node.props['aria-label'] === label);
+  assert.ok(field, `Missing filter: ${label}`);
+  field.props.onChange({currentTarget: {value}});
+}
+const rowTitles = tree => classes(tree, 'dm-graph-row').map(row => text(classes(row, 'dm-graph-label')[0]));
 function deepFreeze(value) {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) {
     for (const child of Object.values(value)) deepFreeze(child);
@@ -289,4 +295,172 @@ test('untrusted labels, source locators and unknown facts remain literal text, n
   assert.match(text(tree), /不代表推理因果/);
   assert.match(text(tree), /不展示工具输入\/输出原文或模型推理流/);
   assert.equal(t.inspections.length, 0); t.unmount();
+});
+
+test('summary remains default and list filters preserve tree folding, pagination, and original graph bytes', async () => {
+  const graph = graphFixture(85);
+  graph.nodes.find(node => node.id === 'event-1').status = 'error';
+  graph.nodes.find(node => node.id === 'event-2').status = 'unknown';
+  deepFreeze(graph);
+  const bytes = Graph.serialize(graph), t = graphTest(graph);
+  t.render(); let tree = t.render();
+  assert.equal(button(tree, '概要').props['aria-pressed'], true);
+  assert.equal(button(tree, '逐条').props['aria-pressed'], false);
+  assert.equal(classes(tree, 'dm-graph-list').length, 0);
+  button(tree, '显示更多（40 / 85）').props.onClick(); tree = t.render();
+  toggle(tree, '展开 Recorded action 1 的子节点').props.onClick();
+  button(tree, '逐条').props.onClick(); tree = t.render();
+  assert.equal(button(tree, '逐条').props['aria-pressed'], true);
+  assert.equal(classes(tree, 'dm-graph-board').length, 0);
+  assert.equal(classes(tree, 'dm-graph-row').length, 40);
+  filter(tree, '节点类型', 'event'); tree = t.render();
+  assert.equal(classes(tree, 'dm-graph-row').length, 40);
+  assert.equal(rowTitles(tree)[0], 'Recorded action 1');
+  button(tree, '显示更多（40 / 85）').props.onClick(); tree = t.render();
+  assert.equal(classes(tree, 'dm-graph-row').length, 80);
+  button(tree, '显示更多（80 / 85）').props.onClick(); tree = t.render();
+  assert.equal(classes(tree, 'dm-graph-row').length, 85);
+  filter(tree, '记录状态', 'error'); tree = t.render();
+  assert.deepEqual(rowTitles(tree), ['Recorded action 2']);
+  filter(tree, '记录状态', 'unknown'); tree = t.render();
+  assert.deepEqual(rowTitles(tree), ['Recorded action 3']);
+  filter(tree, '搜索已收录记录', 'does not exist'); tree = t.render();
+  assert.equal(classes(tree, 'dm-graph-empty').length, 1);
+  assert.equal(classes(tree, 'dm-graph-row').length, 0);
+  button(tree, '清除筛选').props.onClick(); tree = t.render();
+  assert.equal(classes(tree, 'dm-graph-row').length, 40, 'Filter edits reset incremental list limits');
+  filter(tree, '节点类型', 'record'); tree = t.render();
+  filter(tree, '搜索已收录记录', '  N-SYNTHETIC@85  '); tree = t.render();
+  assert.deepEqual(rowTitles(tree), ['Synthetic note 85'], 'Exact references are searchable, case insensitive');
+  const json = nodes(tree).find(node => node.type === 'details' && node.props.onToggle);
+  json.props.onToggle({currentTarget: {open: true}}); tree = t.render();
+  assert.ok(nodes(tree).some(node => node.type === 'pre' && node.children[0] === bytes));
+  assert.equal(t.created.length, 1);
+  assert.equal(await t.created[0].blob.text(), bytes);
+  assert.deepEqual(JSON.parse(await t.created[0].blob.text()), graph, 'Filtered download retains all edges, sources and nodes');
+  assert.equal(Graph.serialize(graph), bytes, 'All presentation state remains outside the frozen graph');
+  button(tree, '概要').props.onClick(); tree = t.render();
+  assert.equal(classes(tree, 'dm-graph-event').length, 80, 'Summary page size survives mode changes');
+  assert.equal(classes(tree, 'dm-graph-record').length, 1, 'Summary folds survive mode changes');
+  button(tree, '逐条').props.onClick(); tree = t.render();
+  assert.deepEqual(rowTitles(tree), ['Synthetic note 85'], 'List filters survive mode changes');
+  assert.equal(t.inspections.length, 0);
+  t.unmount();
+});
+
+test('list keeps source grouping and stable local seq order without a cross-source chronology', () => {
+  const graph = graphFixture(2), first = graph.nodes.find(node => node.kind === 'source');
+  for (let index = 0; index < 2; index++) {
+    for (const kind of ['event', 'record']) graph.nodes.find(node => node.id === `${kind}-${index}`).source = {path: first.subtitle, seq: index ? 10 : 20};
+  }
+  const second = {...first, id: 'second', title: 'Second ledger', subtitle: '/synthetic/second.jsonl'};
+  const unknownSource = {...first, id: 'unsupported', title: 'Unsupported source', subtitle: '/synthetic/native.jsonl', status: 'unknown', statusLabel: '消息未纳入'};
+  const example = graph.nodes.find(node => node.id === 'event-0');
+  graph.nodes.push(second,
+    {...example, id: 'second-2', parentId: second.id, title: 'Second seq 2', source: {path: second.subtitle, seq: 2}, facts: [{label: '时间', value: '1900-01-01'}]},
+    {...example, id: 'second-1', parentId: second.id, title: 'Second seq 1', source: {path: second.subtitle, seq: 1}, facts: [{label: '时间', value: '2100-01-01'}]},
+    {...example, id: 'second-unknown', parentId: second.id, title: 'No known seq', source: {path: second.subtitle}}, unknownSource);
+  graph.sources.push({adapter: 'ledger-py-v1', path: second.subtitle}, {adapter: 'native-v4', path: unknownSource.subtitle});
+  graph.counts.events += 3;
+  deepFreeze(graph);
+  const before = Graph.serialize(graph), t = graphTest(graph);
+  t.render(); button(t.render(), '逐条').props.onClick(); let tree = t.render();
+  assert.deepEqual(classes(tree, 'dm-graph-source-group').map(group => group.props['aria-label']), ['Synthetic ledger', 'Second ledger', 'Unsupported source']);
+  assert.deepEqual(rowTitles(tree), ['Synthetic ledger', 'Recorded action 2', 'Synthetic note 2', 'Recorded action 1', 'Synthetic note 1',
+    'Second ledger', 'Second seq 1', 'Second seq 2', 'No known seq', 'Unsupported source']);
+  assert.match(text(tree), /没有跨来源统一时间或推断因果/);
+  assert.match(text(tree), /来源内 seq 未知/);
+  filter(tree, '记录状态', 'unknown'); tree = t.render();
+  assert.deepEqual(rowTitles(tree), ['Unsupported source'], 'Unknown source descriptors remain discoverable even without event rows');
+  assert.equal(Graph.serialize(graph), before);
+  t.unmount();
+});
+
+test('list pagination is independent per source and resets for a replacement snapshot', async () => {
+  const graph = graphFixture(45), first = graph.nodes.find(node => node.kind === 'source');
+  const second = {...first, id: 'second', title: 'Second ledger', subtitle: '/synthetic/second.jsonl'};
+  const events = graph.nodes.filter(node => node.kind === 'event').map((node, index) => ({...node,
+    id: `second-event-${index}`, parentId: second.id, title: `Second action ${index + 1}`, source: {path: second.subtitle, seq: index + 1}}));
+  graph.nodes.push(second, ...events); graph.sources.push({adapter: 'ledger-py-v1', path: second.subtitle}); graph.counts.events += 45;
+  deepFreeze(graph);
+  const t = graphTest(graph); t.render(); button(t.render(), '逐条').props.onClick(); let tree = t.render();
+  filter(tree, '节点类型', 'event'); tree = t.render();
+  const sizes = tree => classes(tree, 'dm-graph-source-group').map(group => rowTitles(group).length);
+  assert.deepEqual(sizes(tree), [40, 40]);
+  toggle(tree, '显示更多 Synthetic ledger 的逐条记录').props.onClick(); tree = t.render();
+  assert.deepEqual(sizes(tree), [45, 40]);
+  assert.equal(classes(tree, 'dm-graph-list-more').length, 1);
+  toggle(tree, '显示更多 Second ledger 的逐条记录').props.onClick(); tree = t.render();
+  assert.deepEqual(sizes(tree), [45, 45]);
+  const next = deepFreeze({...graph, research_head: 'c'.repeat(64)});
+  t.render(next); tree = t.render();
+  assert.deepEqual(sizes(tree), [40, 40]);
+  assert.equal(nodes(tree).find(node => node.type === 'select' && node.props['aria-label'] === '节点类型').props.value, 'event');
+  assert.equal(t.created.length, 2);
+  assert.equal(await t.created[1].blob.text(), Graph.serialize(next));
+  assert.deepEqual(t.revoked, ['blob:synthetic-1']);
+  t.unmount();
+});
+
+test('list details and event products inspect only the original exact revision despite filtering', () => {
+  const graph = deepFreeze(graphFixture(2)), t = graphTest(graph);
+  t.render(); button(t.render(), '逐条').props.onClick(); let tree = t.render();
+  filter(tree, '节点类型', 'event'); tree = t.render();
+  card(tree, 'Recorded action 1').props.onClick({currentTarget: {focus() {}}}); tree = t.render();
+  const products = classes(detail(tree), 'dm-graph-products')[0];
+  assert.ok(products);
+  button(products, '打开记录 N-synthetic@1').props.onClick();
+  assert.equal(t.inspections[0], graph.nodes.find(node => node.id === 'record-0').ref);
+  button(detail(tree), '关闭节点详情').props.onClick();
+  filter(tree, '节点类型', 'record'); tree = t.render();
+  let returns = 0;
+  card(tree, 'Synthetic note 1').props.onClick({currentTarget: {focus() { returns++; }}}); tree = t.render();
+  filter(tree, '搜索已收录记录', 'missing'); tree = t.render();
+  assert.deepEqual(rowTitles(tree), []);
+  button(detail(tree), '打开记录 N-synthetic@1').props.onClick();
+  assert.equal(t.inspections[1], graph.nodes.find(node => node.id === 'record-0').ref, 'Filtering never upgrades or clears the selected historical ref');
+  button(classes(detail(tree), 'dm-graph-relations')[0], 'Synthetic note 2').props.onClick(); tree = t.render();
+  button(detail(tree), '打开记录 N-synthetic@2').props.onClick();
+  assert.equal(t.inspections[2], graph.nodes.find(node => node.id === 'record-1').ref);
+  detail(tree).props.onKeyDown({key: 'Escape', stopPropagation() {}});
+  assert.equal(detail(t.render()), undefined); assert.equal(returns, 1);
+  t.unmount();
+});
+
+test('list search treats malicious strings as literal text and never traverses extra payloads', () => {
+  const literal = '<svg onload="globalThis.__xss=1"><script>alert(1)</script>&';
+  const graph = graphFixture(1), event = graph.nodes.find(node => node.kind === 'event');
+  Object.assign(event, {title: literal, summary: literal, subtitle: literal, statusLabel: literal,
+    facts: [{label: literal, value: literal}], source: {path: literal, seq: 1}});
+  // A projection extension must not become searchable or visible automatically.
+  event.extraPayload = 'PRIVATE-PAYLOAD-NOT-A-SEARCH-FIELD';
+  deepFreeze(graph);
+  const t = graphTest(graph); t.render(); button(t.render(), '逐条').props.onClick(); let tree = t.render();
+  filter(tree, '搜索已收录记录', literal); tree = t.render();
+  assert.deepEqual(rowTitles(tree), [literal]);
+  card(tree, literal).props.onClick({currentTarget: {focus() {}}}); tree = t.render();
+  assert.ok(nodes(detail(tree)).some(node => node.type === 'dd' && node.children[0] === literal));
+  for (const node of nodes(tree)) {
+    assert.equal(node.props.dangerouslySetInnerHTML, undefined);
+    assert.equal(node.props.innerHTML, undefined);
+    assert.ok(!['script', 'img', 'iframe', 'svg'].includes(node.type));
+    if (node.props.href) assert.match(node.props.href, /^blob:synthetic-/);
+  }
+  filter(tree, '搜索已收录记录', event.extraPayload); tree = t.render();
+  assert.deepEqual(rowTitles(tree), []);
+  assert.equal(t.context.__xss, undefined); assert.deepEqual(t.inspections, []);
+  t.unmount();
+});
+
+test('unsupported download fallback stays complete even when the list has no matches', () => {
+  const graph = deepFreeze(graphFixture(3)), t = graphTest(graph, {failDownload: true});
+  t.render(); button(t.render(), '逐条').props.onClick(); let tree = t.render();
+  filter(tree, '搜索已收录记录', 'no matches'); tree = t.render();
+  assert.equal(classes(tree, 'dm-graph-empty').length, 1);
+  nodes(tree).find(node => node.type === 'details' && node.props.onToggle).props.onToggle({currentTarget: {open: true}});
+  tree = t.render();
+  assert.equal(nodes(tree).find(node => node.type === 'pre').children[0], Graph.serialize(graph));
+  assert.deepEqual(JSON.parse(nodes(tree).find(node => node.type === 'pre').children[0]), graph);
+  assert.equal(downloads(tree).length, 0); assert.deepEqual(t.created, []);
+  t.unmount();
 });

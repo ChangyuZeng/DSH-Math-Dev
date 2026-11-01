@@ -85,6 +85,7 @@ function loadPlugin({react = hooks(), globals = {}} = {}) {
     DshMathPreview: () => ({Preview: function Preview() {}}),
     DshMathProjectForm: () => ({ProjectForm: function ProjectForm() {}}),
     DshMathWorkbenchUI: () => ({Scratchpad: function Scratchpad() {}, LegacyImport: function LegacyImport() {}}),
+    DshMathRecordUI: () => ({RecordReader: function RecordReader() {}, RecordBrowser: function RecordBrowser() {}, ReviewSummary: function ReviewSummary() {}, ExportReceipt: function ExportReceipt() {}, ContextPack: function ContextPack() {}}),
     DshMathTheme: '.dsh-math-view{}',
     document: undefined,
     ...globals,
@@ -194,13 +195,22 @@ function nodes(tree) {
   if (!tree || typeof tree !== 'object') return [];
   return [tree, ...nodes(tree.children || [])];
 }
+function visibleNodes(tree) {
+  if (Array.isArray(tree)) return tree.flatMap(visibleNodes);
+  if (!tree || typeof tree !== 'object' || tree.props?.hidden) return [];
+  return [tree, ...visibleNodes(tree.children || [])];
+}
+const component = (tree, name) => nodes(tree).find(node => node.type?.name === name);
+const visibleComponent = (tree, name) => visibleNodes(tree).find(node => node.type?.name === name);
+const panel = (tree, id) => nodes(tree).find(node => node.props.role === 'tabpanel' && node.props.id.endsWith(`-${id}-panel`));
+const readActions = ['list', 'overview', 'project-draft-read'];
 function button(tree, label) {
-  const found = nodes(tree).find(node => (node.children.includes(label) || node.props['aria-label'] === label) && typeof node.props.onClick === 'function');
+  const found = visibleNodes(tree).find(node => (node.children.includes(label) || node.props['aria-label'] === label) && typeof node.props.onClick === 'function');
   assert.ok(found, `Missing button: ${label}`);
   return found;
 }
-const byTitle = (tree, title) => nodes(tree).find(node => node.props.title === title);
-const byClass = (tree, className) => nodes(tree).find(node => node.props.className?.split(' ').includes(className));
+const byTitle = (tree, title) => visibleNodes(tree).find(node => node.props.title === title);
+const byClass = (tree, className) => visibleNodes(tree).find(node => node.props.className?.split(' ').includes(className));
 const welcome = tree => nodes(tree).find(node => node.props['aria-label'] === '研究起点');
 const picker = tree => nodes(tree).find(node => node.props['aria-label'] === '选择研究项目');
 const alerts = tree => nodes(tree).filter(node => node.props.role === 'alert');
@@ -250,28 +260,39 @@ function processFixture(id, {history = false} = {}) {
 }
 const processNode = tree => nodes(tree).find(node => typeof node.type === 'function' && node.type.name === 'ProcessGraph');
 const projects = ['a', 'b'].map(id => ({id, title: id, session_id: `session-${id}`}));
-function viewTest({effects = false, handle} = {}) {
-  const react = hooks({effects}), requests = [], controls = {failure: null, handle};
+function viewTest({effects = false, handle, globals = {}} = {}) {
+  const sessions = new Set();
+  const react = hooks({effects}), requests = [], controls = {failure: null, handle, apiFailure: null};
   const Editor = function Editor() {}, Refs = function Refs() {}, Select = function Select() {};
   const plugin = loadPlugin({react, globals: {
+    ...globals,
     DshMathForms: Forms, DshMathFormUI: () => ({Editor, Refs, Select}), crypto: {randomUUID: () => 'test-uuid'},
     fetch: async (url, request) => {
       assert.equal(url, '/dsh-math/api');
       assert.equal(request.method, 'POST');
       const body = JSON.parse(request.body); requests.push(body);
+      if (body.action === 'project-draft-read') {
+        assert.deepEqual(Object.keys(body.args), ['session_id']);
+        assert.ok(sessions.has(body.args.session_id), 'Draft summaries may read only an explicitly rendered session');
+        assert.equal(body.args.session_id, session, 'Every summary dispatch must use the currently bound session, never scan past sessions');
+      }
+      if (controls.apiFailure?.action === body.action) return {json: async () => ({ok: false, error: controls.apiFailure.code, message: 'synthetic precommit rejection'})};
       if (controls.failure && body.action === 'overview') return {json: async () => ({ok: false, error: controls.failure})};
       const intercepted = controls.handle?.(body);
       if (intercepted !== undefined) return {json: async () => ({ok: true, value: await intercepted})};
+      if (body.action === 'project-draft-read') return {json: async () => ({ok: true, value: {draft: null, validation: null}})};
       assert.ok(['list', 'overview'].includes(body.action), `Unexpected write API: ${body.action}`);
       return {json: async () => ({ok: true, value: body.action === 'list' ? projects : overview(body.args.project_id)})};
     },
   }});
   const ctx = contextWith(undefined); plugin.apply(ctx);
   const View = ctx.slots.rows.find(row => row.descriptor.id === 'math').component;
-  let session = 'test-session', previous;
-  const wrap = sessionId => View({sessionId, sidebar: true});
-  const render = (sessionId = session) => {
-    session = sessionId;
+  let session = 'test-session', previous, sidebar = true;
+  const wrap = sessionId => View({sessionId, sidebar});
+  // Model two independently mounted surface lifetimes sharing one plugin module's retained buffers.
+  const switchSurface = value => { react.unmount(); react.mount(); previous = undefined; sidebar = value; };
+  const render = (sessionId = session, {flushEffects = true} = {}) => {
+    session = sessionId; sessions.add(sessionId);
     const child = wrap(sessionId);
     assert.equal(typeof child.type, 'function', 'MathView must return its keyed ProjectView');
     if (previous && (previous.type !== child.type || previous.key !== child.key)) {
@@ -280,7 +301,7 @@ function viewTest({effects = false, handle} = {}) {
     previous = child;
     react.reset();
     const tree = child.type(child.props);
-    react.flushEffects();
+    if (flushEffects) react.flushEffects();
     return tree;
   };
   const choose = async id => {
@@ -298,7 +319,7 @@ function viewTest({effects = false, handle} = {}) {
     assert.ok(nodes(control).some(node => node.type === 'option' && node.props.value === id));
     return control.props.onChange({target: {value: id}});
   };
-  return {render, wrap, choose, requests, controls, react, Editor, Refs, Select};
+  return {render, wrap, choose, requests, controls, react, Editor, Refs, Select, ctx, switchSurface};
 }
 function processTest({effects = false, history = false, handle} = {}) {
   const fixtures = {a: processFixture('a', {history}), b: processFixture('b')};
@@ -499,7 +520,7 @@ test('an empty workspace has one primary create action and a secondary import mo
   assert.ok(welcome(t.render()));
   assert.equal(byTitle(t.render(), '项目准备'), undefined);
   assert.equal(nodes(t.render()).filter(node => node.props.variant === 'primary').length, 1);
-  assert.deepEqual(t.requests.map(request => request.action), ['list'], 'Opening and cancelling forms must not create research data');
+  assert.deepEqual(t.requests.map(request => request.action), ['list', 'project-draft-read'], 'Opening and cancelling forms must not create research data');
 });
 
 test('overview leads with the goal and actions, while records keeps every group', async () => {
@@ -513,7 +534,7 @@ test('overview leads with the goal and actions, while records keeps every group'
   assert.equal(welcome(tree), undefined);
   assert.equal(button(nodes(tree).find(node => node.type === 'header'), '新建项目').props.variant, 'ghost');
   assert.equal(byClass(goal, 'dm-goal-title').children[0], goalObject.data.title);
-  assert.equal(byClass(goal, 'dm-goal-statement').children[0], goalObject.data.statement);
+  assert.equal(component(byClass(goal, 'dm-goal-statement'), 'Preview').props.text, goalObject.data.statement);
   assert.equal(nodes(tree).filter(node => node.children.includes('P-a@1') && node.props.onClick).length, 1, 'Do not duplicate the target in the digest');
   assert.deepEqual(flat.filter(node => groupTitles.includes(node.props.title)).map(node => node.props.title), ['证明义务', '研究笔记']);
   const firstGroup = byTitle(tree, '证明义务');
@@ -529,12 +550,14 @@ test('overview leads with the goal and actions, while records keeps every group'
   button(tree, '记录与审核').props.onClick();
   const records = t.render();
   assert.equal(button(records, '记录与审核').props['data-active'], true);
-  assert.deepEqual(nodes(records).filter(node => groupTitles.includes(node.props.title)).map(node => node.props.title), groupTitles);
-  for (const title of ['已接受 / 已关闭', '候选结论', '失败路线']) {
-    assert.ok(nodes(byTitle(records, title)).some(node => node.children.includes('暂无记录')));
-  }
-  assert.ok(button(byTitle(records, '当前目标'), 'P-a@1'));
-  assert.ok(t.requests.every(request => ['list', 'overview'].includes(request.action)));
+  assert.equal(panel(records, 'overview').props.hidden, true);
+  const browser = visibleComponent(records, 'RecordBrowser');
+  assert.equal(browser.props.view, snapshot, 'Complete groups and exact objects reach the read-only browser');
+  assert.deepEqual(Object.keys(browser.props.view.groups), ['targets', 'accepted', 'candidates', 'obligations', 'failed_routes', 'notes']);
+  assert.equal(typeof browser.props.inspect, 'function');
+  browser.props.inspect(goalObject);
+  assert.equal(visibleComponent(t.render(), 'RecordReader').props.object, goalObject);
+  assert.ok(t.requests.every(request => readActions.includes(request.action)));
 });
 
 test('overview truncation still reaches all records by title and exact historical reference', async () => {
@@ -557,29 +580,28 @@ test('overview truncation still reaches all records by title and exact historica
   assert.ok(nodes(byTitle(digest, '已接受 / 已关闭')).some(node => node.children.includes(disclaimer)));
   assert.equal(byTitle(digest, '已接受事实'), undefined);
   button(notePanel, '查看全部 5 条').props.onClick();
-  const records = t.render(), complete = byTitle(records, '研究笔记');
+  const records = t.render(), browser = visibleComponent(records, 'RecordBrowser');
   assert.equal(button(records, '记录与审核').props['data-active'], true);
   assert.equal(picker(records).props.value, 'a');
-  assert.equal(rows(complete).length, notes.length);
-  assert.deepEqual(rows(complete).map(node => node.key), notes.map(object => `${object.id}@${object.rev}`));
-  assert.equal(nodes(complete).some(node => node.children.includes('查看全部 5 条')), false);
-  assert.ok(nodes(byTitle(records, '已接受 / 已关闭')).some(node => node.children.includes(disclaimer)));
+  assert.equal(panel(records, 'overview').props.hidden, true);
+  assert.deepEqual(browser.props.view.groups.notes.map(row => row.object), notes, 'Browser receives every historical revision, not the truncated digest');
+  assert.equal(visibleNodes(records).some(node => node.children.includes('查看全部 5 条')), false);
   const before = t.requests.length;
   for (const object of notes) {
     const key = `${object.id}@${object.rev}`;
-    const row = rows(byTitle(t.render(), '研究笔记')).find(node => node.key === key);
-    const title = byClass(row, 'dm-record-title'), reference = button(row, key);
-    assert.equal(title.type, 'button');
-    assert.equal(title.props.type, 'button');
-    assert.ok(title.children.includes(object.data.title));
-    for (const control of [title, reference]) {
-      control.props.onClick();
-      const detail = byTitle(t.render(), key);
-      assert.ok(detail, 'Both title and exact ref must open the selected revision');
-      assert.deepEqual(JSON.parse(nodes(detail).find(node => node.type === 'pre').children[0]), object);
-      button(t.render(), '关闭详情').props.onClick();
-      assert.equal(byTitle(t.render(), key), undefined, 'Test each opener independently, not against an already-open detail');
-    }
+    browser.props.inspect(object);
+    const detail = byTitle(t.render(), key), reader = visibleComponent(detail, 'RecordReader');
+    assert.ok(reader, 'The browser callback opens the selected exact revision');
+    assert.equal(reader.props.object, object);
+    reader.props.onClose();
+    assert.equal(byTitle(t.render(), key), undefined);
+  }
+  // Digest title and exact-reference controls still share that same navigation contract.
+  button(t.render(), '研究概览').props.onClick();
+  const row = rows(byTitle(t.render(), '研究笔记'))[0];
+  for (const opener of [byClass(row, 'dm-record-title'), button(row, `${notes[0].id}@${notes[0].rev}`)]) {
+    assert.equal(opener.type, 'button'); opener.props.onClick();
+    const reader = visibleComponent(t.render(), 'RecordReader'); assert.equal(reader.props.object, notes[0]); reader.props.onClose();
   }
   assert.equal(t.requests.length, before, 'Opening already-loaded records is local, not a write or a new research request');
 });
@@ -592,8 +614,8 @@ test('overview registration opens the record editor before the record lists', as
     assert.equal(button(tree, '记录与审核').props['data-active'], true);
     assert.equal(editor.props.initial.kind, kind);
     assert.equal(editor.props.initial.data.problem_ref.id, 'P-a');
-    assert.ok(flat.indexOf(byTitle(tree, '编辑研究记录')) < flat.indexOf(byTitle(tree, '当前目标')));
-    assert.ok(t.requests.every(request => ['list', 'overview'].includes(request.action)));
+    assert.ok(flat.indexOf(byTitle(tree, '编辑研究记录')) < flat.indexOf(visibleComponent(tree, 'RecordBrowser')));
+    assert.ok(t.requests.every(request => readActions.includes(request.action)));
   }
 });
 
@@ -610,14 +632,16 @@ test('refresh retains a draft and sources but project change clears transient st
   assert.equal(nodes(t.render()).find(node => node.props.label === '来源 1 完整路径').props.value, '/test/a.jsonl');
   button(t.render(), '记录与审核').props.onClick();
   assert.equal(nodes(t.render()).find(node => node.type === t.Editor).props.initial, draft);
-  const pending = t.choose('b');
+  const nextList = deferred(); t.controls.handle = body => body.action === 'list' ? nextList.promise : undefined;
+  const pending = t.choose('b'); await settle();
   assert.equal(picker(t.render()).props.disabled, true);
   assert.equal(t.render().props['aria-busy'], true);
   assert.ok(nodes(t.render()).some(node => node.props.role === 'status'));
-  await pending;
+  nextList.resolve(projects); await pending;
   assert.equal(picker(t.render()).props.value, 'b');
   assert.equal(nodes(t.render()).some(node => node.type === t.Editor), false);
-  button(t.render(), 'O-b@1').props.onClick();
+  const browserB = visibleComponent(t.render(), 'RecordBrowser');
+  browserB.props.inspect(browserB.props.view.objects.find(object => object.id === 'O-b' && object.rev === 1));
   assert.equal(nodes(t.render()).find(node => node.type === t.Refs).props.value.length, 0);
   button(t.render(), '回放与导出').props.onClick();
   assert.equal(nodes(t.render()).some(node => node.props.label === '来源 1 完整路径'), false);
@@ -645,7 +669,8 @@ test('selecting no project clears its view, draft, candidate and replay sources'
   button(t.render(), '记录与审核').props.onClick();
   assert.equal(nodes(t.render()).some(node => node.type === t.Editor), false);
   assert.equal(byTitle(t.render(), 'O-a@1'), undefined);
-  button(t.render(), 'O-a@1').props.onClick();
+  const browser = visibleComponent(t.render(), 'RecordBrowser');
+  browser.props.inspect(browser.props.view.objects.find(object => object.id === 'O-a' && object.rev === 1));
   assert.equal(nodes(t.render()).find(node => node.type === t.Refs).props.value.length, 0);
 });
 
@@ -667,7 +692,7 @@ test('session key remounts isolate all local state and initialize the matching p
   assert.equal(t.wrap(undefined).key, '');
   t.render('session-a'); await settle();
   assert.equal(picker(t.render()).props.value, 'a');
-  assert.deepEqual(t.requests.map(request => request.action), ['list', 'overview']);
+  assert.deepEqual(t.requests.map(request => request.action), ['list', 'project-draft-read', 'overview']);
   button(t.render(), '登记笔记').props.onClick();
   button(t.render(), '新建项目').props.onClick();
   assert.equal(nodes(t.render()).find(node => node.type?.name === 'ProjectForm').key, 'session-a');
@@ -682,7 +707,7 @@ test('session key remounts isolate all local state and initialize the matching p
   await settle();
   assert.equal(picker(t.render()).props.value, 'b');
   assert.equal(button(t.render(), '研究概览').props['data-active'], true);
-  assert.deepEqual(t.requests.map(request => request.action), ['list', 'overview', 'list', 'overview']);
+  assert.deepEqual(t.requests.map(request => request.action), ['list', 'project-draft-read', 'overview', 'list', 'project-draft-read', 'overview']);
   assert.deepEqual(t.requests.filter(request => request.action === 'overview').map(request => request.args.project_id), ['a', 'b']);
   button(t.render(), '记录与审核').props.onClick();
   assert.equal(nodes(t.render()).some(node => node.type === t.Editor), false);
@@ -691,7 +716,8 @@ test('session key remounts isolate all local state and initialize the matching p
   button(t.render(), '新建项目').props.onClick();
   assert.equal(nodes(t.render()).find(node => node.type?.name === 'ProjectForm').key, 'session-b');
   assert.equal(nodes(t.render()).find(node => node.type?.name === 'ProjectForm').props.sessionId, 'session-b');
-  assert.equal(t.requests.length, 4, 'Rerenders must not restart initialization');
+  assert.equal(t.requests.length, 6, 'Rerenders must not restart initialization');
+  assert.deepEqual(t.requests.filter(body => body.action === 'project-draft-read').map(body => body.args.session_id), ['session-a', 'session-b']);
 });
 
 test('switching to a session without a project clears the previous scope', async () => {
@@ -708,7 +734,8 @@ test('switching to a session without a project clears the previous scope', async
   assert.equal(byTitle(tree, '当前目标'), undefined);
   assert.equal(byClass(tree, 'dm-goal'), undefined);
   assert.equal(nodes(tree).some(node => node.type === t.Editor), false);
-  assert.deepEqual(t.requests.slice(before).map(request => request.action), ['list']);
+  assert.deepEqual(t.requests.slice(before).map(request => request.action), ['list', 'project-draft-read']);
+  assert.equal(t.requests.at(-1).args.session_id, 'session-without-project');
 });
 
 test('a late successful or failed A response cannot contaminate a completed B session', async testContext => {
@@ -727,6 +754,8 @@ test('a late successful or failed A response cannot contaminate a completed B se
     t.controls.handle = body => body.action === 'list' ? refreshing.promise : undefined;
     const refresh = button(t.render(), '刷新').props.onClick();
     assert.equal(t.render().props['aria-busy'], true);
+    const beforeLate = t.requests.length;
+    assert.equal(beforeLate, 8, 'Two initializations and one explicit refresh include only their scoped draft reads');
     if (outcome === 'resolve') a.resolve(overview('a'));
     else a.reject(Error('late A failure'));
     await settle();
@@ -737,7 +766,7 @@ test('a late successful or failed A response cannot contaminate a completed B se
     assert.equal(nodes(tree).find(node => node.type === t.Editor).props.initial, draft);
     assert.equal(alerts(tree).length, 0);
     assert.equal(t.react.writesAfterUnmount.length, 0, 'Old success, catch and finally must not update unmounted state');
-    assert.equal(t.requests.length, 5, 'Old A must not trigger any follow-up request');
+    assert.equal(t.requests.length, beforeLate, 'Old A must not trigger any follow-up request');
     refreshing.resolve(projects); await refresh;
     assert.equal(t.render().props['aria-busy'], false);
     assert.equal(picker(t.render()).props.value, 'b');
@@ -751,17 +780,17 @@ test('effect cleanup/setup keeps a newer operation busy when an older finally fi
   t.render('session-a');
   assert.equal(t.render().props['aria-busy'], true);
   t.react.restartEffects();
-  assert.equal(t.requests.length, 2);
+  assert.equal(t.requests.length, 4);
   oldList.resolve(projects); await settle();
   assert.equal(t.render().props['aria-busy'], true);
   assert.equal(picker(t.render()), undefined, 'Superseded initialization must not publish project choices');
   assert.equal(button(t.render(), '刷新').props.disabled, true);
   assert.equal(alerts(t.render()).length, 0);
-  assert.deepEqual(t.requests.map(request => request.action), ['list', 'list'], 'Superseded initialization must not request overview');
+  assert.deepEqual(t.requests.map(request => request.action), ['list', 'project-draft-read', 'list', 'project-draft-read'], 'Superseded initialization must not request overview');
   newList.resolve(projects); await settle();
   assert.equal(picker(t.render()).props.value, 'a');
   assert.equal(t.render().props['aria-busy'], false);
-  assert.deepEqual(t.requests.map(request => request.action), ['list', 'list', 'overview']);
+  assert.deepEqual(t.requests.map(request => request.action), ['list', 'project-draft-read', 'list', 'project-draft-read', 'overview']);
 });
 
 test('double save callbacks dispatch only one mocked commit before the disabled render', async () => {
@@ -783,7 +812,7 @@ test('double save callbacks dispatch only one mocked commit before the disabled 
   pending.resolve({}); await first;
   assert.equal(t.render().props['aria-busy'], false);
   assert.equal(nodes(t.render()).some(node => node.type === t.Editor), false);
-  assert.deepEqual(t.requests.map(body => body.action), ['list', 'list', 'overview', 'commit', 'list', 'overview']);
+  assert.deepEqual(t.requests.map(body => body.action), ['project-draft-read', 'list', 'list', 'overview', 'commit', 'list', 'overview']);
 });
 
 test('an unmounted save completion cannot dispatch a refresh in the new session', async () => {
@@ -795,7 +824,7 @@ test('an unmounted save completion cannot dispatch a refresh in the new session'
   t.render('session-b'); await settle();
   assert.equal(picker(t.render()).props.value, 'b');
   const before = t.requests.length;
-  pending.resolve({}); await operation;
+  pending.resolve({}); await assert.rejects(operation, /View changed/);
   assert.equal(t.requests.length, before);
   assert.equal(t.react.writesAfterUnmount.length, 0);
   assert.equal(picker(t.render()).props.value, 'b');
@@ -847,7 +876,7 @@ test('process entry reads only project replay and selected sources require an ex
   await button(t.render(), '读取本项目记录').props.onClick();
   assert.deepEqual(t.requests.at(-1), {action: 'replay', args: {project_id: 'a', sources: []}});
   assert.deepEqual(Array.from(processNode(t.render()).props.graph.sources, source => source.path), ['research/events.jsonl']);
-  assert.ok(t.requests.every(request => ['list', 'overview', 'replay'].includes(request.action)), 'No model, mutation, audit export, or source discovery request');
+  assert.ok(t.requests.every(request => [...readActions, 'replay'].includes(request.action)), 'No model, mutation, audit export, or source discovery request');
 });
 
 test('a stale process head reports an error without replacing a frozen snapshot', async testContext => {
@@ -875,7 +904,7 @@ test('refresh, project changes and no-project selection clear the process snapsh
   const previous = processNode(t.render()).props.graph, before = t.requests.length;
   await button(t.render(), '刷新').props.onClick();
   assert.equal(processNode(t.render()), undefined);
-  assert.deepEqual(t.requests.slice(before).map(request => request.action), ['list', 'overview']);
+  assert.deepEqual(t.requests.slice(before).map(request => request.action), ['project-draft-read', 'list', 'overview']);
   assert.equal(button(t.render(), '研究过程').props['data-active'], true);
   await button(t.render(), '读取本项目记录').props.onClick();
   assert.notEqual(processNode(t.render()).props.graph, previous);
@@ -903,7 +932,7 @@ test('process references open the exact historical revision in the records tab',
     assert.equal(button(t.render(), '记录与审核').props['data-active'], true);
     const detail = byTitle(t.render(), `N-a@${rev}`);
     assert.ok(detail);
-    assert.deepEqual(JSON.parse(nodes(detail).find(node => node.type === 'pre').children[0]), t.fixtures.a.view.objects.find(object => object.id === 'N-a' && object.rev === rev));
+    assert.equal(visibleComponent(detail, 'RecordReader').props.object, t.fixtures.a.view.objects.find(object => object.id === 'N-a' && object.rev === rev));
     button(t.render(), '关闭详情').props.onClick();
     await button(t.render(), '研究过程').props.onClick();
     assert.equal(processNode(t.render()).props.graph, graph.props.graph);
@@ -945,13 +974,14 @@ test('late process replies cannot publish state or clear a newer session operati
 });
 
 test('closed records are not labelled accepted mathematical facts', async () => {
-  const t = viewTest(); await t.choose('a');
-  assert.equal(byTitle(t.render(), '已接受 / 已关闭'), undefined, 'Empty groups stay out of the overview digest');
-  button(t.render(), '记录与审核').props.onClick();
-  const panel = byTitle(t.render(), '已接受 / 已关闭');
-  assert.ok(panel);
-  assert.ok(nodes(panel).some(node => node.children.some(text => typeof text === 'string' && text.includes('不代表全局证明或 R1/R2 已通过'))));
+  const fixture = overview('a');
+  fixture.groups.accepted = [{object: fixture.objects[2], assessment: {state: 'closed', reasons: ['synthetic local check only']}}];
+  const t = viewTest({handle: body => body.action === 'overview' ? fixture : undefined}); await t.choose('a');
+  const accepted = byTitle(t.render(), '已接受 / 已关闭'); assert.ok(accepted);
+  assert.ok(nodes(accepted).some(node => node.children.some(text => typeof text === 'string' && text.includes('不代表全局证明或 R1/R2 已通过'))));
   assert.equal(byTitle(t.render(), '已接受事实'), undefined);
+  button(t.render(), '记录与审核').props.onClick();
+  assert.equal(visibleComponent(t.render(), 'RecordBrowser').props.view.groups.accepted, fixture.groups.accepted, 'Reader receives the actual scoped assessment, not a manufactured mathematical verdict');
 });
 
 test('fallback modal still opens and closes without Better Sidebar', () => {
@@ -1080,7 +1110,7 @@ test('five compact tabs retain the same scratchpad component and next actions pr
   const first = scratch(t.render()); assert.equal(first.props.active, false);
   assert.equal(nodes(t.render()).filter(node => node.props.className === 'dm-tab').length, 5);
   const digest = byClass(t.render(), 'dm-next-action-list'); assert.ok(digest); assert.ok(nodes(digest).some(node => node.children.includes('先检查合成条件\n再登记结果')));
-  button(digest, 'O-a@1').props.onClick(); assert.equal(byTitle(t.render(), 'O-a@1').props.meta, 'Obligation');
+  button(digest, 'O-a@1').props.onClick(); assert.equal(visibleComponent(byTitle(t.render(), 'O-a@1'), 'RecordReader').props.object.kind, 'Obligation');
   button(t.render(), '项目草稿本').props.onClick(); assert.equal(scratch(t.render()).key, first.key); assert.equal(scratch(t.render()).props.active, true);
   button(t.render(), '研究概览').props.onClick(); assert.equal(scratch(t.render()).key, first.key); assert.equal(scratch(t.render()).props.active, false);
 });
@@ -1094,8 +1124,8 @@ test('legacy readonly view suppresses every research mutation but retains explic
   for (const text of ['笔记', '义务', '证据', '修订此记录', '人工审核预览', '本人提交审核记录']) assert.equal(nodes(t.render()).some(node => node.children.includes(text)), false);
   assert.equal(t.requests.some(body => body.action === 'export'), false); button(t.render(), '回放与导出').props.onClick();
   assert.equal(t.requests.some(body => body.action === 'export'), false); await button(t.render(), '生成本地审核包').props.onClick();
-  assert.ok(nodes(t.render()).some(node => node.type === 'pre' && node.children.some(text => String(text).includes('/synthetic/derived-audit'))));
-  assert.deepEqual(t.requests.filter(body => !['list', 'overview'].includes(body.action)).map(body => body.action), ['export']);
+  assert.equal(visibleComponent(t.render(), 'ExportReceipt').props.receipt.path, '/synthetic/derived-audit');
+  assert.deepEqual(t.requests.filter(body => !readActions.includes(body.action)).map(body => body.action), ['export']);
 });
 
 test('project switches await child flush and failure keeps the active project', async () => {
@@ -1118,7 +1148,7 @@ test('promotion links the exact committed revision and retry never duplicates th
   assert.equal(editor.props.initial.data.summary, ''); assert.equal(editor.props.initial.promotion.scratchpad_rev, 7);
   const request = Forms.request(editor.props.initial), save = editor.props.save(request);
   assert.equal(t.requests.filter(body => body.action === 'scratchpad-promote-link').length, 0);
-  commit.resolve({versions: [{id: 'unrelated', rev: 99}, {id: editor.props.initial.id, rev: 4}]}); await save;
+  commit.resolve({versions: [{id: 'unrelated', rev: 99}, {id: editor.props.initial.id, rev: 4}]}); await assert.rejects(save, /不要重复保存记录/);
   assert.equal(nodes(t.render()).some(node => node.type === t.Editor), false); assert.ok(alerts(t.render()).some(node => node.children.join('').includes('不要重复保存记录')));
   const firstLink = t.requests.find(body => body.action === 'scratchpad-promote-link');
   assert.deepEqual(firstLink.args.target, {id: editor.props.initial.id, rev: 4}); assert.equal(firstLink.args.scratchpad_rev, 7);
@@ -1134,9 +1164,306 @@ test('promotion completion after session unmount never dispatches a stale source
   t.render('session-a'); await settle();
   nodes(t.render()).find(node => node.type?.name === 'Scratchpad').props.onPromote('Obligation', {project_id: 'a', rev: 3, title: 'synthetic', body: 'synthetic'});
   const editor = nodes(t.render()).find(node => node.type === t.Editor), pending = editor.props.save(Forms.request(editor.props.initial));
-  t.render('session-b'); await settle(); commit.resolve({versions: [{id: editor.props.initial.id, rev: 1}]}); await pending;
+  t.render('session-b'); await settle(); commit.resolve({versions: [{id: editor.props.initial.id, rev: 1}]}); await assert.rejects(pending, /View changed/);
   assert.equal(t.requests.some(body => body.action === 'scratchpad-promote-link'), false); assert.equal(t.react.writesAfterUnmount.length, 0);
   assert.equal(picker(t.render()).props.value, 'b');
+});
+
+const editNode = (t, tree = t.render()) => nodes(tree).find(node => node.type === t.Editor);
+const plain = value => JSON.parse(JSON.stringify(value));
+const writeRequests = t => t.requests.filter(body => !readActions.includes(body.action));
+const unsaved = t => component(t.render(), 'UnsavedPrompt');
+function changeFormalDraft(t, body = '  exact local\r\n$math$ 😀\n') {
+  const editor = editNode(t), edited = {...editor.props.initial, data: {...editor.props.initial.data, title: 'local title', summary: 'local summary', body}};
+  editor.props.onDraftChange(edited, {dirty: true}); return edited;
+}
+const reviewFixture = () => ({eligible_for_pass: true, required_scope: 'local_claim', basis_hash: 'synthetic-basis',
+  basis: {target: {id: 'O-a', rev: 1}, candidate: {id: 'N-a', rev: 1}}, reasons: []});
+async function openReview(t) {
+  await t.choose('a'); button(t.render(), 'O-a@1').props.onClick();
+  nodes(t.render()).find(node => node.type === t.Refs).props.change([{id: 'N-a', rev: 1}]);
+  await button(t.render(), '人工审核预览').props.onClick();
+  const tree = t.render();
+  visibleNodes(tree).find(node => node.type === 'select' && node.props.value === '' && !node.props['aria-label']).props.onChange({target: {value: 'inconclusive'}});
+  nodes(t.render()).find(node => node.props.label === '本人审核发现（每行一项）').props.change('  finding one\n精确发现 Ω\n');
+}
+
+test('dirty formal editor stays mounted across every tab with stable key and no leave dialog or implicit write', async () => {
+  const t = processTest(); await t.choose('a'); button(t.render(), '登记笔记').props.onClick();
+  const original = editNode(t); assert.equal(original.props.initialDirty, false, 'A blank document does not inherit a dirty flag');
+  const edited = changeFormalDraft(t);
+  for (const tab of ['研究概览', '项目草稿本', '研究过程', '回放与导出', '记录与审核']) {
+    await button(t.render(), tab).props.onClick(); const tree = t.render(), editor = editNode(t, tree);
+    assert.equal(editor.type, original.type); assert.equal(editor.key, original.key); assert.equal(editor.props.initial, edited);
+    assert.equal(editor.props.initialDirty, true); assert.equal(unsaved(t), undefined);
+    assert.equal(panel(tree, 'records').props.hidden, tab !== '记录与审核');
+  }
+  assert.deepEqual(t.requests.filter(body => ![...readActions, 'replay'].includes(body.action)), []);
+  assert.equal(t.requests.filter(body => body.action === 'replay').length, 1, 'Only explicit process viewing requests replay');
+});
+
+test('project switching protects dirty documents with cancel, keep and discard; current project owns the saved bytes', async () => {
+  const t = viewTest(); await t.choose('a'); button(t.render(), '登记笔记').props.onClick();
+  const edited = changeFormalDraft(t), key = editNode(t).key;
+  let navigation = t.choose('b'); await settle();
+  assert.equal(picker(t.render()).props.value, 'a'); assert.equal(unsaved(t).props.decision.keep, true);
+  unsaved(t).props.finish('cancel'); await navigation;
+  assert.equal(picker(t.render()).props.value, 'a'); assert.equal(editNode(t).props.initial, edited);
+  navigation = t.choose('b'); await settle(); unsaved(t).props.finish('keep'); await navigation;
+  assert.equal(picker(t.render()).props.value, 'b'); assert.equal(editNode(t), undefined);
+  await t.choose('a'); assert.equal(editNode(t).key, key); assert.deepEqual(plain(editNode(t).props.initial), plain(edited));
+  assert.equal(editNode(t).props.initialDirty, true);
+  navigation = t.choose('b'); await settle(); unsaved(t).props.finish('discard'); await navigation;
+  await t.choose('a'); assert.equal(editNode(t), undefined); assert.equal(writeRequests(t).length, 0);
+});
+
+test('editor busy/unknown callbacks gate departure and original requests survive keep without allowing replacement', async () => {
+  let lose = true;
+  const t = viewTest({handle: body => body.action === 'commit' ? (lose ? (lose = false, Promise.reject(Error('unknown transport receipt'))) : {}) : undefined});
+  await t.choose('a'); button(t.render(), '登记笔记').props.onClick(); changeFormalDraft(t);
+  let editor = editNode(t); editor.props.onBusyChange(true);
+  const before = t.requests.length; await t.choose('b'); assert.equal(picker(t.render()).props.value, 'a'); assert.equal(unsaved(t), undefined); assert.equal(t.requests.length, before);
+  editor.props.onBusyChange(false);
+  const attempt = Forms.request(editor.props.initial); editor.props.onAttemptChange(attempt);
+  await assert.rejects(editor.props.save(attempt), /unknown transport receipt/);
+  assert.deepEqual(plain(editNode(t).props.initialAttempt), plain(attempt));
+  const cancelEditor = editNode(t).props.cancel(); await settle();
+  assert.equal(unsaved(t).props.decision.keep, false); assert.equal(unsaved(t).props.decision.uncertain, true);
+  unsaved(t).props.finish('cancel'); await cancelEditor; assert.ok(editNode(t));
+  const switchProject = t.choose('b'); await settle(); assert.equal(unsaved(t).props.decision.uncertain, true);
+  unsaved(t).props.finish('keep'); await switchProject; assert.equal(editNode(t), undefined);
+  await t.choose('a'); editor = editNode(t); assert.deepEqual(plain(editor.props.initialAttempt), plain(attempt));
+  await editor.props.save(editor.props.initialAttempt);
+  const commits = t.requests.filter(body => body.action === 'commit'); assert.equal(commits.length, 2); assert.deepEqual(commits[0], commits[1]);
+  assert.equal(editNode(t), undefined);
+});
+
+test('cross-session remount retains only the matching session/project document and ignores stale child callbacks', async () => {
+  const t = viewTest({effects: true}); t.render('session-a'); await settle();
+  button(t.render(), '登记笔记').props.onClick(); const edited = changeFormalDraft(t, 'session A exact\r\n');
+  const stale = editNode(t); stale.props.onAttemptChange(Forms.request(edited));
+  const empty = t.render('session-b'); assert.equal(editNode(t, empty), undefined); await settle();
+  assert.equal(picker(t.render()).props.value, 'b'); assert.equal(editNode(t), undefined);
+  await t.choose('a'); assert.equal(editNode(t), undefined, 'The same project viewed from session B cannot inherit session A draft');
+  stale.props.onDraftChange({...edited, data: {...edited.data, body: 'stale overwrite'}}, {dirty: true}); stale.props.onBusyChange(true); stale.props.onAttemptChange(null);
+  assert.equal(editNode(t), undefined); assert.equal(t.react.writesAfterUnmount.length, 0);
+  t.render('session-a'); await settle();
+  assert.equal(editNode(t).props.initial.data.body, edited.data.body); assert.ok(editNode(t).props.initialAttempt); assert.equal(editNode(t).props.initialDirty, true);
+  assert.equal(writeRequests(t).length, 0);
+  assert.deepEqual(t.requests.filter(body => body.action === 'project-draft-read').map(body => body.args.session_id), ['session-a', 'session-b', 'session-a']);
+});
+
+test('beforeunload observes a blank editor busy callback even without a retained dirty draft', async testContext => {
+  const listeners = new Map(), document = {createElement: () => ({remove() {}}), head: {appendChild() {}}};
+  const t = viewTest({effects: true, globals: {document,
+    addEventListener: (name, callback) => { if (!listeners.has(name)) listeners.set(name, new Set()); listeners.get(name).add(callback); },
+    removeEventListener: (name, callback) => listeners.get(name)?.delete(callback)}});
+  testContext.after(() => { t.react.unmount(); t.ctx.dispose(); });
+  const unload = () => { const event = {prevented: false, preventDefault() { this.prevented = true; }}; for (const callback of listeners.get('beforeunload') || []) callback(event); return event; };
+  t.render('session-a'); await settle(); button(t.render(), '登记笔记').props.onClick();
+  const editor = editNode(t); assert.equal(editor.props.initialDirty, false); assert.equal(unload().prevented, false);
+  editor.props.onBusyChange(true); const event = unload(); assert.equal(event.prevented, true); assert.equal(event.returnValue, '');
+  assert.equal(editor.props.initialDirty, false, 'Busy protection must not manufacture a dirty edit or commit');
+  editor.props.onBusyChange(false); assert.equal(unload().prevented, false); assert.equal(writeRequests(t).length, 0);
+  t.react.unmount(); assert.equal(unload().prevented, false, 'Unmount removes the active getter');
+  t.ctx.dispose(); assert.equal(listeners.get('beforeunload').size, 0, 'Plugin cleanup unregisters its listener');
+});
+
+test('sidebar and conversation buffers remain separate and a clean surface cannot delete the other retained draft', async () => {
+  const t = viewTest({effects: true}); t.render('session-a'); await settle();
+  button(t.render(), '登记笔记').props.onClick(); const sidebarDraft = changeFormalDraft(t, 'sidebar-only exact\r\n');
+  t.switchSurface(false); t.render('session-a'); await settle();
+  assert.equal(editNode(t), undefined, 'Conversation starts with no sidebar draft');
+  button(t.render(), '登记笔记').props.onClick(); assert.equal(editNode(t).props.initialDirty, false);
+  t.switchSurface(true); t.render('session-a'); await settle();
+  assert.equal(editNode(t).props.initialDirty, true); assert.deepEqual(plain(editNode(t).props.initial), plain(sidebarDraft), 'Clean conversation teardown cannot remove sidebar content');
+  t.switchSurface(false); t.render('session-a'); await settle(); button(t.render(), '登记笔记').props.onClick();
+  const conversationDraft = changeFormalDraft(t, 'conversation-only exact\n');
+  t.switchSurface(true); t.render('session-a'); await settle();
+  assert.equal(editNode(t).props.initial.data.body, sidebarDraft.data.body); assert.equal(editNode(t).props.initialDirty, true);
+  const cancelling = editNode(t).props.cancel(); await settle(); unsaved(t).props.finish('discard'); await cancelling; assert.equal(editNode(t), undefined);
+  t.switchSurface(false); t.render('session-a'); await settle();
+  assert.equal(editNode(t).props.initialDirty, true); assert.deepEqual(plain(editNode(t).props.initial), plain(conversationDraft), 'Discard is scoped to its surface');
+  assert.equal(writeRequests(t).length, 0); t.react.unmount();
+});
+
+test('review findings survive tab changes and refresh but require an explicit fresh basis before submission', async () => {
+  let previews = 0;
+  const t = viewTest({handle: body => body.action === 'review-preview' ? {...reviewFixture(), basis_hash: `basis-${++previews}`} : body.action === 'review' ? {} : undefined});
+  await openReview(t); const before = t.requests.length;
+  button(t.render(), '研究概览').props.onClick(); assert.equal(unsaved(t), undefined); button(t.render(), '记录与审核').props.onClick();
+  assert.equal(t.requests.length, before); assert.equal(nodes(t.render()).find(node => node.props.label === '本人审核发现（每行一项）').props.value, '  finding one\n精确发现 Ω\n');
+  await button(t.render(), '刷新').props.onClick();
+  assert.equal(button(t.render(), '本人提交审核记录').props.disabled, true);
+  assert.equal(component(t.render(), 'ReviewSummary').props.preview.basis_hash, 'basis-1');
+  assert.equal(nodes(t.render()).find(node => node.props.label === '本人审核发现（每行一项）').props.value, '  finding one\n精确发现 Ω\n');
+  assert.equal(t.requests.some(body => body.action === 'review'), false);
+  await button(t.render(), '重新核对审核依据').props.onClick(); assert.equal(component(t.render(), 'ReviewSummary').props.preview.basis_hash, 'basis-2');
+  assert.equal(button(t.render(), '本人提交审核记录').props.disabled, false);
+  await button(t.render(), '本人提交审核记录').props.onClick();
+  const writes = t.requests.filter(body => body.action === 'review'); assert.equal(writes.length, 1);
+  assert.equal(writes[0].args.request.basis_hash, 'basis-2'); assert.equal(writes[0].args.request.scope, 'local_claim');
+  assert.deepEqual(writes[0].args.request.target, {id: 'O-a', rev: 1}); assert.deepEqual(writes[0].args.request.candidate, {id: 'N-a', rev: 1});
+  assert.deepEqual(writes[0].args.request.findings, ['  finding one', '精确发现 Ω']);
+});
+
+test('unsubmitted review findings can be kept per scope, but inspect/cancel never silently replaces them', async () => {
+  const t = viewTest({handle: body => body.action === 'review-preview' ? reviewFixture() : undefined}); await openReview(t);
+  const reader = visibleComponent(t.render(), 'RecordReader'), original = reader.props.object;
+  const next = reader.props.view.objects.find(object => object.id === 'N-a');
+  const inspecting = reader.props.inspect(next); await settle();
+  assert.equal(unsaved(t).props.decision.keep, false); unsaved(t).props.finish('cancel'); await inspecting;
+  assert.equal(visibleComponent(t.render(), 'RecordReader').props.object, original);
+  const navigation = t.choose('b'); await settle(); unsaved(t).props.finish('keep'); await navigation;
+  assert.equal(component(t.render(), 'ReviewSummary'), undefined); assert.equal(visibleComponent(t.render(), 'RecordReader'), undefined);
+  await t.choose('a');
+  assert.equal(nodes(t.render()).find(node => node.props.label === '本人审核发现（每行一项）').props.value, '  finding one\n精确发现 Ω\n');
+  assert.equal(visibleComponent(t.render(), 'RecordReader').props.object.id, 'O-a');
+  assert.equal(button(t.render(), '本人提交审核记录').props.disabled, true, 'Restored preview must be treated as stale');
+  const closing = visibleComponent(t.render(), 'RecordReader').props.onClose(); await settle(); unsaved(t).props.finish('discard'); await closing;
+  assert.equal(component(t.render(), 'ReviewSummary'), undefined); assert.equal(byClass(t.render(), 'dm-record-detail'), undefined);
+  assert.deepEqual(writeRequests(t).map(body => body.action), ['review-preview']);
+});
+
+test('review unknown receipt preserves the exact payload across refresh and only explicit retry resubmits', async () => {
+  let lose = true;
+  const t = viewTest({handle: body => body.action === 'review-preview' ? reviewFixture() : body.action === 'review' ? (lose ? (lose = false, Promise.reject(Error('lost review receipt'))) : {}) : undefined});
+  await openReview(t); await button(t.render(), '本人提交审核记录').props.onClick();
+  const original = t.requests.find(body => body.action === 'review'); assert.ok(original);
+  assert.equal(button(t.render(), '人工审核预览').props.disabled, true);
+  await button(t.render(), '刷新').props.onClick();
+  assert.equal(t.requests.filter(body => body.action === 'review').length, 1);
+  assert.equal(button(t.render(), '重试原审核提交').props.disabled, false);
+  const fieldset = nodes(t.render()).find(node => node.props.className === 'dm-editor-fields'); assert.equal(fieldset.props.disabled, true);
+  await button(t.render(), '重试原审核提交').props.onClick();
+  const attempts = t.requests.filter(body => body.action === 'review'); assert.equal(attempts.length, 2); assert.deepEqual(attempts[1], original);
+});
+
+test('definitive backend review conflicts preserve findings but clear retry identity and demand a fresh preview', async testContext => {
+  for (const code of ['VERSION_CONFLICT', 'REVIEW_CONFLICT', 'REVIEW_BLOCKED', 'SCOPE_MISMATCH']) await testContext.test(code, async () => {
+    const t = viewTest({handle: body => body.action === 'review-preview' ? reviewFixture() : undefined}); await openReview(t);
+    t.controls.apiFailure = {action: 'review', code}; await button(t.render(), '本人提交审核记录').props.onClick();
+    assert.equal(button(t.render(), '本人提交审核记录').props.disabled, true);
+    assert.equal(visibleNodes(t.render()).some(node => node.children.includes('重试原审核提交')), false);
+    assert.equal(nodes(t.render()).find(node => node.props.label === '本人审核发现（每行一项）').props.value, '  finding one\n精确发现 Ω\n');
+    assert.ok(alerts(t.render()).some(node => node.children.join('').includes(code)));
+    assert.equal(t.requests.filter(body => body.action === 'review').length, 1);
+    await button(t.render(), '重新核对审核依据').props.onClick(); assert.equal(button(t.render(), '本人提交审核记录').props.disabled, false);
+  });
+});
+
+test('current-session draft summary has absent, incomplete, complete, committed and pending-confirmation states without writes', async testContext => {
+  const cases = [
+    ['absent', {draft: null}, '新建项目'],
+    ['incomplete', {draft: {id: 'd', rev: 2, status: 'draft', fields: {title: 'synthetic draft'}}, validation: {complete: false, missing_fields: ['statement', 'domain']}}, '继续准备 · 还缺 2 项'],
+    ['complete', {draft: {id: 'd', rev: 3, status: 'draft'}, validation: {complete: true}}, '查看并确认草稿'],
+    ['committed', {draft: {id: 'd', rev: 4, status: 'committed'}}, '新建项目'],
+    ['pending', {draft: {id: 'd', rev: 5, status: 'draft'}, pending_finalization: {expected_rev: 5, operation_id: 'pending-confirm'}}, '查看待恢复确认'],
+  ];
+  for (const [name, summary, label] of cases) await testContext.test(name, async () => {
+    const session = `summary-${name}`;
+    const t = viewTest({effects: true, handle: body => body.action === 'list' ? [] : body.action === 'project-draft-read' ? summary : undefined});
+    t.render(session); await settle(); const tree = t.render();
+    assert.equal(nodes(tree).filter(node => node.props.variant === 'primary').length, 1); button(welcome(tree), label).props.onClick();
+    assert.equal(component(t.render(), 'ProjectForm').props.sessionId, session);
+    assert.deepEqual(t.requests, [{action: 'list', args: {}}, {action: 'project-draft-read', args: {session_id: session}}]);
+  });
+});
+
+test('late draft summaries never expose another session and failed reads remain read-only retryable', async () => {
+  const pending = deferred();
+  const t = viewTest({effects: true, handle: body => body.action === 'list' ? [] : body.action === 'project-draft-read' && body.args.session_id === 'summary-a' ? pending.promise : undefined});
+  t.render('summary-a'); t.render('summary-b'); await settle();
+  pending.resolve({draft: {id: 'private-a', status: 'draft', rev: 1, fields: {title: 'must not leak'}}, validation: {complete: true}}); await settle();
+  assert.ok(button(welcome(t.render()), '新建项目')); assert.equal(nodes(t.render()).some(node => node.children.join('').includes('must not leak')), false);
+  assert.equal(t.react.writesAfterUnmount.length, 0); assert.equal(writeRequests(t).length, 0);
+  t.controls.apiFailure = {action: 'project-draft-read', code: 'SUMMARY_UNAVAILABLE'};
+  await button(t.render(), '刷新').props.onClick(); await settle(); assert.ok(nodes(t.render()).some(node => node.children.join('').includes('SUMMARY_UNAVAILABLE')));
+  assert.equal(writeRequests(t).length, 0);
+});
+
+test('tab ARIA relationships, roving focus and keyboard navigation keep one visible panel without mutation', async () => {
+  const t = viewTest(); await t.choose('a'); let focused = '';
+  const check = () => {
+    const tree = t.render(), tabs = nodes(tree).filter(node => node.props.role === 'tab'), panels = nodes(tree).filter(node => node.props.role === 'tabpanel');
+    assert.equal(tabs.length, 5); assert.equal(panels.length, 5); assert.equal(panels.filter(node => !node.props.hidden).length, 1);
+    assert.equal(tabs.filter(node => node.props.tabIndex === 0).length, 1);
+    for (const tab of tabs) { const related = panels.find(node => node.props.id === tab.props['aria-controls']); assert.ok(related); assert.equal(related.props['aria-labelledby'], tab.props.id); assert.equal(tab.props['aria-selected'], !related.props.hidden); }
+    return {tree, tabs};
+  };
+  for (const [key, start, expected] of [['ArrowRight', 0, 'scratchpad'], ['End', 1, 'replay'], ['Home', 4, 'overview'], ['ArrowLeft', 0, 'replay']]) {
+    const {tree, tabs} = check(), nav = nodes(tree).find(node => node.props.role === 'tablist');
+    const targets = tabs.map(node => ({focus() { focused = node.key; }})); let prevented = false;
+    nav.props.onKeyDown({key, target: targets[start], currentTarget: {querySelectorAll: selector => { assert.equal(selector, '[role="tab"]'); return targets; }}, preventDefault() { prevented = true; }});
+    assert.equal(prevented, true); assert.equal(focused, expected); assert.equal(panel(t.render(), expected).props.hidden, false);
+  }
+  check(); assert.equal(writeRequests(t).length, 0);
+});
+
+test('reader pin, exact historical context package and closing callbacks stay local and scoped to the selected project', async () => {
+  const t = processTest({history: true}); await t.choose('a'); button(t.render(), '记录与审核').props.onClick();
+  const browser = visibleComponent(t.render(), 'RecordBrowser'), object = browser.props.view.objects.find(item => item.id === 'N-a' && item.rev === 1);
+  const before = t.requests.length; browser.props.inspect(object);
+  let reader = visibleComponent(t.render(), 'RecordReader'); assert.equal(reader.props.object, object); assert.equal(reader.props.view, browser.props.view);
+  reader.props.onPin(object); assert.equal(component(byClass(t.render(), 'dm-pinned-record'), 'RecordReader').props.object, object);
+  button(t.render(), '准备上下文包').props.onClick(); const pack = visibleComponent(t.render(), 'ContextPack');
+  assert.equal(pack.props.selected, object); assert.equal(pack.props.view, browser.props.view); assert.equal(pack.key, 'a:N-a@1');
+  pack.props.onClose(); assert.equal(component(t.render(), 'ContextPack'), undefined);
+  reader = visibleComponent(t.render(), 'RecordReader'); reader.props.inspect(browser.props.view.objects.find(item => item.id === 'N-a' && item.rev === 2));
+  assert.equal(visibleComponent(t.render(), 'RecordReader').props.object.rev, 2);
+  assert.equal(component(byClass(t.render(), 'dm-pinned-record'), 'RecordReader').props.object.rev, 1, 'Pinned reference is not auto-upgraded');
+  assert.equal(component(byClass(t.render(), 'dm-pinned-record'), 'RecordReader').props.onClose, undefined, 'Unpin has its own explicit action, not a misleading detail-close callback');
+  visibleComponent(t.render(), 'RecordReader').props.onClose(); assert.equal(byClass(t.render(), 'dm-record-detail'), undefined);
+  button(byClass(t.render(), 'dm-pinned-record'), '取消固定参考').props.onClick(); assert.equal(byClass(t.render(), 'dm-pinned-record'), undefined);
+  assert.equal(t.requests.length, before); assert.equal(writeRequests(t).length, 0);
+  await t.choose('b'); assert.equal(component(t.render(), 'ContextPack'), undefined); assert.equal(byClass(t.render(), 'dm-pinned-record'), undefined);
+});
+
+test('closing detail restores focus only after records DOM commit, with search fallback for hidden or disconnected origins', async testContext => {
+  for (const destination of ['original', 'hidden-origin', 'disconnected-origin']) await testContext.test(destination, async () => {
+    let listVisible = true; const focuses = [], queries = [];
+    const origin = {isConnected: true, getClientRects: () => listVisible ? [{}] : [], focus: options => focuses.push({target: 'original', options})};
+    const fallback = {focus: options => focuses.push({target: 'search', options})};
+    const document = {activeElement: origin, createElement: () => ({remove() {}}), head: {appendChild() {}}};
+    const t = viewTest({effects: true, globals: {document}});
+    t.render('session-a'); await settle(); button(t.render(), '记录与审核').props.onClick();
+    const tree = t.render(), root = {scrollTop: 137, querySelector: selector => { queries.push(selector); return fallback; }};
+    tree.props.ref.current = root;
+    const browser = visibleComponent(tree, 'RecordBrowser'); browser.props.inspect(browser.props.view.objects.find(object => object.id === 'N-a'));
+    const reader = visibleComponent(t.render(), 'RecordReader');
+    listVisible = false; root.scrollTop = 12;
+    reader.props.onClose();
+    assert.deepEqual(focuses, [], 'The close callback must not focus the still-hidden list synchronously');
+    assert.equal(root.scrollTop, 12, 'Scroll restoration also waits until the post-commit effect');
+    const closing = t.render(undefined, {flushEffects: false});
+    assert.equal(byClass(closing, 'dm-record-detail'), undefined); assert.equal(panel(closing, 'records').props.hidden, false);
+    assert.deepEqual(focuses, [], 'Rendering the next tree alone does not perform focus side effects');
+    // Model the committed narrow layout: reveal the list before React effects run.
+    listVisible = destination !== 'hidden-origin'; origin.isConnected = destination !== 'disconnected-origin';
+    t.react.flushEffects();
+    assert.equal(root.scrollTop, 137); assert.deepEqual(plain(focuses), [{target: destination === 'original' ? 'original' : 'search', options: {preventScroll: true}}]);
+    assert.deepEqual(queries, destination === 'original' ? [] : ['.dm-record-browser input']);
+    t.render(); t.react.flushEffects(); assert.equal(focuses.length, 1, 'Restoration runs once, not on unrelated rerenders');
+    assert.equal(writeRequests(t).length, 0); t.react.unmount(); t.ctx.dispose(); assert.equal(t.react.writesAfterUnmount.length, 0);
+  });
+});
+
+test('detail focus restoration waits until records is visible and cannot run after the view unmounts', async () => {
+  let focused = 0; const origin = {isConnected: true, getClientRects: () => [{}], focus: () => { focused++; }};
+  const document = {activeElement: origin, createElement: () => ({remove() {}}), head: {appendChild() {}}};
+  const t = viewTest({effects: true, globals: {document}}); t.render('session-a'); await settle();
+  button(t.render(), '记录与审核').props.onClick(); let tree = t.render();
+  const root = {scrollTop: 55, querySelector: () => null}; tree.props.ref.current = root;
+  let browser = visibleComponent(tree, 'RecordBrowser'); browser.props.inspect(browser.props.view.objects[2]);
+  visibleComponent(t.render(), 'RecordReader').props.onClose();
+  // Switch away before committing the close; a hidden records panel must not receive focus.
+  button(tree, '研究概览').props.onClick(); t.render(); assert.equal(focused, 0);
+  button(t.render(), '记录与审核').props.onClick(); tree = t.render(undefined, {flushEffects: false}); assert.equal(focused, 0);
+  t.react.flushEffects(); assert.equal(focused, 1);
+  browser = visibleComponent(tree, 'RecordBrowser'); browser.props.inspect(browser.props.view.objects[2]);
+  visibleComponent(t.render(), 'RecordReader').props.onClose(); t.react.unmount(); await settle();
+  assert.equal(focused, 1, 'An uncommitted close does not focus after unmount'); assert.equal(t.react.writesAfterUnmount.length, 0);
+  assert.equal(writeRequests(t).length, 0); t.ctx.dispose();
 });
 
 test('narrow layout follows the math container and uses inspected theme aliases', () => {

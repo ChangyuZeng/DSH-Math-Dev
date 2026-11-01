@@ -306,6 +306,66 @@ test('explicit SOURCE_CHANGED rejection unlocks a fresh preview before another i
   await control.preview(); assert.equal((await control.confirm()).id, 'new-copy'); assert.equal(calls[3].args.expected_fingerprint, 'second'); assert.notEqual(calls[1].args.operation_id, calls[3].args.operation_id);
 });
 
+test('candidate requires preview and explicit append; normal CAS autosave preserves all original bytes', async t => {
+  const original = '  original\r\n$math$\n', candidate = '  pasted 😀\r\n', server = scratchServer(pad(4, 'title', original));
+  const {control, timer} = scratch(t, server); await control.load();
+  control.editCandidate('candidateText', candidate); control.editCandidate('candidateSource', 'manual source');
+  assert.equal(await control.canLeave(), false); assert.equal(control.adoptCandidate(), false); assert.equal(writes(server).length, 0);
+  assert.equal(control.previewCandidate(), true); assert.equal(writes(server).length, 0); assert.equal(control.get().body, original);
+  const expected = control.get().candidatePreview.result;
+  assert.equal(control.adoptCandidate(), true); assert.equal(control.get().body, expected); assert.ok(expected.startsWith(original)); assert.ok(expected.endsWith(candidate));
+  assert.match(expected, /未经审核/); assert.match(expected, /manual source/); assert.equal(control.get().candidateText, '');
+  assert.equal(writes(server).length, 0); await timer.advance(800);
+  assert.deepEqual(writes(server).map(call => call.action), ['scratchpad-save']); assert.equal(writes(server)[0].args.expected_rev, 4);
+  assert.equal(server.get().scratchpad.body, expected); assert.equal(await control.canLeave(), true);
+});
+
+test('candidate is retained only for its session/project, guards departure and requires fresh preview after edits', async t => {
+  const sessionId = unique(), projectId = unique(), server = scratchServer(pad(1));
+  const {control} = scratch(t, server, {sessionId, projectId}); await control.load();
+  control.editCandidate('candidateText', 'candidate exact\r\n'); control.editCandidate('candidateSource', 'source exact\n');
+  control.previewCandidate(); control.edit('body', 'new local body'); assert.equal(control.adoptCandidate(), false);
+  assert.equal(control.get().body, 'new local body'); control.dispose();
+  const reopened = scratch(t, server, {sessionId, projectId}).control;
+  assert.equal(reopened.get().candidateText, 'candidate exact\r\n'); assert.equal(reopened.get().candidateSource, 'source exact\n');
+  assert.equal(await reopened.canLeave(), false); await reopened.load(); assert.equal(reopened.previewCandidate(), true);
+  const otherSession = scratch(t, server, {sessionId: unique(), projectId}).control;
+  const otherProject = scratch(t, server, {sessionId, projectId: unique()}).control;
+  assert.equal(otherSession.get().candidateText, ''); assert.equal(otherProject.get().candidateText, '');
+  reopened.cancelCandidate(); assert.equal(reopened.get().candidateText, ''); assert.equal(reopened.get().candidateSource, '');
+  assert.equal(reopened.get().body, 'new local body'); assert.equal(await reopened.canLeave(), true);
+});
+
+test('candidate cannot be adopted after remote refresh, conflicts, unknown attempts, busy writes or on readonly projects', async t => {
+  const server = scratchServer(pad(1)), {control} = scratch(t, server);
+  control.editCandidate('candidateText', 'suggestion'); assert.equal(control.previewCandidate(), false);
+  await control.load(); assert.equal(control.previewCandidate(), true); server.replace(pad(2)); await control.load();
+  assert.equal(control.adoptCandidate(), false); assert.equal(control.get().body, pad(2).body);
+  control.previewCandidate(); control.edit('body', 'local'); server.replace(pad(3)); await control.load();
+  assert.ok(control.get().incoming); assert.equal(control.previewCandidate(), false); assert.equal(control.adoptCandidate(), false); assert.equal(writes(server).length, 0);
+  const gate = deferred(), busy = scratch(t, scratchServer(pad(1)), {request: async action => action === 'scratchpad-read' ? {scratchpad: pad(1)} : gate.promise}).control;
+  await busy.load(); busy.editCandidate('candidateText', 'candidate'); busy.previewCandidate(); busy.edit('title', 'changed'); const saving = busy.save();
+  assert.equal(busy.adoptCandidate(), false); gate.reject(Error('unknown receipt')); await saving;
+  assert.ok(busy.get().attempt); assert.equal(busy.adoptCandidate(), false); assert.equal(busy.previewCandidate(), false);
+  const readonly = scratch(t, server, {writable: false}).control; await readonly.load(); readonly.editCandidate('candidateText', 'illegal');
+  assert.equal(readonly.get().candidateText, ''); assert.equal(readonly.previewCandidate(), false); assert.equal(readonly.adoptCandidate(), false);
+});
+
+test('candidate source-only input protects beforeunload and survives a writable-to-readonly remount', async t => {
+  const prior = globalThis.window, listeners = new Map(); globalThis.window = {addEventListener: (name, fn) => listeners.set(name, fn)};
+  // A fresh module instance installs its own beforeunload listener against this synthetic window.
+  const modulePath = require.resolve('../workbench-ui.cjs'); const cached = require.cache[modulePath]; delete require.cache[modulePath];
+  const Fresh = require('../workbench-ui.cjs'); require.cache[modulePath] = cached;
+  t.after(() => { if (prior === undefined) delete globalThis.window; else globalThis.window = prior; });
+  const sessionId = unique(), projectId = unique(), server = scratchServer();
+  const options = {request: server.request, sessionId, projectId, writable: true, uuid: unique};
+  const control = Fresh.createScratchpadController(options); await control.load(); control.editCandidate('candidateSource', 'source only');
+  let prevented = false; listeners.get('beforeunload')({preventDefault() { prevented = true; }}); assert.equal(prevented, true); control.dispose();
+  const readonly = Fresh.createScratchpadController({...options, writable: false}); t.after(() => readonly.dispose());
+  assert.equal(readonly.get().candidateSource, 'source only'); assert.equal(await readonly.canLeave(), false);
+  readonly.cancelCandidate(); assert.equal(await readonly.canLeave(), true); assert.equal(writes(server).length, 0);
+});
+
 function hooks() {
   const slots = [], effects = [], scheduled = []; let cursor = 0;
   const React = {createElement(type, props, ...children) { return {type, props: props || {}, children: children.flat(Infinity).filter(value => value !== null && value !== undefined && value !== false)}; },
@@ -334,6 +394,62 @@ test('project component shows three groups/help/errors and only explicit user su
   }
   tree = render(); await tree.props.onSubmit({preventDefault() {}}); assert.equal(created.length, 1); assert.equal(created[0].execution_authorized, false);
   assert.ok(guards.has('project-form')); mock.unmount(); assert.equal(guards.size, 0); t.after(() => mock.unmount());
+});
+
+test('both conflict components show readable versions with and without comparison factory and selecting local never writes', async t => {
+  const prior = globalThis.DshMathComparisonUI;
+  t.after(() => { if (prior === undefined) delete globalThis.DshMathComparisonUI; else globalThis.DshMathComparisonUI = prior; });
+  for (const withComparison of [false, true]) {
+    if (withComparison) globalThis.DshMathComparisonUI = require('../comparison-ui.cjs'); else delete globalThis.DshMathComparisonUI;
+    const mock = hooks(), server = draftServer(completeFields()), {ProjectForm} = ProjectUI(mock.React, F);
+    const props = {request: server.request, sessionId: unique(), descriptor};
+    const render = () => mock.render(ProjectForm, props); render(); mock.flush(); await settle(); let tree = render();
+    nodes(tree).find(node => node.props['aria-describedby'] === 'dm-project-title-help').props.onChange({target: {value: 'my title'}});
+    server.replace({...completeFields(), title: 'remote title'}); findButton(tree, '读取会话草稿').props.onClick(); await settle(); tree = render();
+    if (withComparison) {
+      const compared = nodes(tree).find(node => typeof node.type === 'function' && node.props.localVersion);
+      assert.equal(compared.props.local.title, 'my title'); assert.equal(compared.props.remote.title, 'remote title'); assert.match(compared.props.remoteVersion, /v2/);
+    } else assert.ok(nodes(tree).some(node => node.type === 'pre' && node.children.includes('remote title')));
+    findButton(tree, '保留我的修改，稍后重新保存').props.onClick(); assert.equal(writes(server).length, 0); mock.unmount();
+    const smock = hooks(), sserver = scratchServer(pad(1)), {Scratchpad} = Workbench(smock.React, F);
+    const sprops = {request: sserver.request, sessionId: unique(), projectId: unique(), writable: true};
+    const srender = () => smock.render(Scratchpad, sprops); srender(); smock.flush(); await settle(); let stree = srender();
+    nodes(stree).find(node => node.props.className === 'dm-input dm-scratch-body').props.onChange({target: {value: 'my body'}});
+    sserver.replace(pad(2, 'remote title', 'remote body')); findButton(stree, '读取最新版本').props.onClick(); await settle(); stree = srender();
+    if (withComparison) {
+      const compared = nodes(stree).find(node => typeof node.type === 'function' && node.props.localVersion);
+      assert.equal(compared.props.local.body, 'my body'); assert.equal(compared.props.remote.body, 'remote body'); assert.equal(compared.props.remoteVersion, 'v2');
+    } else assert.ok(nodes(stree).some(node => node.type === 'pre' && node.children.includes('remote body')));
+    findButton(stree, '保留我的修改，稍后重新保存').props.onClick(); assert.equal(writes(sserver).length, 0); smock.unmount();
+  }
+});
+
+test('project onDraftState only notifies changed state and cannot mutate the live draft', async t => {
+  const mock = hooks(), server = draftServer(), states = [], {ProjectForm} = ProjectUI(mock.React, F);
+  const props = {request: server.request, sessionId: unique(), descriptor, onDraftState: state => { states.push(copy(state)); state.fields.title = 'callback mutation'; }};
+  const render = () => mock.render(ProjectForm, props); render(); mock.flush(); await settle(); render(); mock.flush();
+  const count = states.length; render(); mock.flush(); assert.equal(states.length, count); assert.ok(count > 0); assert.equal(writes(server).length, 0);
+  let tree = render(); const title = nodes(tree).find(node => node.props['aria-describedby'] === 'dm-project-title-help'); assert.equal(title.props.value, '');
+  title.props.onChange({target: {value: 'local title'}}); tree = render(); mock.flush(); assert.equal(states.at(-1).fields.title, 'local title'); assert.equal(writes(server).length, 0);
+  mock.unmount(); t.after(() => mock.unmount());
+});
+
+test('scratch component exposes paste/preview/explicit append and guards unadopted input without Comparison global', async t => {
+  const mock = hooks(), server = scratchServer(pad(1)), guards = new Map();
+  const old = globalThis.DshMathComparisonUI; delete globalThis.DshMathComparisonUI;
+  const {Scratchpad} = Workbench(mock.React, F);
+  if (old) globalThis.DshMathComparisonUI = old;
+  const props = {request: server.request, sessionId: unique(), projectId: unique(), writable: true,
+    registerGuard: (key, fn) => { guards.set(key, fn); return () => guards.delete(key); }};
+  const render = () => mock.render(Scratchpad, props); render(); mock.flush(); await settle(); let tree = render(); mock.flush();
+  nodes(tree).find(node => node.props.className === 'dm-input dm-candidate-input').props.onChange({target: {value: 'pasted candidate'}});
+  tree = render(); mock.flush(); assert.equal(await guards.get('scratchpad')(), false);
+  findButton(tree, '预览原稿与追加结果').props.onClick(); tree = render(); assert.equal(writes(server).length, 0);
+  assert.ok(nodes(tree).some(node => node.type === 'pre' && node.children.includes(pad(1).body)));
+  findButton(tree, '追加到草稿（未经审核）').props.onClick(); tree = render();
+  assert.equal(nodes(tree).find(node => node.props.className === 'dm-input dm-candidate-input').props.value, '');
+  assert.ok(nodes(tree).find(node => node.props.className === 'dm-input dm-scratch-body').props.value.includes('pasted candidate'));
+  assert.equal(writes(server).length, 0); mock.unmount(); t.after(() => mock.unmount());
 });
 
 test('scratch component promotion flushes saved exact revision and readonly exposes no mutation callbacks', async t => {

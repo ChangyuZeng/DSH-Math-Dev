@@ -1,10 +1,10 @@
 {
   "name": "dsh-math",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "description": "Local mathematical scratchpad, conversational project preparation, exact evidence references and human review in the DSH sidebar",
   "engines": {"dsh": "0.2.1-rc.5"},
   "license": "UNLICENSED",
-  "files": ["project-fields.json", "project-form.cjs", "workbench-ui.cjs", "workbench_store.py", "preparation_tools.py", "chat-tools.mjs", "math-preview.cjs", "THIRD-PARTY-NOTICES.txt", "contracts/workbench-v1.md", "human-api.mjs", "locale/*.json", "icon.svg", "host.mjs", "live_plugin.mjs", "live_runner.mjs", "run_control.py", "client.js", "client-main.cjs", "client-theme.cjs", "forms.cjs", "form-ui.cjs", "process-graph.cjs", "graph-ui.cjs", "build.mjs", "backend.py", "model_tools.py", "m_runner.py", "run_ledger.py", "run_closeout.py", "run_recovery.py", "isolated_tools.py", "schema.py", "bundle.py", "replay.py", "runtime_cli.py", "verify_bundle.py", "grid75_independent_check.py", "audit-reader.mjs", "runtime/p2c/*.py", "runtime/p2c/checkers/*.py", "contracts/*.json", "contracts/cards/*.md", "cordis.patch.yml", "PROVENANCE.json", "NOTICE", "LICENSE-STATUS.md", "PUBLICATION.md", "README.md"],
+  "files": ["project-fields.json", "project-form.cjs", "workbench-ui.cjs", "workbench_store.py", "preparation_tools.py", "chat-tools.mjs", "math-preview.cjs", "THIRD-PARTY-NOTICES.txt", "contracts/workbench-v1.md", "human-api.mjs", "locale/*.json", "icon.svg", "host.mjs", "live_plugin.mjs", "live_runner.mjs", "run_control.py", "client.js", "client-main.cjs", "client-theme.cjs", "forms.cjs", "form-ui.cjs", "record-ui.cjs", "comparison-ui.cjs", "process-graph.cjs", "graph-ui.cjs", "build.mjs", "backend.py", "model_tools.py", "m_runner.py", "run_ledger.py", "run_closeout.py", "run_recovery.py", "isolated_tools.py", "schema.py", "bundle.py", "replay.py", "runtime_cli.py", "verify_bundle.py", "grid75_independent_check.py", "audit-reader.mjs", "runtime/p2c/*.py", "runtime/p2c/checkers/*.py", "contracts/*.json", "contracts/cards/*.md", "cordis.patch.yml", "PROVENANCE.json", "NOTICE", "LICENSE-STATUS.md", "PUBLICATION.md", "README.md"],
   "private": true,
   "type": "module",
   "main": "host.mjs",

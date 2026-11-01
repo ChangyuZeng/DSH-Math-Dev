@@ -129,13 +129,16 @@
   }
   function factory(React, F, Preview) {
     const {createElement: h, useState, useEffect, useRef} = React;
-    function ProjectForm({request, sessionId, onCreated, registerGuard, descriptor = globalThis.DshMathProjectFields}) {
+    const Comparison = globalThis.DshMathComparisonUI?.(React);
+    function ProjectForm({request, sessionId, onCreated, onDraftState, registerGuard, descriptor = globalThis.DshMathProjectFields}) {
       const [state, setState] = useState(null), [showErrors, setShowErrors] = useState(false), [allowLeave, setAllowLeave] = useState(false);
-      const controller = useRef(null), callbacks = useRef({onCreated}); callbacks.current = {onCreated};
+      const controller = useRef(null), callbacks = useRef({onCreated, onDraftState}); callbacks.current = {onCreated, onDraftState};
       const heading = useRef(null);
+      // Read-only notification; never routes state updates through a save/finalize action.
+      useEffect(() => { if (state) callbacks.current.onDraftState?.(clone(state)); }, [state]);
       useEffect(() => {
         const control = createController({request, sessionId, descriptor, F, uuid: () => crypto.randomUUID(), notify: setState});
-        controller.current = control; setState(control.get()); control.load(); heading.current?.focus();
+        controller.current = control; setAllowLeave(false); setState(control.get()); control.load(); heading.current?.focus();
         const focus = () => control.load();
         if (typeof window !== 'undefined') window.addEventListener?.('focus', focus);
         return () => { control.dispose(); controller.current = null; if (typeof window !== 'undefined') window.removeEventListener?.('focus', focus); };
@@ -181,9 +184,14 @@
         state.finalizeAttempt && h('div', {className: 'dm-conflict'}, h('p', null, `待恢复确认：${state.finalizeAttempt.draft_id} · v${state.finalizeAttempt.expected_rev}。只会继续这次已确认的版本，不会另建重复项目。`),
           state.dirty && h('p', null, '当前未保存修改不会纳入这次建项；它们会作为本地新草稿保留。'),
           Preview && h('details', null, h('summary', null, '查看已冻结的问题陈述'), h(Preview, {text: state.incoming?.draft?.fields.statement || state.draft?.fields.statement || ''}))),
-        state.incoming && h('div', {className: 'dm-conflict'}, h('p', null, '服务器草稿与本地版本不同；请明确选择，不会自动覆盖。'),
-          h('button', {type: 'button', className: 'dm-button', disabled: state.busy, onClick: () => controller.current?.useIncoming(true)}, '保留本地并采用新基线'),
-          h('button', {type: 'button', className: 'dm-button', disabled: state.busy, onClick: () => { if (window.confirm('确定用服务器草稿替换本地未保存内容？')) controller.current?.useIncoming(false); }}, '采用服务器草稿')),
+        state.incoming && h('div', {className: 'dm-conflict'}, h('p', null, '服务器草稿与本地版本不同；先比较再选择，不会自动合并。保留我的修改后，还需点击“保存草稿”。'),
+          Comparison ? h(Comparison.FieldComparison, {fields: descriptor.fields, local: state.fields, remote: state.incoming.draft?.fields || {},
+            localVersion: `${state.draft?.id || '未保存'} · v${state.draft?.rev || 0}（本地编辑）`, remoteVersion: `${state.incoming.draft?.id || '无草稿'} · v${state.incoming.draft?.rev || 0}`}) :
+            h('div', {className: 'dm-comparison-fields'}, ...descriptor.fields.map(field => h('section', {key: field.key}, h('h4', null, field.label),
+              h('p', null, `我的内容 · v${state.draft?.rev || 0}`), h('pre', {className: 'dm-code'}, Array.isArray(state.fields[field.key]) ? state.fields[field.key].join('\n') : state.fields[field.key] || '（空）'),
+              h('p', null, `服务器内容 · v${state.incoming.draft?.rev || 0}`), h('pre', {className: 'dm-code'}, Array.isArray(state.incoming.draft?.fields[field.key]) ? state.incoming.draft.fields[field.key].join('\n') : state.incoming.draft?.fields[field.key] || '（空）')))),
+          h('button', {type: 'button', className: 'dm-button', disabled: state.busy, onClick: () => controller.current?.useIncoming(true)}, '保留我的修改，稍后重新保存'),
+          h('button', {type: 'button', className: 'dm-button', disabled: state.busy, onClick: () => { if (window.confirm('确定用服务器草稿替换本地未保存内容？')) controller.current?.useIncoming(false); }}, '使用服务器版本')),
         state.attempt && !state.finalizeAttempt && !state.busy && h('button', {type: 'button', className: 'dm-button', onClick: () => controller.current?.retrySave()}, '重试上次保存'),
         h('div', {className: 'dm-actions'},
           h('button', {type: 'button', className: 'dm-button', disabled, onClick: () => { setShowErrors(true); controller.current?.save(); }}, state.busy ? '处理中…' : '保存草稿'),
