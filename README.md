@@ -165,6 +165,6 @@ npm pack --pack-destination dist
 DSH_MATH_PYTHON=/opt/homebrew/bin/python3.14 npm test
 ```
 
-插件运行配置的 `python` 同样必须填写 Python 3.10+ 的绝对路径。当前输出包名为 `dsh-math-0.7.2.tgz`，文案与导入入口迭代使用独立目录 `dist/research-desk-072/`；0.7.1 视觉迭代验收保留在 `dist/research-desk-071/`，0.7.0 研究桌面验收保留在 `dist/research-desk-070/`；0.6.1 导入卡片验收 `dist/import-ui-061/`、0.6.0 工作台验收 `dist/workbench-060/`、此前过程图和 UI 对标结果继续保留。旧安装包、历史验收、原始审核记录及研究数据全部保留不改。安装后须比对源码、包内容与实际安装文件哈希，不能只依据安装日志判断版本已更新。
+插件运行配置的 `python` 同样必须填写 Python 3.10+ 的绝对路径。当前输出包名为 `dsh-math-0.7.3.tgz`，字段帮助显示调整使用独立目录 `dist/research-desk-073/`；0.7.2 文案与导入入口验收保留在 `dist/research-desk-072/`，0.7.1 视觉迭代验收保留在 `dist/research-desk-071/`，0.7.0 研究桌面验收保留在 `dist/research-desk-070/`；0.6.1 导入卡片验收 `dist/import-ui-061/`、0.6.0 工作台验收 `dist/workbench-060/`、此前过程图和 UI 对标结果继续保留。旧安装包、历史验收、原始审核记录及研究数据全部保留不改。安装后须比对源码、包内容与实际安装文件哈希，不能只依据安装日志判断版本已更新。
 
 包内 P2-C 固定源文件、P3-A 精确算法来源、预检设计参考和新合同均记录于 `PROVENANCE.json`；本轮只读锁兼容性补丁注明基线 hash 和派生关系。历史 `NOTICE`、`LICENSE-STATUS.md` 保留，当前源码公开范围以 `PUBLICATION.md` 的授权为准，并不新增开源许可或 npm 发布授权。第三方 Markdown/公式渲染许可见 `THIRD-PARTY-NOTICES.txt`。旧 schema 不迁移，旧 execution 锁和 G01–G07 不作为新授权。

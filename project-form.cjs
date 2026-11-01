@@ -155,7 +155,7 @@
           disabled, required: field.required, 'aria-invalid': !!error, 'aria-describedby': helpId,
           placeholder: field.placeholder, onChange: event => edit(field.key, field.type === 'string[]' ? event.target.value.split('\n') : event.target.value)};
         let input;
-        if (field.key === 'target_type') input = h('div', {className: 'dm-target-cards', role: 'radiogroup', 'aria-label': field.label},
+        if (field.key === 'target_type') input = h('div', {className: 'dm-target-cards', role: 'radiogroup', 'aria-label': field.label, 'aria-describedby': helpId},
           ...descriptor.target_types.map(option => h('label', {className: 'dm-target-card', key: option.value, 'data-active': value === option.value},
             h('input', {type: 'radio', name: 'target_type', value: option.value, checked: value === option.value, disabled, onChange: () => edit(field.key, option.value)}),
             h('span', null, h('strong', null, option.label), h('span', null, option.description)))));
@@ -164,7 +164,7 @@
         return h('div', {key: field.key, className: 'dm-project-field'},
           field.key === 'target_type' ? h('div', {className: 'dm-field-label'}, field.label, field.required && h('span', {className: 'dm-required'}, '必填'), input) :
             h('label', {className: 'dm-field'}, field.label, field.required && h('span', {className: 'dm-required'}, '必填'), input),
-          h('p', {className: 'dm-field-help', id: helpId}, field.help), error && h('p', {className: 'dm-field-error', role: 'alert'}, error));
+          h('span', {className: 'dm-sr-only', id: helpId}, field.help), error && h('p', {className: 'dm-field-error', role: 'alert'}, error));
       }
       return h('form', {className: 'dm-project-form', noValidate: true, 'aria-label': '项目准备草稿', onSubmit: async event => {
         event.preventDefault(); setShowErrors(true); const control = controller.current;

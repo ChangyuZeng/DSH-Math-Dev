@@ -377,12 +377,15 @@ function hooks() {
 const nodes = tree => !tree || typeof tree !== 'object' ? [] : [tree, ...(tree.children || []).flatMap(nodes)];
 const findButton = (tree, text) => { const button = nodes(tree).find(node => node.type === 'button' && node.children.includes(text)); assert.ok(button, `Missing button: ${text}`); return button; };
 
-test('project component shows three groups/help/errors and only explicit user submit finalizes', async t => {
+test('project form hides redundant help visually but retains accessible guidance, errors and explicit finalize', async t => {
   const mock = hooks(), server = draftServer(), created = [], guards = new Map();
   const {ProjectForm} = ProjectUI(mock.React, F, function Preview() {});
   const props = {request: server.request, sessionId: unique(), descriptor, onCreated: value => created.push(value), registerGuard: (key, guard) => { guards.set(key, guard); return () => guards.delete(key); }};
   const render = () => mock.render(ProjectForm, props); render(); mock.flush(); await settle(); let tree = render(); mock.flush();
-  assert.equal(nodes(tree).filter(node => node.type === 'fieldset').length, 3); assert.equal(nodes(tree).filter(node => node.props.className === 'dm-field-help').length, descriptor.fields.length);
+  assert.equal(nodes(tree).filter(node => node.type === 'fieldset').length, 3);
+  assert.equal(nodes(tree).filter(node => node.props.className === 'dm-field-help').length, 0);
+  assert.equal(nodes(tree).filter(node => node.props.className === 'dm-sr-only').length, descriptor.fields.length);
+  assert.ok(nodes(tree).some(node => node.props.role === 'radiogroup' && node.props['aria-describedby'] === 'dm-project-target_type-help'));
   assert.equal(nodes(tree).filter(node => node.props.className === 'dm-target-card').length, 3);
   assert.ok(nodes(tree).some(node => node.children.includes(descriptor.target_types[0].description))); assert.equal(writes(server).length, 0);
   await tree.props.onSubmit({preventDefault() {}}); tree = render(); assert.ok(nodes(tree).some(node => node.props.className === 'dm-field-error'));
