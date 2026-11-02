@@ -21,7 +21,7 @@ function fixture() {
 }
 
 test('chat schemas preserve shared fields and never offer authority-bearing arguments', () => {
-  assert.deepEqual(CHAT_TOOLS, ['math_project_prepare', 'math_project_draft_read', 'math_scratchpad_read', 'math_scratchpad_save']);
+  assert.deepEqual(CHAT_TOOLS, ['math_project_prepare', 'math_project_draft_read', 'math_research_read', 'math_research_record', 'math_material_read']);
   for (const schema of Object.values(CHAT_SCHEMAS)) {
     assert.equal(schema.additionalProperties, false);
     for (const forbidden of ['actor', 'origin', 'session_id', 'root', 'path', 'manifest', 'run_id']) assert.equal(schema.properties[forbidden], undefined);
@@ -146,15 +146,31 @@ test('subagents and M agents cannot inherit ordinary preparation; fork uses only
   assert.equal(ordinaryChatAgent(f.agent), false);
 });
 
-test('exact argument validation rejects spoofing and bounds revisions and scratch text', () => {
+test('exact argument validation rejects spoofing and bounds revisions and research windows', () => {
   const f = fixture();
   for (const field of ['actor', 'session_id', 'root', 'path']) assert.throws(() => validateChatArguments(f.options.name, {...f.options.args, [field]: 'spoof'}), /INVALID_ARGUMENTS/);
   assert.throws(() => validateChatArguments(f.options.name, {...f.options.args, patch: {unknown: 'x'}}), /INVALID_ARGUMENTS/);
   assert.throws(() => validateChatArguments(f.options.name, {...f.options.args, expected_rev: Number.MAX_SAFE_INTEGER + 1}), /INVALID_ARGUMENTS/);
-  const scratch = {project_id: 'chosen-project', expected_rev: 0, operation_id: 'one-save', title: '想法', body: 'a'.repeat(256 * 1024)};
-  assert.equal(validateChatArguments('math_scratchpad_save', scratch), scratch);
-  assert.throws(() => validateChatArguments('math_scratchpad_save', {...scratch, body: scratch.body + 'a'}), /TOO_LARGE/);
-  assert.throws(() => validateChatArguments('math_scratchpad_read', {project_id: 'a', rev: 0}), /INVALID_ARGUMENTS/);
+  for (const name of ['math_scratchpad_read', 'math_scratchpad_save']) assert.throws(() => validateChatArguments(name, {}), /INVALID_ARGUMENTS/);
+  const read = {project_id: 'chosen-project', ref: null, offset: 0, limit: 12000};
+  assert.equal(validateChatArguments('math_research_read', read), read);
+  for (const change of [{offset: -1}, {limit: 12001}, {ref: {id: 'N', rev: 0}}, {ref: {id: 'N', rev: 1, actor: 'spoof'}}]) assert.throws(() => validateChatArguments('math_research_read', {...read, ...change}), /INVALID_ARGUMENTS/);
+  assert.throws(() => validateChatArguments('math_material_read', read), /INVALID_ARGUMENTS/);
+});
+
+test('research record obeys PLAN and readonly policies and validates full Note data', async () => {
+  const f = fixture();
+  const data = {note_type: 'observation', title: '阶段记录', summary: '摘要', body: 'α + β', statement: '待核对', assumptions: [], problem_ref: {id: 'P', rev: 1}, route_id: null, uses: [], candidate_for: [], evidence: [], gaps: [], failure: null};
+  const options = {...f.options, name: 'math_research_record', args: {project_id: 'chosen', id: 'N', expected_rev: 0, operation_id: 'save', data}};
+  await prepareChatInvocation(f.ctx, f.exec, options);
+  f.state.active = true;
+  await assert.rejects(prepareChatInvocation(f.ctx, f.exec, options), /PLAN_MODE/);
+  f.state.active = false; f.policy.mode = 'read-only';
+  await assert.rejects(prepareChatInvocation(f.ctx, f.exec, options), /READ_ONLY/);
+  assert.throws(() => validateChatArguments(options.name, {...options.args, data: {...data, actor: 'human'}}), /INVALID_ARGUMENTS/);
+  assert.throws(() => validateChatArguments(options.name, {...options.args, data: {...data, body: 'a'.repeat(256 * 1024)}}), /TOO_LARGE/);
+  assert.match(CHAT_GUIDANCE, /不保存隐藏思维/);
+  assert.match(CHAT_GUIDANCE, /阶段性主动/);
 });
 
 test('abort during confinement is checked before subprocess admission', async () => {
@@ -169,7 +185,7 @@ test('tools use normal registered bodies and separate prompt with host scope res
   f.ctx.tools = {register(value) {definitions.set(value.name, value);}};
   f.ctx.on = (name, fn) => events.push({name, fn});
   registerChatTools(f.ctx, {root: f.options.root, python: 'fixture-python', run: async (...args) => {calls.push(args); return {draft: {rev: 1}, validation: {complete: false}};}});
-  assert.equal(definitions.size, 4);
+  assert.equal(definitions.size, 5);
   assert.equal(sections[0].interpolate, false);
   assert.equal(sections[0].text({agent: f.agent}), CHAT_GUIDANCE);
   const result = JSON.parse(await definitions.get(f.options.name).execute(f.options.args, f.exec));
@@ -180,7 +196,7 @@ test('tools use normal registered bodies and separate prompt with host scope res
   assert.deepEqual(denied, [{deny: CHAT_TOOLS}]);
 });
 
-test('headless and explicit opt-out install no ordinary tools; modelRuns empty installs four, no M tools', () => {
+test('headless and explicit opt-out install no ordinary tools; modelRuns empty installs five, no M tools', () => {
   for (const config of [{headless: true}, {headless: true, chatPreparation: true}, {chatPreparation: false}, {}]) {
     const names = [];
     const ctx = {on() {}, effect() {}, tools: {register: tool => names.push(tool.name)}};

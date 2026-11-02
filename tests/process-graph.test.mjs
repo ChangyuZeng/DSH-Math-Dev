@@ -69,6 +69,25 @@ function addSource(f, path, rows, options = {}) {
 }
 const toolStart = (call_id, extra = {}) => ({kind: 'tool.started', call_id, name: 'note_save', arguments: {secret: 'SECRET_ARGUMENT'}, ...extra});
 const toolEnd = (call_id, extra = {}) => ({kind: 'tool.finished', call_id, result: {status: 'completed', value: {secret: 'SECRET_RESULT'}}, ...extra});
+test('route projection preserves exact Problems, latest notes, failures and explicit obligation links', () => {
+  const f = fixture([[problem(), obligation('O'), obligation('U'), note('N', 1, {route_id: 'old'})],
+    [note('N', 2, {route_id: 'r1', candidate_for: [ref('O')], gaps: ['registered gap only']}), note('F', 1, {route_id: 'r1', note_type: 'failed_attempt', failure: {observed: 'failed exact', negated_scope: 'local only'}}),
+      note('Z', 1), problem('P', 2), note('V', 1, {problem_ref: ref('P', 2), route_id: 'r1'}),
+      note('X', 1, {problem_ref: ref('missing'), route_id: 'r1'})]]);
+  const graph = build(f.view, f.replay), old = graph.routes.find(group => group.problem.rev === 1), current = graph.routes.find(group => group.problem.rev === 2);
+  assert.deepEqual(old.routes.map(route => route.id), ['r1', null]);
+  assert.deepEqual(old.routes[0].notes.map(note => note.ref), [ref('N', 2), ref('F')]);
+  assert.equal(old.routes[0].notes[1].failure.negated_scope, 'local only');
+  assert.deepEqual(old.routes[0].obligations.map(row => row.ref), [ref('O')]);
+  assert.deepEqual(old.routes[0].notes[0].gaps, ['registered gap only']);
+  assert.equal(old.routes[0].obligations[0].next_action, 'next');
+  assert.deepEqual(old.obligations.map(row => row.ref), [ref('U')]);
+  assert.deepEqual(current.routes[0].notes.map(row => row.ref), [ref('V')]);
+  assert.deepEqual(graph.unresolved_notes.map(row => row.ref), [ref('X')]);
+  assert.equal(graph.edges.some(edge => edge.relation === 'route' || edge.relation === 'causes'), false);
+  assert.equal(JSON.stringify(graph.routes).includes('不复制全文'), false);
+});
+
 const eventNodes = graph => graph.nodes.filter(n => n.kind === 'event');
 const recordNodes = graph => graph.nodes.filter(n => n.kind === 'record');
 const ledgerNodes = graph => eventNodes(graph).filter(n => n.source.path !== 'research/events.jsonl');
@@ -99,7 +118,7 @@ test('same inputs serialize deterministically with indent and newline, without m
   const reversedKeys = Object.fromEntries(Object.entries(a).reverse());
   assert.equal(serialize(a), serialize(reversedKeys));
   assert.equal(a.format, 'dsh-math-process-graph-v1');
-  assert.deepEqual(Object.keys(a).sort(), ['format', 'project_id', 'project_title', 'research_head', 'research_seq', 'nodes', 'edges', 'sources', 'warnings', 'counts', 'notice'].sort());
+  assert.deepEqual(Object.keys(a).sort(), ['format', 'project_id', 'project_title', 'research_head', 'research_seq', 'nodes', 'edges', 'sources', 'warnings', 'counts', 'notice', 'routes', 'unresolved_notes'].sort());
 });
 
 test('one project root, source grouping, actual multiple changes and precise same-ID revisions', () => {

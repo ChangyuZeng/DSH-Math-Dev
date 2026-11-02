@@ -75,12 +75,12 @@ test('attachment completion survives an unrelated parent read lock without auto-
   t.set({busy:false});t.render();assert.deepEqual(busy,[true,false]);
 });
 
-test('all existing editable fields are grouped without concealing required scope fields',()=>{
+test('all editable fields remain accessible with Note details folded',()=>{
   const expected={Note:['笔记标题','完整正文','简述','主张','笔记类型','依赖前提','拟解决的待证事项','参考材料','假设（每行一项）','尚存缺口（每行一项）','路线标识'],Obligation:['待证陈述','登记原因','下一步','当前提交状态','依赖前提','候选笔记','参考材料','适用范围','完成条件（每行一项）'],Evidence:['材料类型','原文摘录 / 证明全文','来源地址或出处','版本 / commit','访问日期','来源材料状态','生产或导入方式','生产方式版本','摘录附件名称','支持范围','局限与未核实项（每行一项）']};
   for(const kind of Object.keys(expected)){
     const t=fixture(kind),tree=t.render();expected[kind].forEach(label=>field(tree,label));
     assert.deepEqual(nodes(tree).filter(node=>node.props.className==='dm-editor-section').map(node=>node.props['aria-label']),['内容','依据','范围与缺口']);
-    const scope=nodes(tree).find(node=>node.props['aria-label']==='范围与缺口');assert.equal(scope.type,'section');
+    const scope=nodes(tree).find(node=>node.props['aria-label']==='范围与缺口');assert.equal(scope.type,kind==='Note'?'details':'section');
     const basis=nodes(tree).find(node=>node.props['aria-label']==='依据');assert.equal(basis.type,kind==='Evidence'?'section':'details');
   }
 });

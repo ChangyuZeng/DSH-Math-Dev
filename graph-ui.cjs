@@ -116,7 +116,31 @@ globalThis.DshMathGraphUI = function (React, Graph) {
           ...descendants.slice(0, limit).map(branch),
           descendants.length > limit && h('li', {className: 'dm-graph-more'}, button(`显示更多（${limit} / ${descendants.length}）`, () => setLimits(previous => ({...previous, [node.id]: limit + 40}))))));
     }
-    return h('section', {className: 'dm-process-graph', 'aria-label': '已记录研究过程图'},
+    const routeRecord = row => h('li', {key: `${row.ref.id}@${row.ref.rev}`, className: 'dm-route-record'},
+      button(row.title, () => inspect(row.ref), {className: 'dm-button dm-small'}),
+      h('span', {className: 'dm-panel-meta'}, `${row.ref.id}@${row.ref.rev}`),
+      row.summary && h('p', {className: 'dm-record-text'}, row.summary),
+      row.gaps?.length > 0 && h('section', {className: 'dm-route-gaps'}, h('h5', null, '待解决问题'), h('ul', null, ...row.gaps.map((gap, index) => h('li', {key: index}, gap)))),
+      row.next_action && h('p', {className: 'dm-record-text'}, `下一步：${row.next_action}`),
+      row.failure && h('details', {className: 'dm-details'}, h('summary', null, '已登记失败范围'),
+        ...Object.entries(row.failure).map(([key, value]) => h('p', {key, className: 'dm-record-text'}, `${{inputs: '输入', location: '位置', observed: '观察', negated_scope: '否定范围', retry_change: '重试需改变'}[key] || key}：${value}`))));
+    const recordList = (title, rows) => h('section', {className: 'dm-route-section'}, h('h5', null, `${title} · ${rows.length}`),
+      rows.length ? h('ul', {className: 'dm-route-records'}, ...rows.map(routeRecord)) : h('p', {className: 'dm-empty'}, '暂无已登记记录'));
+    const routeView = Array.isArray(graph.routes) && h('section', {className: 'dm-route-process', 'aria-label': '按研究目标和路线分组'},
+      h('h3', {className: 'dm-panel-title'}, '研究过程'),
+      h('p', {className: 'dm-local-hint'}, '按笔记明确关联的问题与路线标识分组，仅显示各记录最新版本。分组不代表推理因果或审核通过；待证事项仅由精确引用关联。'),
+      ...graph.routes.map(group => h('section', {className: 'dm-route-problem', key: `${group.problem.id}@${group.problem.rev}`},
+        h('h4', null, button(group.title || '研究目标', () => inspect(group.problem))),
+        ...group.routes.map((route, index) => h('section', {className: 'dm-route', key: index},
+          h('h4', null, route.id ? `路线 ${route.id}` : '未分配路线'),
+          recordList('推导与观察笔记', route.notes.filter(note => note.note_type !== 'failed_attempt')),
+          recordList('失败尝试', route.notes.filter(note => note.note_type === 'failed_attempt')),
+          recordList('相关待证事项', route.obligations))),
+        !group.routes.length && h('p', {className: 'dm-empty'}, '尚无路线笔记，可先写笔记并明确路线标识。'),
+        group.obligations.length > 0 && recordList('未关联路线的待证事项', group.obligations))),
+      graph.unresolved_notes?.length > 0 && recordList('目标精确引用无法解析的笔记', graph.unresolved_notes));
+    return h('section', {className: 'dm-process-graph', 'aria-label': '已记录研究过程图'}, routeView,
+      h('details', {className: 'dm-details dm-operation-history', ...(routeView ? {} : {open: true})}, h('summary', null, '操作历史与来源'),
       h('div', {className: 'dm-graph-caption'},
         h('div', null, h('h3', {className: 'dm-panel-title'}, '研究过程'),
           h('p', {className: 'dm-record-text'}, `${graph.counts.events} 个动作 · ${graph.counts.records} 个版本产物`))),
@@ -151,6 +175,6 @@ globalThis.DshMathGraphUI = function (React, Graph) {
         download && h('a', {className: 'dm-button dm-small', href: download, download: `dsh-math-process-${graph.project_id}-seq-${graph.research_seq}.json`,
           onClick: () => setMessage('已请求浏览器下载 JSON；请在下载列表确认保存结果。')}, '保存 JSON 快照'),
         message && h('p', {className: 'dm-operation-status', role: 'status'}, message),
-        h('pre', {className: 'dm-code'}, Graph.serialize(graph))));
+        h('pre', {className: 'dm-code'}, Graph.serialize(graph)))));
   };
 };

@@ -282,7 +282,8 @@
           state.preview && button(state.result ? '打开已导入副本' : state.attempt ? '重试确认导入' : '确认导入只读副本', async () => { const control = controller.current; const project = await control?.confirm(); if (project && controller.current === control) callbacks.current.onImported(project); }, state.busy, true),
           button('取消导入', cancel, state.busy))));
     }
-    return {Scratchpad, LegacyImport};
+    const MaterialsImport = globalThis.DshMathMaterialsUI?.(React, Preview).MaterialsImport;
+    return {Scratchpad, LegacyImport, MaterialsImport};
   }
   factory.createScratchpadController = createScratchpadController;
   factory.createImportController = createImportController;

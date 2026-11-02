@@ -2,7 +2,7 @@
 """Dedicated ordinary-chat preparation entry; never a human/research dispatcher.
 
 ROOT/session_id/tool_call_id are trusted host bindings. The model may supply only
-one of four allowlisted tool names and its exact argument shape. Guidance requires
+an allowlisted tool name and its exact argument shape. Guidance requires
 an explicit user request; the host enforces verified plan/read-only/approval policy
 before writes. This transport does not attest an individual human gesture.
 """
@@ -14,7 +14,9 @@ import sys
 from workbench_store import Workbench
 from schema import StoreError, decode, fields, identifier, require
 
-TOOLS = frozenset(("math_project_prepare", "math_project_draft_read", "math_scratchpad_read", "math_scratchpad_save"))
+# Scratch names remain internal compatibility transports, never registered in chat.
+TOOLS = frozenset(("math_project_prepare", "math_project_draft_read", "math_scratchpad_read", "math_scratchpad_save",
+                   "math_research_read", "math_research_record", "math_material_read"))
 MAX_REQUEST_BYTES = 2 * 1024 * 1024
 
 
@@ -30,6 +32,15 @@ def execute(root, request):
     if name == "math_project_prepare":
         arguments = {"draft_id": None, **arguments}
         fields(arguments, "draft_id expected_rev operation_id patch")
+        patch = arguments["patch"]
+        if (type(patch) is dict and type(patch.get("statement")) is str
+                and type(patch.get("title", "")) is str and not patch.get("title", "").strip()):
+            current = workbench.draft_read(session_id, arguments["draft_id"])["draft"] if arguments["draft_id"] else None
+            existing_title = current["fields"].get("title", "") if current else ""
+            first_line = next((line.strip() for line in patch["statement"].splitlines() if line.strip()), "")
+            title = existing_title or first_line[:60]
+            if title:
+                arguments = {**arguments, "patch": {**patch, "title": title}}
         return workbench.draft_save(session_id=session_id, **arguments)
     if name == "math_project_draft_read":
         arguments = {"draft_id": None, **arguments}
@@ -39,8 +50,20 @@ def execute(root, request):
         arguments = {"rev": None, **arguments}
         fields(arguments, "project_id rev")
         return workbench.scratchpad_read(session_id=session_id, **arguments)
-    fields(arguments, "project_id expected_rev operation_id title body")
-    return workbench.scratchpad_save(session_id=session_id, **arguments)
+    if name == "math_scratchpad_save":
+        fields(arguments, "project_id expected_rev operation_id title body")
+        return workbench.scratchpad_save(session_id=session_id, **arguments)
+    if name == "math_material_read":
+        from material_store import Materials
+        fields(arguments, "project_id ref offset limit")
+        return Materials(root).read(session_id=session_id, **arguments)
+    from chat_research import ChatResearch
+    research = ChatResearch(root, session_id, call_id)
+    if name == "math_research_read":
+        fields(arguments, "project_id ref offset limit")
+        return research.read(**arguments)
+    fields(arguments, "project_id id expected_rev operation_id data")
+    return research.record(**arguments)
 
 
 def main():

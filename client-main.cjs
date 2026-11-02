@@ -7,7 +7,35 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
   const {Editor, Refs, Select} = globalThis.DshMathFormUI(React, F, Preview);
   const {RecordReader, RecordBrowser, ReviewSummary, ExportReceipt, ContextPack} = globalThis.DshMathRecordUI(React, F, Preview);
   const {ProjectForm} = globalThis.DshMathProjectForm(React, F, Preview);
-  const {Scratchpad, LegacyImport} = globalThis.DshMathWorkbenchUI(React, F, Preview);
+  const {MaterialsImport, LegacyImport} = globalThis.DshMathWorkbenchUI(React, F, Preview);
+  // This viewer never instantiates the old autosaving Scratchpad controller.
+  function HistoricalDraft({request, sessionId, projectId, writable, onPromote}) {
+    const [value, setValue] = useState(null), [error, setError] = useState(''), [opened, setOpened] = useState(false);
+    const lifetime = useRef({active: true, serial: 0});
+    useEffect(() => {
+      const state = lifetime.current; state.active = true; const serial = ++state.serial;
+      request('scratchpad-read', {session_id: sessionId, project_id: projectId}).then(result => {
+        if (state.active && state.serial === serial) { setValue(result); setError(''); }
+      }).catch(failure => { if (state.active && state.serial === serial) setError(failure.message); });
+      return () => { state.active = false; state.serial++; };
+    }, [sessionId, projectId]);
+    async function read(rev) {
+      const state = lifetime.current, serial = ++state.serial;
+      try { const next = await request('scratchpad-read', {session_id: sessionId, project_id: projectId, rev});
+        if (state.active && state.serial === serial) { setValue(next); setError(''); }
+      } catch (failure) { if (state.active && state.serial === serial) setError(failure.message); }
+    }
+    const pad = value?.scratchpad;
+    if (!pad && !error && !value?.history?.length) return null;
+    return h('details', {className: 'dm-details dm-historical-draft', onToggle: event => setOpened(event.currentTarget.open)},
+      h('summary', null, '历史草稿（只读）'),
+      error && h('p', {role: 'alert', className: 'dm-error'}, error),
+      opened && h(React.Fragment, null,
+        h('p', {className: 'dm-record-text'}, '仅查看已有版本；整理为笔记后仍需补全并明确保存。'),
+        pad && h('section', null, h('h4', null, pad.title || '无标题历史草稿'), h('p', {className: 'dm-panel-meta'}, `v${pad.rev}`), h(Preview, {text: pad.body || ''}),
+          writable && h('button', {type: 'button', className: 'dm-button', disabled: !pad.body?.trim(), onClick: () => onPromote('Note', pad)}, '将此版本整理为笔记')),
+        h('div', {className: 'dm-actions'}, ...(value?.history || []).map(item => h('button', {type: 'button', className: 'dm-button dm-small', key: item.rev, onClick: () => read(item.rev)}, `查看 v${item.rev}`)))));
+  }
   const Graph = globalThis.DshMathProcessGraph;
   const ProcessGraph = globalThis.DshMathGraphUI(React, Graph);
   const TAB_ID = 'dsh-math:projects';
@@ -70,13 +98,14 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
   // A scope change owns a fresh view. Old writes may finish on the Host, but cannot
   // populate a new session's UI or trigger follow-up operations there.
   function MathView(props) { return h(ProjectView, {...props, key: props.sessionId || ''}); }
-  function ProjectView({sessionId, openView, navigateSession, sidebar = false, onClose}) {
+  function ProjectView({sessionId, openView, navigateSession, organizeMaterials, sidebar = false, onClose}) {
     const [projects, setProjects] = useState([]), [selected, setSelected] = useState(''), [view, setView] = useState(null);
     const [error, setError] = useState(''), [busy, setBusy] = useState(false), [creating, setCreating] = useState(false), [tab, setTab] = useState('overview');
     const [importing, setImporting] = useState(false), [promotionLink, setPromotionLink] = useState(null);
     const [focus, setFocus] = useState(null), [attachment, setAttachment] = useState(null), [editor, setEditor] = useState(null);
     const [sources, setSources] = useState([]), [candidate, setCandidate] = useState([]), [replay, setReplay] = useState(null), [preview, setPreview] = useState(null), [verdict, setVerdict] = useState(''), [findings, setFindings] = useState(''), [receipt, setReceipt] = useState(null);
     const [process, setProcess] = useState(null), [operation, setOperation] = useState('');
+    const [downloadNotice, setDownloadNotice] = useState(''); const downloadUrls = useRef([]);
     const [draftSummary, setDraftSummary] = useState(null), [draftError, setDraftError] = useState('');
     const [decision, setDecision] = useState(null), [localNotice, setLocalNotice] = useState('');
     const [pinned, setPinned] = useState(null), [contextObject, setContextObject] = useState(null), [reviewStale, setReviewStale] = useState(false);
@@ -174,7 +203,7 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
       if (!state.active || loading !== state.loading) return;
       setProjects(list); setView(nextView); setSelected(id);
       setPromotionLink(pendingPromotionLinks.get(promotionKey(sessionId, id)) || null);
-      setAttachment(null); setReplay(null); setReceipt(null); setProcess(null); setContextObject(null);
+      setAttachment(null); setReplay(null); setReceipt(null); setProcess(null); setContextObject(null); setDownloadNotice('');
       // Switching scopes restores only that session/project's in-window document.
       if (id !== state.selected) {
         remember();
@@ -205,6 +234,7 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
       if (typeof window !== 'undefined') window.addEventListener?.('focus', onFocus);
       return () => {
         remember(); activeDocuments.delete(surface.current); state.active = false; state.serial++; state.loading++; readingDraft.current++;
+        for (const url of downloadUrls.current) URL.revokeObjectURL(url); downloadUrls.current = [];
         decisionResolver.current?.('cancel'); decisionResolver.current = null;
         if (typeof window !== 'undefined') window.removeEventListener?.('focus', onFocus);
       };
@@ -224,6 +254,18 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
       await api('scratchpad-promote-link', {session_id: sessionId, ...link});
       pendingPromotionLinks.delete(promotionKey(sessionId, link.project_id)); setPromotionLink(null);
     }
+    const downloadMaterial = object => run(async () => {
+      const state = lifetime.current, serial = state.serial, projectId = selected;
+      const isCurrent = () => state.active && state.serial === serial && state.selected === projectId;
+      const helper = globalThis.DshMathMaterialsUI?.downloadOriginal;
+      if (!helper) throw Error('当前材料下载组件尚未就绪。');
+      setDownloadNotice('');
+      const file = await helper({request: workbenchRequest.current, sessionId, projectId, ref: ref(object), isCurrent});
+      if (!isCurrent()) return;
+      const url = URL.createObjectURL(file.blob); downloadUrls.current.push(url);
+      const link = document.createElement('a'); link.href = url; link.download = file.name; link.click();
+      setDownloadNotice(`已发起下载：${file.name}；请在浏览器下载列表确认。`);
+    }, '读取归档原件');
     const saveRecord = recordRequest => run(async () => {
       if (!F.writable(view)) throw Error('此项目只读，不能写入研究记录。');
       const document = local.current.draft || editor;
@@ -301,7 +343,7 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
       const result = await api('replay', {project_id: selected, sources: selectedSources});
       setProcess(Graph.build(view, result)); // Reject a changed research head rather than mix snapshots.
     });
-    const tabs = [['overview', '工作台', '研究概览'], ['scratchpad', '草稿本', '项目草稿本'], ['records', '研究记录', '记录与审核'], ['process', '过程', '研究过程'], ['replay', '导出', '回放与导出']];
+    const tabs = [['overview', '工作台', '研究概览'], ['records', '研究记录', '记录与审核'], ['process', '研究过程', '研究过程'], ['replay', '导出', '回放与导出']];
     const changeTab = id => {
       setTab(id);
       if (id === 'process' && !process && !busy) return readProcess([]);
@@ -362,8 +404,6 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
         tab === 'overview' && h('div', {className: 'dm-stats'}, ...stats.map(([label, value]) => h('div', {className: 'dm-stat', key: label}, h('span', {className: 'dm-stat-value'}, value), h('span', {className: 'dm-stat-label'}, label)))),
         !writable && h('p', {className: 'dm-readonly', role: 'status'}, '只读项目 · 不可编辑草稿本、登记／修订记录或提交审核。'),
         h('nav', {className: 'dm-tabs', role: 'tablist', 'aria-label': '研究工作台视图', onKeyDown: navigateTabs}, ...tabs.map(([id, label, title]) => h('button', {key: id, type: 'button', role: 'tab', id: `${surface.current}-${id}-tab`, 'aria-controls': `${surface.current}-${id}-panel`, 'aria-selected': tab === id, tabIndex: tab === id ? 0 : -1, className: 'dm-tab', title, 'aria-label': title, 'data-active': tab === id, onClick: () => changeTab(id)}, label))),
-        h('div', panelProps('scratchpad'), h(Scratchpad, {key: `${sessionId}:${selected}`, request: workbenchRequest.current, sessionId, projectId: selected, writable,
-          active: tab === 'scratchpad', registerGuard, onPromote: (kind, pad) => edit(kind, null, pad)})),
         h('section', panelProps('process'),
           h('div', {className: 'dm-actions dm-graph-tools'},
             h(Button, {size: 'small', variant: 'primary', disabled: busy, onClick: () => readProcess([])}, process ? '刷新过程' : '查看研究过程')),
@@ -380,12 +420,13 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
             h('div', {className: 'dm-section-label'}, '当前目标', h('span', {className: 'dm-panel-meta'}, `seq ${view.snapshot.state.seq}`)),
             h('h3', {className: 'dm-goal-title'}, goal.data.title || view.project.title),
             h('div', {className: 'dm-goal-statement'}, h(Preview, {text: goal.data.statement || ''})),
-            writable && h(Button, {variant: 'primary', onClick: () => changeTab('scratchpad')}, '继续草稿'),
             h('div', {className: 'dm-record-meta'}, link(ref(goal))),
             writable && recordActions({busy, edit}),
             F.nextActions(view).length > 0 && h('div', {className: 'dm-next-action-list'}, h('h4', null, '下一步'), ...F.nextActions(view).map(item => h('div', {key: F.refKey(item.ref), className: 'dm-next-action'}, h('span', null, item.text), link(item.ref)))),
             h('p', {className: 'dm-local-hint'}, '登记的是研究记录，不是证明。程序检查不替代人工审核。')),
           groupPanels(3),
+          h(HistoricalDraft, {key: `${sessionId}:${selected}`, request: workbenchRequest.current, sessionId, projectId: selected, writable,
+            onPromote: (kind, pad) => edit(kind, null, pad)}),
           h('details', {className: 'dm-details dm-project-details'}, h('summary', null, '项目与关联会话'),
             h('p', {className: 'dm-record-text'}, `campaign ${view.project.campaign_id}`),
             h('p', {className: 'dm-record-text'}, '开放性与数学结论不由软件自动判定；当前状态由版本化记录推导。'),
@@ -407,7 +448,9 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
                   ['Note', 'Obligation'].includes(focus.kind) && writable && h(Button, {disabled: busy || !!local.current.review?.attempt, onClick: () => replaceLocal(() => requestReview(), 'review')}, '人工审核预览'),
                   h('details', {className: 'dm-details'}, h('summary', null, '更多操作'), h(Button, {onClick: () => setContextObject(focus)}, '准备上下文包'))),
                 focus.kind === 'Obligation' && writable && h(Refs, {label: '审核所选候选', objects: view.objects.filter(o => (focus.data.candidates || []).some(r => F.refKey(r) === F.refKey(o))), kinds: ['Note'], problem: focus.data.problem_ref, value: candidate, single: true, change: v => replaceLocal(() => { setCandidate(v); clearReview(); }, 'review'), inspect}),
-                focus.kind === 'Evidence' && (focus.data.attachments || []).map(a => h(Button, {key: a.sha256, onClick: () => run(async () => setAttachment(await api('attachment', {project_id: selected, object_id: focus.id, rev: focus.rev, sha256: a.sha256})), '读取归档原文')}, `查看原文 ${a.logical_name}`)),
+                focus.kind === 'Evidence' && focus.data.production?.method === 'dsh-math-material-import' && h(Button, {disabled: busy, onClick: () => downloadMaterial(focus)}, '下载归档原件'),
+                 downloadNotice && h('p', {className: 'dm-local-hint', role: 'status'}, downloadNotice),
+                 focus.kind === 'Evidence' && (focus.data.attachments || []).map(a => h(Button, {key: a.sha256, onClick: () => run(async () => setAttachment(await api('attachment', {project_id: selected, object_id: focus.id, rev: focus.rev, sha256: a.sha256})), '读取归档原文')}, `查看原文 ${a.logical_name}`)),
                 attachment && h('pre', {className: 'dm-code'}, attachment.text === null ? pretty(attachment) : attachment.text)),
               preview && writable && h(Panel, {title: '人工审核预览', meta: '审核范围与保存状态分开显示'},
                 h(ReviewSummary, {preview}),
@@ -442,10 +485,13 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
           h('div', {className: 'dm-import-heading'}, h('h3', null, '延续已有研究'), h('span', {className: 'dm-badge'}, '只读副本')),
           h('p', null, '原库不变；不自动开始研究。')),
         h('div', {className: 'dm-import-action'}, h(Button, {disabled: busy, title: '导入旧研究库（只读副本）', onClick: () => leave(() => setImporting(true))}, '导入旧研究库'))),
+      MaterialsImport && h(MaterialsImport, {request: workbenchRequest.current, sessionId, projectId: selected || null,
+        onNeedProject: () => setCreating(true), onImported: () => run(() => load(), '刷新导入材料'),
+        onOrganize: (prompt, requestId) => { if (!organizeMaterials) throw Error('当前宿主无法发送材料整理请求。'); return organizeMaterials(sessionId, prompt, requestId); }}),
       importing && h(LegacyImport, {key: sessionId, request: workbenchRequest.current, sessionId, close: () => setImporting(false),
         onImported: project => leave(() => run(async () => { setImporting(false); await load(project.id); setTab('overview'); }))}));
   }
-  function Entry({sessionId, navigateSession, openSidebar}) {
+  function Entry({sessionId, navigateSession, openSidebar, organizeMaterials}) {
     const [opened, setOpened] = useState(false), [error, setError] = useState('');
     const dialogRef = useRef(null);
     useEffect(() => {
@@ -474,7 +520,7 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
     return h(React.Fragment, null,
       h(Button, {icon: true, onClick: open}, '数学项目'),
       error && h('span', {className: 'dm-entry-error', role: 'alert'}, error),
-      opened && h('dialog', {ref: dialogRef, role: 'dialog', 'aria-modal': true, 'aria-label': '数学研究工作台', className: 'dm-dialog', onCancel: cancel}, h(MathView, {sessionId, navigateSession: navigate, onClose: () => setOpened(false)})));
+      opened && h('dialog', {ref: dialogRef, role: 'dialog', 'aria-modal': true, 'aria-label': '数学研究工作台', className: 'dm-dialog', onCancel: cancel}, h(MathView, {sessionId, navigateSession: navigate, organizeMaterials, onClose: () => setOpened(false)})));
   }
   return {name: 'dsh-math-client', inject: ['slots', 'uiConversation', 'uiWorkspace'], apply(ctx) {
     ctx.effect(() => {
@@ -488,6 +534,14 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
     }, 'dsh-math: theme');
     ctx.uiConversation.views.register({target: 'math', create: () => ({empty: null, replace: () => null, apply: () => null})});
     const navigateSession = id => ctx.uiWorkspace.openSession(id);
+    const organizeMaterials = async (sessionId, prompt, requestId) => {
+      if (!ctx.remote?.session?.prompt) throw Error('当前宿主不支持发送材料整理请求。');
+      const response = await ctx.remote.session.prompt({requestId, sessionId, mode: 'queue', content: [{type: 'text', text: prompt}]});
+      if (response?.ok === false) throw Object.assign(Error(response.error?.message || '材料整理请求未被接受。'), {code: response.error?.code});
+      const receipt = response?.ok === true ? response.value : response;
+      if (receipt?.accepted !== true) throw Error('材料整理请求回执未知；请核对原请求，勿重复发送。');
+      return receipt;
+    };
     const messages = {
       en: {session: 'Open a session before using Math Projects.', missing: 'The math tab is not ready. Reopen the sidebar.', disabled: 'The math tab is disabled. Enable it in Better Sidebar settings.'},
       zh: {session: '请先打开一个会话，再使用数学项目。', missing: '数学标签页尚未就绪，请重新打开侧栏。', disabled: '数学标签页已禁用，请在 Better Sidebar 设置中启用。'},
@@ -507,7 +561,7 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
       child.effect(() => {
         const dispose = service.registerTab({
           id: TAB_ID, title: '数学研究', description: '管理研究目标、笔记、参考材料与人工审核。', icon: size => h(MathIcon, {size}), single: true, order: 20,
-          component: ({scope}) => h(MathView, {sessionId: scope.sessionId, navigateSession, sidebar: true}),
+          component: ({scope}) => h(MathView, {sessionId: scope.sessionId, navigateSession, organizeMaterials, sidebar: true}),
         });
         sidebar = service;
         return () => { if (sidebar === service) sidebar = undefined; dispose(); };
@@ -521,7 +575,7 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
       sidebar.openTab({type: TAB_ID, title: '数学研究'}, {sessionId});
       return true; // Dispatch only: openTab is void, not a visible-success receipt.
     };
-    const inject = () => ({navigateSession, openSidebar});
+    const inject = () => ({navigateSession, openSidebar, organizeMaterials});
     ctx.slots.inject('conversation.view', () => ctx.slots.register({name: 'conversation.view', id: 'math', order: 20, label: () => '数学研究', inject}, MathView));
     for (const slot of ['conversation.hero.options', 'conversation.session.header.utilities']) {
       ctx.slots.inject(slot, () => ctx.slots.register({name: slot, id: 'math-projects', order: 20, inject}, Entry));

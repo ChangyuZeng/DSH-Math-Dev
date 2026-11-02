@@ -359,6 +359,50 @@
       if (descriptor.unmapped_records) descriptor.node.facts.push(fact('未映射 revision', descriptor.unmapped_records));
       delete descriptor.node;
     }
+    // Route membership is derived only from latest saved Notes and exact Problem refs.
+    // Related obligations require an explicit candidate/uses reference; no title matching.
+    const latest = new Map();
+    for (const obj of objects.values()) if (!latest.has(obj.id) || latest.get(obj.id).rev < obj.rev) latest.set(obj.id, obj);
+    const problemGroups = new Map();
+    function problemGroup(ref) {
+      const target = reference(ref) && objects.get(key(ref));
+      if (!target || target.kind !== 'Problem') return null;
+      const token = key(ref);
+      if (!problemGroups.has(token)) problemGroups.set(token, {problem: {id: target.id, rev: target.rev}, title: excerpt(target.data.title, 120), routes: [], obligations: []});
+      return problemGroups.get(token);
+    }
+    for (const obj of latest.values()) if (obj.kind === 'Problem') problemGroup(obj);
+    const routeMap = new Map(), pendingObligations = [], unresolvedNotes = [];
+    const publicRecord = obj => ({ref: {id: obj.id, rev: obj.rev}, title: excerpt(obj.data.title || obj.data.statement || KINDS[obj.kind], 120),
+      summary: excerpt(obj.data.summary || obj.data.statement || ''), note_type: obj.data.note_type || null,
+      gaps: Array.isArray(obj.data.gaps) ? obj.data.gaps.filter(value => typeof value === 'string').map(value => excerpt(value)) : [],
+      next_action: excerpt(obj.data.next_action || ''),
+      failure: obj.data.note_type === 'failed_attempt' && object(obj.data.failure) ? Object.fromEntries(Object.entries(obj.data.failure).map(([k, v]) => [k, excerpt(v)])) : null});
+    for (const obj of latest.values()) {
+      if (!recordNodes.has(key(obj))) continue; // Do not silently rescue unmapped revisions.
+      if (obj.kind === 'Obligation') { pendingObligations.push(obj); continue; }
+      if (obj.kind !== 'Note') continue;
+      const group = problemGroup(obj.data.problem_ref);
+      if (!group) { unresolvedNotes.push(publicRecord(obj)); continue; }
+      const routeId = typeof obj.data.route_id === 'string' && obj.data.route_id.trim() ? obj.data.route_id : null;
+      const token = id('route', group.problem.id, group.problem.rev, routeId);
+      if (!routeMap.has(token)) { const route = {id: routeId, notes: [], obligations: []}; routeMap.set(token, route); group.routes.push(route); }
+      routeMap.get(token).notes.push(publicRecord(obj));
+    }
+    for (const obligation of pendingObligations) {
+      const group = problemGroup(obligation.data.problem_ref); if (!group) continue;
+      let linked = false;
+      for (const route of group.routes) {
+        const related = route.notes.some(note => {
+          const obj = objects.get(key(note.ref));
+          return [...(obj.data.candidate_for || []), ...(obj.data.uses || [])].some(ref => reference(ref) && key(ref) === key(obligation)) ||
+            [...(obligation.data.candidates || []), ...(obligation.data.uses || [])].some(ref => reference(ref) && key(ref) === key(note.ref));
+        });
+        if (related) { route.obligations.push(publicRecord(obligation)); linked = true; }
+      }
+      if (!linked) group.obligations.push(publicRecord(obligation));
+    }
+    graph.routes = [...problemGroups.values()]; graph.unresolved_notes = unresolvedNotes;
     return graph;
   }
   publish({build, serialize});

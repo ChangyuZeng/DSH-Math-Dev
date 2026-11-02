@@ -5,6 +5,14 @@ const require = createRequire(import.meta.url);
 const F = require('../forms.cjs');
 const descriptor = require('../project-fields.json');
 
+test('optional title derives a display label without filling mathematical fields', () => {
+  const fields = {...F.projectDefaults(descriptor), statement: '  第一行明确问题😀\n其余问题条件'};
+  const patch = F.projectPatch(descriptor, fields);
+  assert.equal(patch.title, '第一行明确问题😀'); assert.equal(patch.statement, fields.statement);
+  assert.equal(patch.quantifiers, ''); assert.equal(patch.domain, ''); assert.deepEqual(patch.sources, []);
+  assert.equal(F.projectValidation(descriptor, patch).complete, false);
+});
+
 test('reference choices preserve revisions and isolate target and kind', () => {
   const problem = {id: 'P', rev: 1};
   const objects = [{id: 'N', rev: 1, kind: 'Note', data: {problem_ref: problem}}, {id: 'N', rev: 2, kind: 'Note', data: {problem_ref: problem}},

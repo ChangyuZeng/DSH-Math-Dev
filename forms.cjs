@@ -26,8 +26,11 @@
       Object.hasOwn(field, 'default') ? field.default : field.type === 'string[]' ? [] : '']));
   }
   function projectPatch(descriptor, values) {
-    return Object.fromEntries(descriptor.fields.map(field => [field.key, field.type === 'string[]'
+    const patch = Object.fromEntries(descriptor.fields.map(field => [field.key, field.type === 'string[]'
       ? (values[field.key] || []).filter(value => value.trim()) : values[field.key] ?? '']));
+    // A display title only; never invent mathematical conditions or completion criteria.
+    if (!patch.title?.trim() && patch.statement?.trim()) patch.title = Array.from(patch.statement.trim().split(/\r?\n/)[0]).slice(0, 60).join('');
+    return patch;
   }
   function projectValidation(descriptor, values) {
     const missing_fields = [], errors = [];

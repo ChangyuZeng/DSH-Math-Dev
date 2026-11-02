@@ -117,9 +117,10 @@ globalThis.DshMathFormUI = function (React, F, Preview) {
     const preview=body=>h('details',{className:'dm-editor-preview'},h('summary',null,'预览正文 / 公式'),Preview?h(Preview,{text:body||''}):h('pre',{className:'dm-code'},body||''));
     let content=[],basis=[],scope=[];
     if(draft.kind==='Note'){
-      content=[text('title','笔记标题',true,false),text('body','完整正文'),preview(data.body),text('summary','简述'),text('statement','主张'),h(Select,{label:'笔记类型',field:'note_type',value:data.note_type,change:v=>set(prev=>({note_type:v,failure:v==='failed_attempt'?(prev.failure||{inputs:'',location:'',observed:'',negated_scope:'',retry_change:''}):null})),items:[['observation','观察'],['argument','论证'],['computation','计算记录'],['source','文献笔记'],['failed_attempt','失败尝试']]})];
+      content=[text('title','笔记标题',true,false),text('body','完整正文'),preview(data.body)];
+      scope=[text('summary','简述'),text('statement','主张'),h(Select,{label:'笔记类型',field:'note_type',value:data.note_type,change:v=>set(prev=>({note_type:v,failure:v==='failed_attempt'?(prev.failure||{inputs:'',location:'',observed:'',negated_scope:'',retry_change:''}):null})),items:[['observation','观察'],['argument','论证'],['computation','计算记录'],['source','文献笔记'],['failed_attempt','失败尝试']]})];
       basis=[refs('uses','依赖前提',['Note','Obligation']),refs('candidate_for','拟解决的待证事项',['Obligation']),refs('evidence','参考材料',['Evidence'])];
-      scope=[list('assumptions','假设'),list('gaps','尚存缺口'),text('route_id','路线标识',false,false)];
+      scope.push(list('assumptions','假设'),list('gaps','尚存缺口'),text('route_id','路线标识',false,false));
       if(data.failure)scope.push(...Object.entries({inputs:'失败输入',location:'失败位置',observed:'观察结果',negated_scope:'否定范围',retry_change:'再次尝试应改变什么'}).map(([key,label])=>h(Text,{key,label,value:data.failure[key],required:true,...field('failure.'+key,label,true),change:v=>set(prev=>({failure:{...prev.failure,[key]:v}}))})));
     }else if(draft.kind==='Obligation'){
       content=[text('statement','待证陈述'),preview(data.statement),text('reason','登记原因'),text('next_action','下一步'),h(Select,{label:'当前提交状态',field:'state',value:data.state==='candidate'?'candidate':'open',change:v=>set({state:v}),items:[['open','开放'],['candidate','已有候选，等待审核']]}),h('p',{className:'dm-record-text'},'由人工审核；接受和待复核状态由系统派生。')];
@@ -142,7 +143,7 @@ globalThis.DshMathFormUI = function (React, F, Preview) {
       h('h3',{ref:heading,tabIndex:-1,className:'dm-editor-title'},`${draft.expected_rev?'修订':'登记'} ${{Note:'笔记',Obligation:'待证事项',Evidence:'参考材料'}[draft.kind]}`),h('p',{className:'dm-record-text'},`${draft.id} · 目标 ${F.refKey(data.problem_ref)} · 基于版本 ${draft.expected_rev}`),
       h('p',{className:'dm-editor-status',role:'status'},readOnly?'只读：不能保存正式记录。':uploading?'正在读取附件；尚未保存正式记录。':submitting?'保存请求处理中…':attempt?'保存请求已发送；如未收到确认，请重试原请求核对结果。':dirtyFloor.current?'恢复或整理的内容尚未保存；仅保留在当前界面内存中，需明确保存或放弃。':JSON.stringify(draft)!==baseline.current?'有未保存的修改；仅保留在当前界面内存中。':'填写并明确保存后才会登记正式记录。'),
       errors.length>0&&h('div',{role:'alert',className:'dm-error dm-editor-errors'},h('p',null,`请检查以下 ${errors.length} 项：`),h('ul',null,...errors.map((error,i)=>h('li',{key:i},error.field?h('button',{type:'button',className:'dm-ref',onClick:()=>focusField(error.field)},error.message):error.message)))),
-      h('fieldset',{className:'dm-editor-fields',disabled:locked||readOnly||!!attempt},section('content','内容',content),section('basis','依据',basis,draft.kind!=='Evidence'),section('scope','范围与缺口',scope)),
+      h('fieldset',{className:'dm-editor-fields',disabled:locked||readOnly||!!attempt},section('content','内容',content),section('basis','依据',basis,draft.kind!=='Evidence'),section('scope','范围与缺口',scope,draft.kind==='Note')),
       h('div',{className:'dm-actions'},h('button',{type:'submit',className:'dm-button dm-primary',disabled:locked||readOnly},busy||submitting?'保存中':uploading?'读取附件中…':attempt?'重试原保存请求':'保存记录'),h('button',{type:'button',className:'dm-button',onClick:()=>{if(current()&&!callbacks.current.busy&&!life.current.submitting&&!life.current.uploading)callbacks.current.cancel();},disabled:locked},'取消')));
   }
   return {Editor,Refs,Text,Select};

@@ -28,7 +28,7 @@ function spawnCommand(argv, request, {signal, onChild, timeoutMs = 60000} = {}) 
   return new Promise((resolveCall, reject) => {
     if (signal?.aborted) return reject(Error('Run cancelled before dispatch'));
     const child = spawn(argv[0], argv.slice(1), {
-      stdio: ['pipe', 'pipe', 'pipe'], env: {...process.env, PYTHONDONTWRITEBYTECODE: '1'}, detached: Boolean(signal),
+      stdio: ['pipe', 'pipe', 'pipe'], env: {...process.env, PYTHONDONTWRITEBYTECODE: '1', DSH_MATH_NODE: process.execPath, ELECTRON_RUN_AS_NODE: '1'}, detached: Boolean(signal),
     });
     let output = '', error = '', settled = false;
     const done = new Promise(resolveDone => child.once('close', resolveDone));

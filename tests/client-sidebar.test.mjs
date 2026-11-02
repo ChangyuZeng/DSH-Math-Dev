@@ -1161,22 +1161,66 @@ test('short Field and Text use inputs but preserve legacy LF and CR values in te
   assert.equal(saved.changes[0].data.title, historical + '末行');
 });
 
-test('five compact tabs retain the same scratchpad component and next actions preserve exact refs', async () => {
+test('archived material reader downloads exact Evidence through checked helper and owns Blob URLs', async () => {
+  const fixture = overview('a'), evidence = {schema_version: 4, id: 'E-original', rev: 2, kind: 'Evidence', data: {problem_ref: {id: 'P-a', rev: 1}, production: {method: 'dsh-math-material-import'}, attachments: []}};
+  fixture.objects.push(evidence); const calls = [], clicked = [], revoked = [];
+  const document = {head: {appendChild() {}}, createElement(tag) { if (tag === 'a') return {click() { clicked.push({href: this.href, download: this.download}); }}; return {remove() {}}; }};
+  const t = viewTest({effects: true, handle: body => body.action === 'overview' ? fixture : undefined, globals: {document,
+    URL: {createObjectURL: () => 'blob:original-fixture', revokeObjectURL: url => revoked.push(url)},
+    DshMathMaterialsUI: {downloadOriginal: async args => { calls.push(args); assert.equal(args.isCurrent(), true); return {blob: new Blob(['exact bytes']), name: 'source.pdf'}; }}}});
+  await t.choose('a'); const browser = component(t.render(), 'RecordBrowser'); browser.props.inspect(evidence);
+  await button(t.render(), '下载归档原件').props.onClick();
+  assert.equal(calls.length, 1); assert.deepEqual(plain(calls[0].ref), {id: evidence.id, rev: 2}); assert.equal(calls[0].projectId, 'a'); assert.equal(calls[0].sessionId, 'test-session');
+  assert.deepEqual(clicked, [{href: 'blob:original-fixture', download: 'source.pdf'}]);
+  assert.ok(nodes(t.render()).some(node => node.children.join('').includes('已发起下载：source.pdf')));
+  t.react.unmount(); assert.deepEqual(revoked, ['blob:original-fixture']); assert.equal(calls[0].isCurrent(), false);
+});
+
+test('materials prompt bridge accepts only known receipts and preserves request identity', async () => {
+  const plugin = loadPlugin(), ctx = contextWith(undefined), sent = []; let receipt = {ok: true, value: {accepted: true}};
+  ctx.remote = {session: {prompt: async args => { sent.push(args); return receipt; }}}; plugin.apply(ctx);
+  const bridge = ctx.slots.rows.find(row => row.descriptor.id === 'math').descriptor.inject().organizeMaterials;
+  assert.equal((await bridge('synthetic-session', 'previewed material', 'stable-request')).accepted, true);
+  assert.deepEqual(JSON.parse(JSON.stringify(sent[0])), {requestId: 'stable-request', sessionId: 'synthetic-session', mode: 'queue', content: [{type: 'text', text: 'previewed material'}]});
+  receipt = {accepted: true}; assert.equal((await bridge('synthetic-session', 'previewed material', 'stable-request')).accepted, true);
+  receipt = {ok: false, error: {code: 'gateway/cancelled', message: 'synthetic cancelled'}};
+  await assert.rejects(bridge('synthetic-session', 'text', 'stable-request'), /synthetic cancelled/);
+  receipt = {ok: true, value: {}}; await assert.rejects(bridge('synthetic-session', 'text', 'stable-request'), /回执未知/);
+});
+
+test('historical draft mounts only read APIs and exposes explicit Note conversion for saved versions', async () => {
+  const t = viewTest({effects: true}); await t.choose('a'); const component = nodes(t.render()).find(node => node.type?.name === 'HistoricalDraft');
+  assert.equal(nodes(t.render()).some(node => node.type?.name === 'Scratchpad'), false);
+  // Render the child in an independent hook frame owned by its captured React mock.
+  t.react.unmount(); t.react.mount();
+  const calls = [], promoted = [], pad = {project_id: 'a', rev: 3, title: 'saved', body: 'exact saved body'};
+  const props = {...component.props, request: async (action, args) => { calls.push({action, args}); return {scratchpad: pad, history: [{rev: 3}]}; }, onPromote: (...args) => promoted.push(args)};
+  const render = () => { t.react.reset(); const tree = component.type(props); t.react.flushEffects(); return tree; };
+  assert.equal(render(), null); await settle(); let tree = render();
+  tree.props.onToggle({currentTarget: {open: true}}); tree = render();
+  assert.equal(nodes(tree).some(node => ['textarea', 'input'].includes(node.type)), false);
+  button(tree, '将此版本整理为笔记').props.onClick(); assert.equal(promoted[0][0], 'Note'); assert.equal(promoted[0][1], pad);
+  await button(tree, '查看 v3').props.onClick(); render();
+  assert.deepEqual(calls.map(call => call.action), ['scratchpad-read', 'scratchpad-read']);
+  assert.equal(calls[1].args.rev, 3); t.react.unmount();
+});
+
+test('four tabs omit writable scratchpad and next actions preserve exact refs', async () => {
   const fixture = overview('a'); fixture.groups.obligations[0].object.data.next_action = '先检查合成条件\n再登记结果';
   const t = viewTest({handle: body => body.action === 'overview' ? fixture : undefined}); await t.choose('a');
-  const scratch = tree => nodes(tree).find(node => node.type?.name === 'Scratchpad');
-  const first = scratch(t.render()); assert.equal(first.props.active, false);
-  assert.equal(nodes(t.render()).filter(node => node.props.className === 'dm-tab').length, 5);
+  assert.equal(nodes(t.render()).some(node => node.type?.name === 'Scratchpad'), false);
+  assert.equal(nodes(t.render()).filter(node => node.props.className === 'dm-tab').length, 4);
+  assert.equal(nodes(t.render()).some(node => node.props.role === 'tab' && node.children.includes('草稿本')), false);
   const digest = byClass(t.render(), 'dm-next-action-list'); assert.ok(digest); assert.ok(nodes(digest).some(node => node.children.includes('先检查合成条件\n再登记结果')));
   button(digest, 'O-a@1').props.onClick(); assert.equal(visibleComponent(byTitle(t.render(), 'O-a@1'), 'RecordReader').props.object.kind, 'Obligation');
-  button(t.render(), '项目草稿本').props.onClick(); assert.equal(scratch(t.render()).key, first.key); assert.equal(scratch(t.render()).props.active, true);
-  button(t.render(), '研究概览').props.onClick(); assert.equal(scratch(t.render()).key, first.key); assert.equal(scratch(t.render()).props.active, false);
+  button(t.render(), '研究概览').props.onClick();
+  assert.ok(nodes(t.render()).some(node => node.type?.name === 'HistoricalDraft'));
 });
 
 test('legacy readonly view suppresses every research mutation but retains explicit audit export', async () => {
   const fixture = overview('a'); fixture.project.schema_version = 3; fixture.project.mode = 'legacy_readonly_copy'; fixture.objects.forEach(object => { object.schema_version = 3; });
   const t = viewTest({handle: body => body.action === 'overview' ? fixture : body.action === 'export' ? {path: '/synthetic/derived-audit', exported: true} : undefined}); await t.choose('a');
-  assert.equal(nodes(t.render()).find(node => node.type?.name === 'Scratchpad').props.writable, false);
+  assert.equal(nodes(t.render()).find(node => node.type?.name === 'HistoricalDraft').props.writable, false);
   for (const surface of ['overview', 'records']) {
     assert.equal(byClass(panel(t.render(), surface), 'dm-record-more'), undefined);
     for (const text of ['写笔记', '添加待证事项', '添加参考材料', '更多记录']) assert.equal(nodes(panel(t.render(), surface)).some(node => node.children.includes(text)), false);
@@ -1191,7 +1235,8 @@ test('legacy readonly view suppresses every research mutation but retains explic
 
 test('project switches await child flush and failure keeps the active project', async () => {
   const t = viewTest(); await t.choose('a'); const gate = deferred(); let allowed = false;
-  const child = nodes(t.render()).find(node => node.type?.name === 'Scratchpad');
+  button(t.render(), '新建项目').props.onClick();
+  const child = nodes(t.render()).find(node => node.type?.name === 'ProjectForm');
   const unregister = child.props.registerGuard('synthetic-scratch', async () => { await gate.promise; return allowed; });
   const pending = t.choose('b'); await settle(); assert.equal(picker(t.render()).props.value, 'a'); gate.resolve(); await pending;
   assert.equal(picker(t.render()).props.value, 'a'); assert.ok(alerts(t.render()).some(node => node.children.join('').includes('未保存')));
@@ -1204,7 +1249,7 @@ test('promotion links the exact committed revision and retry never duplicates th
     if (body.action === 'commit') return commit.promise;
     if (body.action === 'scratchpad-promote-link') { if (failLink) { failLink = false; return Promise.reject(Error('synthetic link offline')); } return {linked: true, target: body.args.target}; }
   }}); await t.choose('a'); const pad = {project_id: 'a', rev: 7, title: '合成草稿', body: '精确内容\n'};
-  nodes(t.render()).find(node => node.type?.name === 'Scratchpad').props.onPromote('Note', pad);
+  nodes(t.render()).find(node => node.type?.name === 'HistoricalDraft').props.onPromote('Note', pad);
   let editor = nodes(t.render()).find(node => node.type === t.Editor); assert.ok(editor); assert.equal(editor.props.initial.data.body, pad.body);
   assert.equal(editor.props.initial.data.summary, ''); assert.equal(editor.props.initial.promotion.scratchpad_rev, 7);
   const request = Forms.request(editor.props.initial), save = editor.props.save(request);
@@ -1223,7 +1268,7 @@ test('promotion links the exact committed revision and retry never duplicates th
 test('promotion completion after session unmount never dispatches a stale source link', async () => {
   const commit = deferred(); const t = viewTest({effects: true, handle: body => body.action === 'commit' ? commit.promise : undefined});
   t.render('session-a'); await settle();
-  nodes(t.render()).find(node => node.type?.name === 'Scratchpad').props.onPromote('Obligation', {project_id: 'a', rev: 3, title: 'synthetic', body: 'synthetic'});
+  nodes(t.render()).find(node => node.type?.name === 'HistoricalDraft').props.onPromote('Obligation', {project_id: 'a', rev: 3, title: 'synthetic', body: 'synthetic'});
   const editor = nodes(t.render()).find(node => node.type === t.Editor), pending = editor.props.save(Forms.request(editor.props.initial));
   t.render('session-b'); await settle(); commit.resolve({versions: [{id: editor.props.initial.id, rev: 1}]}); await assert.rejects(pending, /View changed/);
   assert.equal(t.requests.some(body => body.action === 'scratchpad-promote-link'), false); assert.equal(t.react.writesAfterUnmount.length, 0);
@@ -1253,7 +1298,7 @@ test('dirty formal editor stays mounted across every tab with stable key and no 
   const t = processTest(); await t.choose('a'); button(t.render(), '写笔记').props.onClick();
   const original = editNode(t); assert.equal(original.props.initialDirty, false, 'A blank document does not inherit a dirty flag');
   const edited = changeFormalDraft(t);
-  for (const tab of ['研究概览', '项目草稿本', '研究过程', '回放与导出', '记录与审核']) {
+  for (const tab of ['研究概览', '研究过程', '回放与导出', '记录与审核']) {
     await button(t.render(), tab).props.onClick(); const tree = t.render(), editor = editNode(t, tree);
     assert.equal(editor.type, original.type); assert.equal(editor.key, original.key); assert.equal(editor.props.initial, edited);
     assert.equal(editor.props.initialDirty, true); assert.equal(unsaved(t), undefined);
@@ -1447,12 +1492,12 @@ test('tab ARIA relationships, roving focus and keyboard navigation keep one visi
   const t = viewTest(); await t.choose('a'); let focused = '';
   const check = () => {
     const tree = t.render(), tabs = nodes(tree).filter(node => node.props.role === 'tab'), panels = nodes(tree).filter(node => node.props.role === 'tabpanel');
-    assert.equal(tabs.length, 5); assert.equal(panels.length, 5); assert.equal(panels.filter(node => !node.props.hidden).length, 1);
+    assert.equal(tabs.length, 4); assert.equal(panels.length, 4); assert.equal(panels.filter(node => !node.props.hidden).length, 1);
     assert.equal(tabs.filter(node => node.props.tabIndex === 0).length, 1);
     for (const tab of tabs) { const related = panels.find(node => node.props.id === tab.props['aria-controls']); assert.ok(related); assert.equal(related.props['aria-labelledby'], tab.props.id); assert.equal(tab.props['aria-selected'], !related.props.hidden); }
     return {tree, tabs};
   };
-  for (const [key, start, expected] of [['ArrowRight', 0, 'scratchpad'], ['End', 1, 'replay'], ['Home', 4, 'overview'], ['ArrowLeft', 0, 'replay']]) {
+  for (const [key, start, expected] of [['ArrowRight', 0, 'records'], ['End', 1, 'replay'], ['Home', 3, 'overview'], ['ArrowLeft', 0, 'replay']]) {
     const {tree, tabs} = check(), nav = nodes(tree).find(node => node.props.role === 'tablist');
     const targets = tabs.map(node => ({focus() { focused = node.key; }})); let prevented = false;
     nav.props.onKeyDown({key, target: targets[start], currentTarget: {querySelectorAll: selector => { assert.equal(selector, '[role="tab"]'); return targets; }}, preventDefault() { prevented = true; }});

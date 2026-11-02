@@ -72,7 +72,7 @@ globalThis.DshMathTheme = `
 .dm-stat + .dm-stat { border-left: 1px solid var(--dm-border); }
 .dm-stat-value { font-size: 14px; font-weight: 650; line-height: 1.3; }
 .dm-stat-label { color: var(--dm-muted); font-size: 11px; }
-.dm-tabs { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; margin: 0 0 10px; border-bottom: 1px solid var(--dm-border); }
+.dm-tabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; margin: 0 0 10px; border-bottom: 1px solid var(--dm-border); }
 .dm-tab { position: relative; min-width: 0; padding: 6px 0 8px; border: 0; background: transparent; color: var(--dm-muted); white-space: nowrap; }
 .dm-tab[data-active="true"] { color: var(--dm-accent); font-weight: 600; }
 .dm-tab[data-active="true"]::after { content: ""; position: absolute; right: 0; bottom: -1px; left: 0; height: 2px; border-radius: 2px; background: var(--dm-accent); }
@@ -455,6 +455,19 @@ details.dm-candidate:not([open]) { margin: 10px 0; padding: 0; border: 0; backgr
   .dm-stat { flex-direction: column; align-items: flex-start; }
   .dm-welcome { padding-top: 0; }
 }
+.dm-project-primary, .dm-project-conditions, .dm-materials-import, .dm-materials-preview, .dm-materials-result { min-width: 0; overflow-wrap: anywhere; }
+.dm-materials-import { margin: 14px 0; }
+.dm-materials-options { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px 16px; margin: 12px 0; }
+.dm-materials-preview, .dm-materials-result { margin: 12px 0; padding: 12px; background: var(--dm-soft); border: 1px solid var(--dm-border); border-radius: 8px; }
+.dm-materials-preview pre { max-height: 320px; overflow: auto; white-space: pre-wrap; }
+.dm-route-problem { margin: 16px 0 24px; min-width: 0; }
+.dm-route { margin: 12px 0; padding: 12px; border: 1px solid var(--dm-border); border-radius: 8px; background: var(--dm-panel); }
+.dm-route h4, .dm-route h5 { margin: 8px 0; overflow-wrap: anywhere; }
+.dm-route-section + .dm-route-section { border-top: 1px solid var(--dm-border); margin-top: 12px; padding-top: 8px; }
+.dm-route-records { list-style: none; margin: 0; padding: 0; }
+.dm-route-record { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 8px 0; min-width: 0; }
+.dm-route-record > p, .dm-route-record > details, .dm-route-gaps { flex-basis: 100%; }
+.dm-operation-history { margin-top: 20px; }
 @media (max-width: 680px) {
   .dsh-math-view { padding: 12px; }
   .dm-dialog { inset: 8px; }

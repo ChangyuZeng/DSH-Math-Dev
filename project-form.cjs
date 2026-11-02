@@ -148,9 +148,12 @@
       const validation = state.validation || F.projectValidation(descriptor, state.fields);
       const disabled = state.busy || !!state.finalizeAttempt || !state.loaded || state.draft?.status === 'committed';
       const edit = (key, value) => { setAllowLeave(false); controller.current?.edit(key, value); };
+      const primaryKeys = new Set(['title', 'statement', 'completion_criteria']);
+      const detailedIssues = showErrors ? descriptor.fields.filter(item => !primaryKeys.has(item.key) && ((validation.errors || []).some(error => error.field === item.key) || validation.missing_fields?.includes(item.key))) : [];
       const issue = key => showErrors ? (validation.errors || []).filter(error => error.field === key).map(error => error.message).join('；') || (validation.missing_fields?.includes(key) ? '此项必填' : '') : '';
       function field(field) {
         const value = state.fields[field.key], error = issue(field.key), helpId = `dm-project-${field.key}-help`;
+        const label = {title: '项目标题（可选）', statement: '问题描述', completion_criteria: '研究目标'}[field.key] || field.label;
         const props = {className: 'dm-input', value: field.type === 'string[]' ? (value || []).join('\n') : value || '',
           disabled, required: field.required, 'aria-invalid': !!error, 'aria-describedby': helpId,
           placeholder: field.placeholder, onChange: event => edit(field.key, field.type === 'string[]' ? event.target.value.split('\n') : event.target.value)};
@@ -163,7 +166,7 @@
         else input = h(field.type === 'string[]' || field.key === 'statement' || /[\r\n]/.test(value || '') ? 'textarea' : 'input', {...props, rows: 3});
         return h('div', {key: field.key, className: 'dm-project-field'},
           field.key === 'target_type' ? h('div', {className: 'dm-field-label'}, field.label, field.required && h('span', {className: 'dm-required'}, '必填'), input) :
-            h('label', {className: 'dm-field'}, field.label, field.required && h('span', {className: 'dm-required'}, '必填'), input),
+            h('label', {className: 'dm-field'}, label, field.required && field.key !== 'title' && h('span', {className: 'dm-required'}, '必填'), input),
           h('span', {className: 'dm-sr-only', id: helpId}, field.help), error && h('p', {className: 'dm-field-error', role: 'alert'}, error));
       }
       return h('form', {className: 'dm-project-form', noValidate: true, 'aria-label': '项目准备草稿', onSubmit: async event => {
@@ -176,8 +179,12 @@
           h('button', {type: 'button', className: 'dm-button dm-ghost dm-small', disabled: state.busy || !!state.finalizeAttempt, onClick: () => {
             if (!(state.dirty || state.uncertain) || typeof window !== 'undefined' && window.confirm('本地修改尚未保存。确定另建空白草稿？')) { controller.current?.fresh(); setShowErrors(false); setAllowLeave(false); }
           }}, '另建空白草稿')),
-        ...[['problem', '1 · 问题与范围'], ['goal', '2 · 目标与完成标准'], ['source', '3 · 来源与状态']].map(([group, title]) =>
-          h('fieldset', {className: 'dm-fieldset', key: group}, h('legend', null, title), ...descriptor.fields.filter(field => field.group === group).map(field))),
+        h('section', {className: 'dm-project-primary', 'aria-label': '问题与研究目标'}, ...descriptor.fields.filter(item => primaryKeys.has(item.key)).map(field)),
+        h('details', {className: 'dm-details dm-project-conditions', ...(detailedIssues.length ? {open: true} : {})},
+          h('summary', null, `详细条件与来源${detailedIssues.length ? ` · 需补全或修正 ${detailedIssues.length} 项` : ''}`),
+          h('p', {className: 'dm-record-text'}, '量词、范围和来源需如实填写。可先保存不完整草稿；确认建项会检查全部必填项。'),
+          ...[['problem', '问题与范围'], ['goal', '目标类型'], ['source', '来源与状态']].map(([group, title]) =>
+            h('fieldset', {className: 'dm-fieldset', key: group}, h('legend', null, title), ...descriptor.fields.filter(item => item.group === group && !primaryKeys.has(item.key)).map(field)))),
         Preview && h('details', {className: 'dm-details'}, h('summary', null, '预览问题与数学公式'), h(Preview, {text: state.fields.statement || ''})),
         state.notice && h('p', {role: 'status', className: 'dm-record-text'}, state.notice),
         state.error && h('p', {role: 'alert', className: 'dm-error'}, state.error),

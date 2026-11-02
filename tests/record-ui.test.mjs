@@ -233,6 +233,31 @@ test('title fallback is a 160-codepoint visual summary without changing original
   assert.deepEqual(object, original);
 });
 
+test('imported material uses literal original filename in labels and full filename search only for imported Evidence', () => {
+  const object = evidence(); object.data.production = {method: 'dsh-math-material-import'};
+  const name = '😀'.repeat(180) + '<literal>&-searchable-tail.pdf';
+  object.data.attachments[0].logical_name = name;
+  const original = clone(object), view = viewOf([problem(), object]);
+  assert.equal(Array.from(UI.title(object)).length, 160);
+  assert.equal(UI.title(object), '😀'.repeat(159) + '…');
+  assert.equal(UI.filterRecords(view, {query: 'searchable-tail.pdf'}).rows[0].object, object);
+  object.data.attachments[0].logical_name = '<literal>&.pdf';
+  assert.equal(UI.title(object), '<literal>&.pdf');
+  const tree = harness().render('RecordBrowser', {view});
+  assert.ok(nodes(tree, n => n.type === 'button').some(n => strings(n) === '<literal>&.pdf'));
+  object.data.attachments[0].logical_name = name;
+  assert.deepEqual(object, original);
+  const other = evidence();
+  assert.equal(UI.title(other), '参考材料');
+  assert.equal(UI.filterRecords(viewOf([other]), {query: 'PRIVATE-FILENAME'}).total, 0);
+  other.data.production = {method: 'other-import'};
+  assert.equal(UI.title(other), '参考材料');
+  object.data.title = 'Explicit title';
+  assert.equal(UI.title(object), 'Explicit title');
+  delete object.data.title; object.data.attachments = [];
+  assert.equal(UI.title(object), '参考材料');
+});
+
 test('Chinese kind/state labels preserve original enums and unknowns without inferred assessments', () => {
   assert.deepEqual(['Problem', 'Note', 'Obligation', 'Evidence', 'Review'].map(UI.kindLabel), ['研究问题', '笔记', '待证事项', '参考材料', '审核记录']);
   assert.equal(UI.kindLabel('FutureKind'), 'FutureKind'); assert.equal(UI.kindLabel('__proto__'), '__proto__');

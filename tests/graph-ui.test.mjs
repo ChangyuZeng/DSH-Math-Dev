@@ -167,12 +167,28 @@ test('download owns complete JSON bytes and reports dispatch, never confirmed sa
   assert.equal(t.inspections.length, 0);
 });
 
+test('route view starts visible with operation history collapsed and exact Note inspection', () => {
+  const graph = graphFixture();
+  graph.routes = [{problem: {id: 'P', rev: 1}, title: 'Synthetic problem', routes: [{id: 'route-A',
+    notes: [{ref: {id: 'N', rev: 2}, title: 'Current note', summary: 'saved argument', note_type: 'argument', failure: null},
+      {ref: {id: 'F', rev: 1}, title: 'Failed attempt', summary: 'failure', note_type: 'failed_attempt', failure: {negated_scope: 'only this input'}}],
+    obligations: [{ref: {id: 'O', rev: 1}, title: 'Related obligation', summary: 'open'}]}], obligations: []}];
+  graph.unresolved_notes = [];
+  const t = graphTest(deepFreeze(graph)); t.render(); const tree = t.render();
+  assert.ok(classes(tree, 'dm-route-process').length); const history = classes(tree, 'dm-operation-history')[0];
+  assert.equal(history.type, 'details'); assert.equal(history.props.open, undefined);
+  assert.match(text(classes(tree, 'dm-route-process')[0]), /路线 route-A/);
+  assert.match(text(tree), /失败尝试/); assert.match(text(tree), /相关待证事项/);
+  button(tree, 'Current note').props.onClick(); assert.deepEqual(t.inspections, [{id: 'N', rev: 2}]);
+  assert.equal(Graph.serialize(graph).includes('only this input'), true); t.unmount();
+});
+
 test('unsupported downloads expose a complete explicit JSON fallback without claiming success', () => {
   const graph = deepFreeze(graphFixture()), t = graphTest(graph, {failDownload: true});
   t.render(); let tree = t.render();
   assert.equal(downloads(tree).length, 0);
   assert.deepEqual(status(tree), ['当前客户端不能创建下载；可展开下方 JSON 快照手动保存。']);
-  const json = nodes(tree).find(node => node.type === 'details' && nodes(node).some(child => child.type === 'summary' && child.children[0] === 'JSON 快照与下载'));
+  const json = nodes(tree).find(node => node.type === 'details' && node.children.some(child => child?.type === 'summary' && child.children[0] === 'JSON 快照与下载'));
   assert.ok(json); assert.equal(json.props.open, undefined, 'Native disclosure is closed by default');
   assert.deepEqual(JSON.parse(nodes(json).find(node => node.type === 'pre').children[0]), graph);
   t.unmount(); assert.deepEqual(t.created, []); assert.deepEqual(t.revoked, []);
@@ -328,7 +344,7 @@ test('summary remains default and list filters preserve tree folding, pagination
   filter(tree, '节点类型', 'record'); tree = t.render();
   filter(tree, '搜索已收录记录', '  N-SYNTHETIC@85  '); tree = t.render();
   assert.deepEqual(rowTitles(tree), ['Synthetic note 85'], 'Exact references are searchable, case insensitive');
-  const json = nodes(tree).find(node => node.type === 'details' && nodes(node).some(child => child.type === 'summary' && child.children[0] === 'JSON 快照与下载'));
+  const json = nodes(tree).find(node => node.type === 'details' && node.children.some(child => child?.type === 'summary' && child.children[0] === 'JSON 快照与下载'));
   assert.equal(json.props.open, undefined);
   assert.ok(nodes(tree).some(node => node.type === 'pre' && node.children[0] === bytes));
   assert.equal(t.created.length, 1);

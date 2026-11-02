@@ -4,6 +4,7 @@ import {mkdtemp, rm, realpath} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join, dirname, basename} from 'node:path';
 import http from 'node:http';
+import {createHash} from 'node:crypto';
 import {apply} from '../host.mjs';
 
 test('authenticated Web and native-shaped HTTP requests use the same real backend', async () => {
@@ -45,6 +46,28 @@ test('authenticated Web and native-shaped HTTP requests use the same real backen
       assert.equal(opened.value.session_model_requests, null);
     }
     assert.equal((await (await call('list')).json()).value.length, 1);
+    const bytes = Buffer.from('Material fixture only.\n'.repeat(60000));
+    const sha256 = createHash('sha256').update(bytes).digest('hex');
+    const begin = await (await call('material-begin', {session_id: 'session-http', project_id: created.value.id,
+      operation_id: 'http-upload', files: [{name: 'large.txt', bytes: bytes.length, sha256}]})).json();
+    assert.equal(begin.ok, true);
+    const upload = begin.value;
+    for (let offset = 0, index = 0; offset < bytes.length; offset += 512 * 1024, index++) {
+      const response = await (await call('material-chunk', {session_id: 'session-http', upload_id: upload.upload_id,
+        file_id: upload.files[0].file_id, index, base64: bytes.subarray(offset, offset + 512 * 1024).toString('base64')})).json();
+      assert.equal(response.ok, true);
+    }
+    const preview = await (await call('material-preview', {session_id: 'session-http', upload_id: upload.upload_id})).json();
+    assert.equal(preview.ok, true);
+    const confirmed = await (await call('material-confirm', {session_id: 'session-http', project_id: created.value.id,
+      upload_id: upload.upload_id, operation_id: 'http-confirm', preview_hash: preview.value.preview_hash})).json();
+    assert.equal(confirmed.ok, true);
+    assert.equal(confirmed.value.materials[0].status, 'imported');
+    const ref = confirmed.value.materials[0].ref;
+    const first = await (await call('material-bytes', {session_id: 'session-http', project_id: created.value.id, ref, offset: 0, limit: 100})).json();
+    assert.equal(first.ok, true); assert.equal(Buffer.from(first.value.base64, 'base64').length, 100);
+    const denied = await (await call('material-read', {session_id: 'another-session', project_id: created.value.id, ref})).json();
+    assert.equal(denied.ok, false);
     assert.equal((await call('list', {}, {body: '{'})).status, 400);
     assert.equal((await call('list', {}, {body: 'x'.repeat(1024 * 1024 + 1)})).status, 413);
     assert.equal((await fetch(origin + '/dsh-math/api')).status, 405);

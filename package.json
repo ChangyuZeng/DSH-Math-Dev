@@ -1,17 +1,110 @@
 {
   "name": "dsh-math",
-  "version": "0.7.6",
-  "description": "Local mathematical scratchpad, conversational project preparation, exact evidence references and human review in the DSH sidebar",
-  "engines": {"dsh": "0.2.1-rc.5"},
+  "version": "0.8.0",
+  "description": "Conversational mathematical research records, route history, original materials and human review in DSH",
+  "engines": {
+    "dsh": "0.2.1-rc.5"
+  },
   "license": "UNLICENSED",
-  "files": ["project-fields.json", "project-form.cjs", "workbench-ui.cjs", "workbench_store.py", "preparation_tools.py", "chat-tools.mjs", "math-preview.cjs", "THIRD-PARTY-NOTICES.txt", "contracts/workbench-v1.md", "human-api.mjs", "locale/*.json", "icon.svg", "host.mjs", "live_plugin.mjs", "live_runner.mjs", "run_control.py", "client.js", "client-main.cjs", "client-theme.cjs", "forms.cjs", "form-ui.cjs", "record-ui.cjs", "comparison-ui.cjs", "process-graph.cjs", "graph-ui.cjs", "build.mjs", "backend.py", "model_tools.py", "m_runner.py", "run_ledger.py", "run_closeout.py", "run_recovery.py", "isolated_tools.py", "schema.py", "bundle.py", "replay.py", "runtime_cli.py", "verify_bundle.py", "grid75_independent_check.py", "audit-reader.mjs", "runtime/p2c/*.py", "runtime/p2c/checkers/*.py", "contracts/*.json", "contracts/cards/*.md", "cordis.patch.yml", "PROVENANCE.json", "NOTICE", "LICENSE-STATUS.md", "PUBLICATION.md", "README.md"],
+  "files": [
+    "project-fields.json",
+    "project-form.cjs",
+    "workbench-ui.cjs",
+    "materials-ui.cjs",
+    "material_store.py",
+    "material_extract.mjs",
+    "chat_research.py",
+    "workbench_store.py",
+    "preparation_tools.py",
+    "chat-tools.mjs",
+    "math-preview.cjs",
+    "THIRD-PARTY-NOTICES.txt",
+    "contracts/workbench-v1.md",
+    "human-api.mjs",
+    "locale/*.json",
+    "icon.svg",
+    "host.mjs",
+    "live_plugin.mjs",
+    "live_runner.mjs",
+    "run_control.py",
+    "client.js",
+    "client-main.cjs",
+    "client-theme.cjs",
+    "forms.cjs",
+    "form-ui.cjs",
+    "record-ui.cjs",
+    "comparison-ui.cjs",
+    "process-graph.cjs",
+    "graph-ui.cjs",
+    "build.mjs",
+    "backend.py",
+    "model_tools.py",
+    "m_runner.py",
+    "run_ledger.py",
+    "run_closeout.py",
+    "run_recovery.py",
+    "isolated_tools.py",
+    "schema.py",
+    "bundle.py",
+    "replay.py",
+    "runtime_cli.py",
+    "verify_bundle.py",
+    "grid75_independent_check.py",
+    "audit-reader.mjs",
+    "runtime/p2c/*.py",
+    "runtime/p2c/checkers/*.py",
+    "contracts/*.json",
+    "contracts/cards/*.md",
+    "cordis.patch.yml",
+    "PROVENANCE.json",
+    "NOTICE",
+    "LICENSE-STATUS.md",
+    "PUBLICATION.md",
+    "README.md"
+  ],
   "private": true,
   "type": "module",
   "main": "host.mjs",
-  "exports": {"./locale/*.json": "./locale/*.json", "./icon": "./icon.svg", ".": "./host.mjs", "./client": "./client.js", "./cordis.patch.yml": "./cordis.patch.yml", "./package.json": "./package.json"},
-  "dsh": {"bundle": {"patch": "./cordis.patch.yml"}, "client": {"inject": ["@deepseek-ai/dsh-client-ui-conversation", "@deepseek-ai/dsh-client-ui-session", "@deepseek-ai/dsh-client-ui-workspace"], "platform": "web"}},
-  "peerDependencies": {"@deepseek-ai/cordis": "~4.0.5", "@deepseek-ai/dsh-host-webserver": "0.2.1-rc.5", "@deepseek-ai/dsh-client-connection": "0.2.1-rc.5", "react": "^18.2.0"},
-  "devDependencies": {"esbuild": "0.28.2", "katex": "0.19.1", "marked": "18.1.2"},
+  "exports": {
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
+    ".": "./host.mjs",
+    "./client": "./client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-session",
+        "@deepseek-ai/dsh-client-ui-workspace"
+      ],
+      "platform": "web"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "~4.0.5",
+    "@deepseek-ai/dsh-client-connection": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-host-webserver": "0.2.1-rc.5",
+    "react": "^18.2.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "katex": "0.19.1",
+    "marked": "18.1.2"
+  },
   "packageManager": "pnpm@11.28.5",
-  "scripts": {"build": "node build.mjs", "test": "node tests/run.mjs", "prepack": "node build.mjs"}
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node tests/run.mjs",
+    "prepack": "node build.mjs"
+  },
+  "dependencies": {
+    "mammoth": "1.13.0",
+    "pdfjs-dist": "6.4.299"
+  }
 }

@@ -383,6 +383,9 @@ test('project form hides redundant help visually but retains accessible guidance
   const props = {request: server.request, sessionId: unique(), descriptor, onCreated: value => created.push(value), registerGuard: (key, guard) => { guards.set(key, guard); return () => guards.delete(key); }};
   const render = () => mock.render(ProjectForm, props); render(); mock.flush(); await settle(); let tree = render(); mock.flush();
   assert.equal(nodes(tree).filter(node => node.type === 'fieldset').length, 3);
+  const primary = nodes(tree).find(node => node.props.className === 'dm-project-primary');
+  assert.deepEqual(nodes(primary).filter(node => node.props.className === 'dm-project-field').map(node => node.props.key), ['title', 'statement', 'completion_criteria']);
+  assert.equal(nodes(tree).find(node => node.props.className === 'dm-details dm-project-conditions').props.open, undefined);
   assert.equal(nodes(tree).filter(node => node.props.className === 'dm-field-help').length, 0);
   assert.equal(nodes(tree).filter(node => node.props.className === 'dm-sr-only').length, descriptor.fields.length);
   assert.ok(nodes(tree).some(node => node.props.role === 'radiogroup' && node.props['aria-describedby'] === 'dm-project-target_type-help'));

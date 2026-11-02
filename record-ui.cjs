@@ -15,9 +15,10 @@
   const stateLabels = {unreviewed: '未审核', open: '未关闭', candidate: '候选', accepted: '已登记接受', closed: '已登记关闭', needs_recheck: '需重新检查', rejected: '已登记拒绝', failed_attempt: '失败尝试'};
   const kindLabel = kind => own(kindLabels, kind) ? kindLabels[kind] : text(kind);
   const stateLabel = state => own(stateLabels, state) ? `${stateLabels[state]}（${state}）` : text(state);
+  const materialName = o => o?.kind === 'Evidence' && o.data?.production?.method === 'dsh-math-material-import' ? text(list(o.data.attachments)[0]?.logical_name) : '';
   function title(o) {
     if (o?.data?.title) return text(o.data.title);
-    const statement = text(o?.data?.statement);
+    const statement = materialName(o) || text(o?.data?.statement);
     if (!statement) return kindLabel(o?.kind) || '未知记录';
     // A visual label only. Keep searchable statements, body, raw JSON and context byte-for-byte.
     const characters = Array.from(statement);
@@ -58,7 +59,7 @@
       const o = row.object, d = o.data;
       return (history === 'all' || (history === 'historical' ? !row.latest : row.latest)) &&
         (!kind || o.kind === kind) && (!group || row.groups.includes(group)) && (!status || row.status === status) &&
-        (!needle || [o.id, refKey(o), d.title, d.body, d.statement, d.summary, d.support_scope, ...list(d.findings)].some(v => text(v).toLocaleLowerCase().includes(needle)));
+        (!needle || [o.id, refKey(o), d.title, materialName(o), d.body, d.statement, d.summary, d.support_scope, ...list(d.findings)].some(v => text(v).toLocaleLowerCase().includes(needle)));
     });
     const count = Number.isSafeInteger(limit) && limit > 0 ? limit : PAGE_SIZE;
     return {rows: rows.slice(0, count), total: rows.length, hasMore: rows.length > count};
@@ -209,13 +210,14 @@
         default: fields = [h('p', {key: 'unknown', className: 'dm-muted'}, '未知记录类型，未猜测字段含义；完整内容保留在原始 JSON。')];
       }
       const technicalLabels = new Set(['目标类型（登记值）', '知识状态（登记值）', '笔记类型', '路线', '检查方式（登记值）', '固定 checker', '材料类型', '来源定位', '来源版本', '访问时间', '生产或导入方式', '生产方式版本', '页码', '章节', '定理', '摘录 SHA256', '附件元数据（原文未自动加载）', '审核者', 'checker 版本', '依据哈希', '执行记录（非全局证明）']);
-      const content = fields.filter(value => value && !technicalLabels.has(value.props?.label));
+      if (object.kind === 'Note') for (const value of fields) if (value?.props?.label !== '正文') technicalLabels.add(value?.props?.label);
+       const content = fields.filter(value => value && !technicalLabels.has(value.props?.label));
       const metadata = fields.filter(value => value && technicalLabels.has(value.props?.label));
       return h('article', {className: 'dm-record-reader'}, typeof onClose === 'function' && h('div', {className: 'dm-reader-actions'}, button('返回记录列表', onClose)),
         h('h3', {className: 'dm-record-heading', ref: heading, tabIndex: -1}, title(object)), h('p', {className: 'dm-record-meta'}, `${kindLabel(object.kind)} · `, h('code', {}, key), pinned && ' · 已固定'),
         h('details', {className: 'dm-details'}, h('summary', {}, '复制与固定'), h(Copy, {value: key, label: '复制 ID@rev', disabled: !validRef(object)}), typeof onPin === 'function' && button(pinned ? '取消固定此版本' : '固定此精确版本', () => onPin(object), {'aria-pressed': pinned})),
-        row && !row.latest && h('p', {role: 'status'}, `正在阅读历史版本 ${key}；存在 @${row.latestRev}，未自动升级。`), h(Registered, {row}), ...content,
-        refs.length > 0 && h('section', {className: 'dm-record-section dm-record-refs'}, h('h4', {}, '引用与参考材料（精确版本）'), h('ul', {}, ...refs.map((r, i) => h('li', {key: i}, h(Ref, {value: r.ref, relation: r.relation, view, inspect}))))),
+        row && !row.latest && h('p', {role: 'status'}, `正在阅读历史版本 ${key}；存在 @${row.latestRev}，未自动升级。`), object.kind === 'Note' ? h('details', {className: 'dm-details'}, h('summary', {}, '登记与审核状态'), h(Registered, {row})) : h(Registered, {row}), ...content,
+        refs.length > 0 && h(object.kind === 'Note' ? 'details' : 'section', {className: 'dm-record-section dm-record-refs'}, h(object.kind === 'Note' ? 'summary' : 'h4', {}, '引用与参考材料（精确版本）'), h('ul', {}, ...refs.map((r, i) => h('li', {key: i}, h(Ref, {value: r.ref, relation: r.relation, view, inspect}))))),
         incoming.length > 0 && h('details', {className: 'dm-details dm-record-refs'}, h('summary', {}, `被引用位置 · ${incoming.length}（含历史记录）`), h('ul', {}, ...incoming.map((r, i) => h('li', {key: i}, h(Ref, {value: r.object, relation: r.relation, view, inspect}))))),
         metadata.length > 0 && h('details', {className: 'dm-details'}, h('summary', {}, '技术与来源信息'), ...metadata),
         children, raw(object));

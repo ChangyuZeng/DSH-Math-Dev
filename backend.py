@@ -387,6 +387,9 @@ def dispatch(root, request):
     fields(request, "action args")
     action, args = request["action"], request["args"]
     projects = Projects(root)
+    if action in ("material-begin", "material-chunk", "material-preview", "material-confirm", "material-cleanup", "material-read", "material-bytes"):
+        from material_store import dispatch_material
+        return dispatch_material(root, action, args)
     if action == "list":
         fields(args, "")
         return projects.listing()

@@ -1,7 +1,7 @@
 {
   "format": "dsh-math-project-fields-v1",
   "fields": [
-    {"key":"title","label":"项目标题","type":"string","required":true,"group":"problem","help":"一句话概括目标。","placeholder":"例如：满足指定条件的图的构造"},
+    {"key":"title","label":"项目标题","type":"string","required":false,"group":"problem","help":"一句话概括目标。","placeholder":"例如：满足指定条件的图的构造"},
     {"key":"statement","label":"精确命题或构造要求","type":"string","required":true,"group":"problem","help":"保留全部条件与符号；不确定处先澄清。","placeholder":"需要证明、反驳或探索的具体问题"},
     {"key":"quantifiers","label":"量词与变量范围","type":"string","required":true,"group":"problem","help":"写明“任意／存在”、固定参数和变量范围。","placeholder":"例如：对任意正整数 n，是否存在……"},
     {"key":"domain","label":"定义域与研究对象","type":"string","required":true,"group":"problem","help":"写明对象及限制，如整数或有限图。","placeholder":"例如：有限无向简单图"},
