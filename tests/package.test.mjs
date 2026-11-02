@@ -7,7 +7,7 @@ const json = name => JSON.parse(readFileSync(new URL(name, root), 'utf8'));
 
 test('rc5 preview declares its runtime target and includes the admission module', () => {
   const manifest = json('package.json');
-  assert.equal(manifest.version, '0.7.4');
+  assert.equal(manifest.version, '0.7.5');
   for (const file of ['record-ui.cjs', 'comparison-ui.cjs', 'chat-tools.mjs', 'preparation_tools.py', 'workbench_store.py', 'project-fields.json', 'project-form.cjs', 'workbench-ui.cjs', 'math-preview.cjs', 'THIRD-PARTY-NOTICES.txt']) {
     assert.ok(manifest.files.includes(file), `${file} must be packaged`);
     assert.ok(statSync(new URL(file, root)).isFile());

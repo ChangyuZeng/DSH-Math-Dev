@@ -1932,6 +1932,11 @@ globalThis.DshMathGraphUI = function (React, Graph) {
 };
 
 globalThis.DshMathTheme = `
+/* One enablement control for this single-component package. Keep native runtime
+   status visible; the package switch owns mounting and unmounting the bundle. */
+[data-plugin-detail="dsh-math"] [data-plugin-row] [role="switch"] {
+  display: none;
+}
 .dsh-math-view, .dm-dialog, .dm-button {
   --dm-bg: var(--dsw-alias-bg-base);
   --dm-panel: var(--dsw-alias-bg-layer-1);
