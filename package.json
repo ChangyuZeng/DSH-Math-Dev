@@ -1,6 +1,6 @@
 {
   "name": "dsh-math",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "Conversational mathematical research records, route history, original materials and human review in DSH",
   "engines": {
     "dsh": "0.2.1-rc.5"
@@ -14,6 +14,11 @@
     "material_store.py",
     "material_extract.mjs",
     "chat_research.py",
+    "project_access.py",
+    "project-access-ui.cjs",
+    "research-graph.cjs",
+    "research-graph-ui.cjs",
+    "research-graph-theme.cjs",
     "workbench_store.py",
     "preparation_tools.py",
     "chat-tools.mjs",

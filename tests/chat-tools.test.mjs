@@ -21,7 +21,7 @@ function fixture() {
 }
 
 test('chat schemas preserve shared fields and never offer authority-bearing arguments', () => {
-  assert.deepEqual(CHAT_TOOLS, ['math_project_prepare', 'math_project_draft_read', 'math_research_read', 'math_research_record', 'math_material_read']);
+  assert.deepEqual(CHAT_TOOLS, ['math_project_context', 'math_project_prepare', 'math_project_draft_read', 'math_research_read', 'math_research_record', 'math_material_read']);
   for (const schema of Object.values(CHAT_SCHEMAS)) {
     assert.equal(schema.additionalProperties, false);
     for (const forbidden of ['actor', 'origin', 'session_id', 'root', 'path', 'manifest', 'run_id']) assert.equal(schema.properties[forbidden], undefined);
@@ -156,6 +156,9 @@ test('exact argument validation rejects spoofing and bounds revisions and resear
   assert.equal(validateChatArguments('math_research_read', read), read);
   for (const change of [{offset: -1}, {limit: 12001}, {ref: {id: 'N', rev: 0}}, {ref: {id: 'N', rev: 1, actor: 'spoof'}}]) assert.throws(() => validateChatArguments('math_research_read', {...read, ...change}), /INVALID_ARGUMENTS/);
   assert.throws(() => validateChatArguments('math_material_read', read), /INVALID_ARGUMENTS/);
+  const context = {query: '', offset: 0, limit: 20};
+  assert.equal(validateChatArguments('math_project_context', context), context);
+  for (const change of [{query: 'x'.repeat(201)}, {offset: -1}, {limit: 51}, {session_id: 'spoof'}]) assert.throws(() => validateChatArguments('math_project_context', {...context, ...change}), /INVALID_ARGUMENTS/);
 });
 
 test('research record obeys PLAN and readonly policies and validates full Note data', async () => {
@@ -185,7 +188,7 @@ test('tools use normal registered bodies and separate prompt with host scope res
   f.ctx.tools = {register(value) {definitions.set(value.name, value);}};
   f.ctx.on = (name, fn) => events.push({name, fn});
   registerChatTools(f.ctx, {root: f.options.root, python: 'fixture-python', run: async (...args) => {calls.push(args); return {draft: {rev: 1}, validation: {complete: false}};}});
-  assert.equal(definitions.size, 5);
+  assert.equal(definitions.size, 6);
   assert.equal(sections[0].interpolate, false);
   assert.equal(sections[0].text({agent: f.agent}), CHAT_GUIDANCE);
   const result = JSON.parse(await definitions.get(f.options.name).execute(f.options.args, f.exec));
@@ -196,7 +199,7 @@ test('tools use normal registered bodies and separate prompt with host scope res
   assert.deepEqual(denied, [{deny: CHAT_TOOLS}]);
 });
 
-test('headless and explicit opt-out install no ordinary tools; modelRuns empty installs five, no M tools', () => {
+test('headless and explicit opt-out install no ordinary tools; modelRuns empty installs six, no M tools', () => {
   for (const config of [{headless: true}, {headless: true, chatPreparation: true}, {chatPreparation: false}, {}]) {
     const names = [];
     const ctx = {on() {}, effect() {}, tools: {register: tool => names.push(tool.name)}};

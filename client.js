@@ -2189,6 +2189,333 @@ globalThis.DshMathGraphUI = function (React, Graph) {
   };
 };
 
+/* Pure research projection. Caller supplies process-graph.build(view, replay)'s verified gate. */
+(function (publish) {
+  'use strict';
+  const FORMAT = 'dsh-math-research-graph-v1';
+  const kinds = new Set(['Problem', 'Note', 'Obligation', 'Evidence', 'Review']);
+  const list = value => Array.isArray(value) ? value : [];
+  const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+  const ref = value => object(value) && typeof value.id === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(value.id) && Number.isSafeInteger(value.rev) && value.rev > 0;
+  const key = value => JSON.stringify([value.id, value.rev]);
+  const text = value => typeof value === 'string' ? value : '';
+  const excerpt = value => Array.from(text(value)).slice(0, 180).join('');
+  const stable = value => Array.isArray(value) ? value.map(stable) : object(value) ? Object.fromEntries(Object.keys(value).sort().map(k => [k, stable(value[k])])) : value;
+  const equal = (a, b) => JSON.stringify(stable(a)) === JSON.stringify(stable(b));
+  function build(view, verifiedProcessGraph) {
+    const gate = verifiedProcessGraph, state = view?.snapshot?.state;
+    const assert = (ok, message) => { if (!ok) throw Error('研究树：' + message); };
+    assert(gate?.format === 'dsh-math-process-graph-v1' && view?.snapshot?.usable === true && state && Array.isArray(view.objects), '需要已校验的过程图与可用快照。');
+    assert(gate.project_id === view.project?.id && gate.research_head === state.head_hash && gate.research_seq === state.seq && state.campaign_id === view.project?.campaign_id, '过程图与当前项目/head/序列不一致，请刷新。');
+    assert(Array.isArray(gate.nodes) && Array.isArray(gate.edges) && object(state.objects), '完整性 gate 缺少精确对象。');
+    const snapshot = Object.values(state.objects).flat(), objects = new Map(), latest = new Map();
+    for (const value of view.objects) {
+      assert(ref(value) && object(value.data) && !objects.has(key(value)), '概览 revision 缺失或重复。');
+      objects.set(key(value), value); latest.set(value.id, Math.max(latest.get(value.id) || 0, value.rev));
+    }
+    assert(snapshot.length === objects.size && snapshot.every(value => ref(value) && equal(objects.get(key(value)), value)), '概览与快照 revision 不一致。');
+    const graph = {format: FORMAT, project_id: gate.project_id, research_head: gate.research_head, research_seq: gate.research_seq,
+      nodes: [], hierarchy: [], relations: [], roots: [], warnings: list(gate.warnings).slice(),
+      notice: '已保存研究记录的只读树。连线分为显示归属与显式引用；不表示时间因果。审核仅适用于精确版本与登记范围，local_claim、R1/R2 不升级为全局证明。'};
+    const byRef = new Map(), byProcess = new Map(), assessments = new Map();
+    function assess(value, expected) {
+      if (!ref(value?.ref) || (expected && key(expected) !== key(value.ref))) return;
+      const token = key(value.ref), previous = assessments.get(token);
+      if (previous && !equal(previous, value)) { assessments.set(token, null); graph.warnings.push('精确版本审核评估冲突，未选择其中一个。'); }
+      else if (previous !== null) assessments.set(token, value);
+    }
+    for (const rows of Object.values(view.groups || {})) for (const row of list(rows)) if (ref(row?.object)) assess(row.assessment, row.object);
+    for (const claim of list(state.research?.claims)) assess(claim);
+    for (const record of gate.nodes) {
+      if (record.kind !== 'record' || !ref(record.ref)) continue;
+      const value = objects.get(key(record.ref));
+      assert(value && !byRef.has(key(value)), 'gate revision 无法唯一解析。');
+      if (!kinds.has(value.kind)) continue;
+      const d = value.data, assessment = assessments.get(key(value));
+      const node = {id: record.id, kind: value.kind, ref: {id: value.id, rev: value.rev}, title: excerpt(d.title || d.statement || record.title),
+        summary: excerpt(d.summary || d.statement || d.support_scope), historical: value.rev < latest.get(value.id), parentId: null,
+        status: typeof assessment?.state === 'string' ? assessment.state : 'unassessed',
+        statusLabel: assessment ? '已登记：' + assessment.state + '（仅此版本与范围）' : '无此版本审核评估',
+        reasons: list(assessment?.reasons).filter(v => typeof v === 'string'), review_id: text(assessment?.review_id),
+        note_type: text(d.note_type), gaps: list(d.gaps).filter(v => typeof v === 'string').map(excerpt), next_action: excerpt(d.next_action),
+        failure: d.note_type === 'failed_attempt' && object(d.failure) ? Object.fromEntries(Object.entries(d.failure).filter(([,v]) => typeof v === 'string').map(([k,v]) => [k, excerpt(v)])) : null,
+        source: record.source ? {...record.source} : null};
+      graph.nodes.push(node); byRef.set(key(value), node); byProcess.set(record.id, node);
+    }
+    const problem = value => ref(value) && byRef.get(key(value))?.kind === 'Problem' ? byRef.get(key(value)) : null;
+    const routeRows = value => Array.isArray(value) ? value : object(value) ? Object.values(value) : [];
+    const savedRoutes = routeRows(state.research?.routes), overviewRoutes = view.routes === undefined ? savedRoutes : routeRows(view.routes);
+    assert(equal(stable(savedRoutes), stable(overviewRoutes)), '路线概览与快照不一致，请刷新。');
+    const controls = new Map();
+    for (const control of savedRoutes) {
+      if (!object(control) || typeof control.route_id !== 'string' || !ref(control.problem_ref) || !['active', 'paused', 'abandoned'].includes(control.status)) { graph.warnings.push('路线控制字段无效，未推断状态。'); continue; }
+      const token = JSON.stringify([key(control.problem_ref), control.route_id]);
+      assert(!controls.has(token), '路线控制重复。'); controls.set(token, control);
+    }
+    const routes = new Map();
+    function route(parent, routeId) {
+      const token = JSON.stringify([key(parent.ref), routeId]);
+      if (routes.has(token)) return routes.get(token);
+      const control = controls.get(token), registered = !!control;
+      const node = {id: 'research-route:' + token, kind: 'route', parentId: parent.id, ref: null, problem_ref: {...parent.ref}, route_id: routeId,
+        title: routeId === null ? '未指定路线' : routeId, summary: excerpt(control?.reason), next_action: excerpt(control?.next_action),
+        status: control?.status || 'unregistered', statusLabel: registered ? ({active: '路线已登记进行', paused: '路线已登记暂停', abandoned: '路线已登记放弃'})[control.status] : routeId === null ? '未指定路线 · 无控制状态' : '路线未登记 · 状态未知',
+        registered, control_rev: control?.rev ?? null, event_id: text(control?.event_id), historical: parent.historical};
+      routes.set(token, node); graph.nodes.push(node); return node;
+    }
+    for (const control of savedRoutes) {
+      if (!object(control) || !ref(control.problem_ref) || !controls.has(JSON.stringify([key(control.problem_ref), control.route_id]))) continue;
+      const parent = problem(control.problem_ref);
+      if (parent) route(parent, control.route_id); else graph.warnings.push('路线引用的精确 Problem 未纳入，未替换为新版。');
+    }
+    for (const node of graph.nodes.slice()) {
+      if (!node.ref) continue;
+      const value = objects.get(key(node.ref)), d = value.data;
+      if (value.kind === 'Problem') {
+        const parent = problem(d.parent); if (parent) node.parentId = parent.id;
+        else if (d.parent != null) graph.warnings.push('父 Problem 精确引用未解析，保留独立目标。');
+      } else if (['Note', 'Obligation', 'Evidence'].includes(value.kind)) {
+        const parent = problem(d.problem_ref);
+        if (parent) node.parentId = value.kind === 'Note' ? route(parent, typeof d.route_id === 'string' && d.route_id.trim() ? d.route_id : null).id : parent.id;
+        else { node.unresolved = true; graph.warnings.push('记录未关联可解析的精确 Problem，未猜测归属。'); }
+      } else if (value.kind === 'Review') {
+        const target = ref(d.target) && byRef.get(key(d.target));
+        if (target && target.kind !== 'Review') node.parentId = target.id;
+        else node.unresolved = true;
+      }
+    }
+    const ids = new Map(graph.nodes.map(node => [node.id, node]));
+    for (const node of graph.nodes) {
+      const seen = new Set([node.id]); let parent = ids.get(node.parentId), cycle = false;
+      while (parent) { if (seen.has(parent.id)) { cycle = true; break; } seen.add(parent.id); parent = ids.get(parent.parentId); }
+      if (cycle) { node.parentId = null; graph.warnings.push('显示归属存在循环，已保留独立卡片。'); }
+      if (node.parentId) graph.hierarchy.push({from: node.parentId, to: node.id, relation: 'display_parent', label: '显示归属'});
+      else graph.roots.push(node.id);
+    }
+    for (const edge of gate.edges) if (edge.relation !== 'contains' && byProcess.has(edge.from) && byProcess.has(edge.to)) graph.relations.push({...edge});
+    graph.warnings = [...new Set(graph.warnings)];
+    return graph;
+  }
+  publish({build});
+})(value => { if (typeof module !== 'undefined' && module.exports) module.exports = value; else globalThis.DshMathResearchGraph = value; });
+
+/* Native React/SVG research canvas; view operations only, no data writes or requests. */
+(function (publish) {
+  'use strict';
+  const CARD_W = 272, CARD_H = 192, GAP_X = 76, GAP_Y = 28;
+  const labels = {Problem: '研究问题', route: '研究路线', Note: '研究笔记', Obligation: '待证事项', Evidence: '参考材料', Review: '审核记录'};
+  function layout(graph, {collapsed = {}, showSupporting = false, showHistory = false} = {}) {
+    const nodes = graph.nodes || [], byId = new Map(nodes.map(n => [n.id, n])), wanted = new Set();
+    for (const node of nodes) {
+      if ((!showSupporting && ['Evidence', 'Review'].includes(node.kind)) || (!showHistory && node.historical && node.kind !== 'Problem' && node.kind !== 'route')) continue;
+      let current = node; const seen = new Set();
+      while (current && !seen.has(current.id)) { seen.add(current.id); wanted.add(current.id); current = byId.get(current.parentId); }
+    }
+    const children = new Map();
+    for (const node of nodes) if (wanted.has(node.id)) { const siblings = children.get(node.parentId) || []; siblings.push(node); children.set(node.parentId, siblings); }
+    const positions = [], visible = new Set(); let cursor = 24, maxDepth = 0;
+    function visit(node, depth) {
+      if (visible.has(node.id)) return null;
+      visible.add(node.id); maxDepth = Math.max(maxDepth, depth);
+      const start = cursor, descendants = collapsed[node.id] ? [] : (children.get(node.id) || []);
+      const childPositions = descendants.map(n => visit(n, depth + 1)).filter(Boolean);
+      if (!childPositions.length) cursor += CARD_W + GAP_X;
+      const x = childPositions.length ? (childPositions[0].x + childPositions.at(-1).x) / 2 : start;
+      const position = {node, x, y: 24 + depth * (CARD_H + GAP_Y), width: CARD_W, height: CARD_H, childCount: (children.get(node.id) || []).length};
+      positions.push(position); return position;
+    }
+    for (const node of children.get(null) || []) visit(node, 0);
+    const ids = new Set(positions.map(p => p.node.id));
+    return {positions, hierarchy: (graph.hierarchy || []).filter(e => ids.has(e.from) && ids.has(e.to)), relations: (graph.relations || []).filter(e => ids.has(e.from) && ids.has(e.to)),
+      width: Math.max(320, cursor + 24), height: positions.length ? 48 + maxDepth * (CARD_H + GAP_Y) + CARD_H : 280};
+  }
+  function factory(React, RecordReader) {
+    const {createElement: h, useState, useRef, useEffect} = React;
+    const button = (caption, onClick, props = {}) => h('button', {type: 'button', className: 'dm-button dm-small dm-ghost', onClick, ...props}, caption);
+    return function ResearchGraph({graph, view, inspect}) {
+      const [selected, setSelected] = useState(null), [collapsed, setCollapsed] = useState({}), [supporting, setSupporting] = useState(false), [history, setHistory] = useState(false), [relations, setRelations] = useState(false);
+      const [camera, setCamera] = useState({x: 20, y: 20, scale: 0.85});
+      const viewport = useRef(null), drag = useRef(null), origin = useRef(null);
+      useEffect(() => { setSelected(null); setCollapsed({}); setCamera({x: 20, y: 20, scale: 0.85}); }, [graph.project_id]);
+      const scene = layout(graph, {collapsed, showSupporting: supporting, showHistory: history}), positions = new Map(scene.positions.map(p => [p.node.id, p]));
+      const selectedNode = graph.nodes.find(n => n.id === selected);
+      const selectedObject = selectedNode?.ref && (view?.objects || []).find(o => o.id === selectedNode.ref.id && o.rev === selectedNode.ref.rev);
+      const zoom = (factor, point) => setCamera(previous => {
+        const scale = Math.max(0.2, Math.min(2, previous.scale * factor));
+        const center = point || {x: (viewport.current?.clientWidth || 900) / 2, y: 260};
+        return {scale, x: center.x - (center.x - previous.x) * scale / previous.scale, y: center.y - (center.y - previous.y) * scale / previous.scale};
+      });
+      // React delegates wheel events passively. Bind here so zoom does not scroll the page.
+      useEffect(() => {
+        const element = viewport.current;
+        if (!element) return;
+        const wheel = event => { event.preventDefault(); const rect = element.getBoundingClientRect(); zoom(event.deltaY < 0 ? 1.1 : 1 / 1.1, {x: event.clientX - rect.left, y: event.clientY - rect.top}); };
+        element.addEventListener('wheel', wheel, {passive: false});
+        return () => element.removeEventListener('wheel', wheel);
+      }, []);
+      const fit = () => {
+        const width = viewport.current?.clientWidth || 900, height = viewport.current?.clientHeight || 560;
+        const scale = Math.max(0.2, Math.min(1, (width - 40) / scene.width, (height - 40) / scene.height));
+        setCamera({scale, x: (width - scene.width * scale) / 2, y: (height - scene.height * scale) / 2});
+      };
+      const choose = (node, element) => { origin.current = element; setSelected(node.id); };
+      const locate = (position, element) => {
+        choose(position.node, element);
+        const width = viewport.current?.clientWidth || 900, height = viewport.current?.clientHeight || 560;
+        setCamera(previous => {
+          const scale = Math.max(0.65, previous.scale);
+          return {scale, x: width / 2 - (position.x + position.width / 2) * scale, y: height / 2 - (position.y + position.height / 2) * scale};
+        });
+      };
+      const close = () => { setSelected(null); origin.current?.focus?.(); };
+      const inlineInspect = object => {
+        const node = graph.nodes.find(n => n.ref?.id === object.id && n.ref?.rev === object.rev);
+        if (node) setSelected(node.id);
+      };
+      const edge = (value, semantic, index) => {
+        const from = positions.get(value.from), to = positions.get(value.to);
+        const x1 = from.x + CARD_W / 2, y1 = from.y + CARD_H, x2 = to.x + CARD_W / 2, y2 = to.y, mid = (y1 + y2) / 2;
+        return h('g', {key: `${semantic}:${index}`, className: semantic ? 'dm-rg-relation' : 'dm-rg-branch'},
+          h('path', {d: `M ${x1} ${y1} C ${x1} ${mid}, ${x2} ${mid}, ${x2} ${y2}`, fill: 'none'}),
+          semantic && h('text', {x: (x1 + x2) / 2, y: mid - 7, textAnchor: 'middle'}, value.label || value.relation),
+          h('title', {}, semantic ? `显式引用：${value.label || value.relation}` : '显示归属（非时间因果）'));
+      };
+      const cards = scene.positions.map(({node, x, y, childCount}) => h('foreignObject', {key: node.id, x, y, width: CARD_W, height: CARD_H, className: 'dm-rg-object'},
+        h('article', {className: 'dm-rg-card', 'data-kind': node.kind, 'data-selected': selected === node.id, 'data-status': node.status},
+          h('button', {type: 'button', className: 'dm-rg-card-main', 'aria-pressed': selected === node.id, onClick: event => choose(node, event.currentTarget)},
+            h('span', {className: 'dm-rg-kicker'}, labels[node.kind] || node.kind, node.historical && ' · 历史目标/版本'),
+            h('strong', {className: 'dm-rg-title'}, node.title || labels[node.kind]),
+            h('span', {className: 'dm-rg-ref'}, node.ref ? `${node.ref.id}@${node.ref.rev}` : `${node.problem_ref.id}@${node.problem_ref.rev}`),
+            h('span', {className: 'dm-rg-summary'}, node.summary || (node.kind === 'route' ? node.next_action : '') || '未登记摘要'),
+            h('span', {className: 'dm-rg-status'}, node.note_type === 'failed_attempt' ? '失败尝试 · ' + node.statusLabel : node.statusLabel)),
+          childCount > 0 && button(collapsed[node.id] ? `展开 ${childCount} 项` : `折叠 ${childCount} 项`, () => setCollapsed(previous => ({...previous, [node.id]: !previous[node.id]})), {'aria-expanded': !collapsed[node.id], 'aria-label': `${collapsed[node.id] ? '展开' : '折叠'} ${node.title}`, className: 'dm-rg-collapse'}))));
+      return h('section', {className: 'dm-research-graph', 'aria-label': '数学研究树'},
+        h('div', {className: 'dm-rg-toolbar'}, h('strong', {}, '研究树'),
+          button('缩小', () => zoom(1 / 1.2)), h('output', {'aria-label': '缩放比例'}, `${Math.round(camera.scale * 100)}%`), button('放大', () => zoom(1.2)), button('适应画布', fit), button('展开全部', () => setCollapsed({})),
+          h('label', {}, h('input', {type: 'checkbox', checked: relations, onChange: e => setRelations(e.target.checked)}), '显式关系'),
+          h('label', {}, h('input', {type: 'checkbox', checked: supporting, onChange: e => setSupporting(e.target.checked)}), '材料与审核'),
+          h('label', {}, h('input', {type: 'checkbox', checked: history, onChange: e => setHistory(e.target.checked)}), '历史版本')),
+        h('details', {className: 'dm-rg-outline'}, h('summary', {}, `节点目录 · ${scene.positions.length}`),
+          h('nav', {'aria-label': '当前可见节点目录'}, ...scene.positions.slice().sort((a,b) => a.y - b.y || a.x - b.x).map(position => {
+            const node = position.node, reference = node.ref || node.problem_ref;
+            return button(`${node.title || labels[node.kind]} · ${reference.id}@${reference.rev}`, event => locate(position, event.currentTarget), {key: node.id, className: 'dm-rg-outline-item', 'aria-current': selected === node.id ? 'true' : undefined});
+          }))),
+        h('p', {className: 'dm-rg-legend'}, '实线：显示归属 · 虚线：显式引用 · 拖动空白平移，滚轮缩放；方向键平移，+ / − 缩放，0 适应画布。'),
+        h('svg', {className: 'dm-rg-viewport', ref: viewport, tabIndex: 0, role: 'group', 'aria-label': '可平移缩放研究树画布',
+          onKeyDown: event => {
+            if (event.target !== event.currentTarget) return;
+            const moves = {ArrowLeft: [40, 0], ArrowRight: [-40, 0], ArrowUp: [0, 40], ArrowDown: [0, -40]};
+            if (moves[event.key]) { event.preventDefault(); const [dx, dy] = moves[event.key]; setCamera(c => ({...c, x: c.x + dx, y: c.y + dy})); }
+            else if (['+', '=', '-','0'].includes(event.key)) { event.preventDefault(); if (event.key === '0') fit(); else zoom(event.key === '-' ? 1 / 1.2 : 1.2); }
+          },
+          onPointerDown: event => { if (event.button !== 0 || event.target.closest?.('foreignObject')) return; drag.current = {id: event.pointerId, x: event.clientX, y: event.clientY, camera}; event.currentTarget.setPointerCapture?.(event.pointerId); },
+          onPointerMove: event => { const d = drag.current; if (d && event.pointerId === d.id) setCamera({...d.camera, x: d.camera.x + event.clientX - d.x, y: d.camera.y + event.clientY - d.y}); },
+          onPointerUp: event => { if (drag.current?.id === event.pointerId) { drag.current = null; event.currentTarget.releasePointerCapture?.(event.pointerId); } }, onPointerCancel: () => { drag.current = null; }},
+          h('g', {transform: `translate(${camera.x} ${camera.y}) scale(${camera.scale})`}, ...scene.hierarchy.map((e,i) => edge(e,false,i)), ...(relations ? scene.relations.map((e,i) => edge(e,true,i)) : []), ...cards)),
+        !scene.positions.length && h('p', {role: 'status'}, '当前快照暂无可显示的研究记录。'),
+        h('p', {className: 'dm-local-hint'}, graph.notice),
+        graph.warnings.length > 0 && h('details', {className: 'dm-details'}, h('summary', {}, `读取说明 · ${graph.warnings.length}`), h('ul', {}, ...graph.warnings.map((warning,i) => h('li', {key:i}, warning)))),
+        selected && h('section', {className: 'dm-rg-detail', 'aria-label': '研究树内联详情'}, h('div', {className: 'dm-rg-toolbar'}, button('关闭详情', close),
+          selectedObject && typeof inspect === 'function' && button('打开完整记录', () => inspect(selectedObject))),
+          selectedObject && typeof RecordReader === 'function' ? h(RecordReader, {key: `${graph.project_id}:${selectedObject.id}@${selectedObject.rev}`, object: selectedObject, view, inspect: inlineInspect, autoFocus: true})
+            : selectedNode ? h('div', {}, h('h3', {}, selectedNode.title), h('p', {}, selectedNode.statusLabel), h('p', {}, selectedNode.summary), h('p', {}, selectedNode.next_action), selectedNode.kind === 'route' && h('p', {}, `目标：${selectedNode.problem_ref.id}@${selectedNode.problem_ref.rev} · 路线控制版本：${selectedNode.control_rev ?? '未登记'}`))
+              : h('p', {role:'status'}, '当前快照无选中精确版本；未替换为新版。')));
+    };
+  }
+  factory.layout = layout;
+  publish(factory);
+})(factory => { if (typeof module !== 'undefined' && module.exports) module.exports = factory; else globalThis.DshMathResearchGraphUI = factory; });
+
+/* Appended by the owning client; inherits the existing dsh-math theme. */
+(function (publish) {
+  'use strict';
+  publish(`
+.dm-research-graph { min-width: 0; color: var(--dm-text); }
+.dm-rg-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 0; }
+.dm-rg-toolbar > strong { margin-right: auto; font-size: 14px; }
+.dm-rg-toolbar label { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--dm-muted); }
+.dm-rg-toolbar output { font: 11px ui-monospace, monospace; color: var(--dm-muted); min-width: 38px; text-align: center; }
+.dm-rg-outline { margin: 0 0 12px; border: 1px solid var(--dm-border); border-radius: 8px; overflow: hidden; }
+.dm-rg-outline > summary { padding: 9px 12px; cursor: pointer; color: var(--dm-muted); font-size: 12px; }
+.dm-rg-outline > nav { max-height: 240px; overflow: auto; padding: 0 6px 6px; }
+.dm-rg-outline-item { display: block; width: 100%; min-height: 34px; border: 0; border-radius: 5px; padding: 7px; background: transparent; color: var(--dm-text); text-align: left; overflow-wrap: anywhere; font: inherit; font-size: 12px; line-height: 1.6; cursor: pointer; }
+.dm-rg-outline-item:hover, .dm-rg-outline-item[aria-current="true"] { background: var(--dm-soft); color: var(--dm-accent); }
+.dm-rg-outline-item:focus-visible { outline: 2px solid var(--dm-accent); outline-offset: -2px; }
+.dm-rg-legend { margin: 0 0 10px; color: var(--dm-muted); font-size: 11px; line-height: 1.7; }
+.dm-rg-viewport { display: block; width: 100%; height: clamp(420px, 65vh, 760px); border: 1px solid var(--dm-border); border-radius: 12px; background: var(--dm-bg); touch-action: none; cursor: grab; user-select: none; }
+.dm-rg-viewport:active { cursor: grabbing; }
+.dm-rg-viewport:focus-visible { outline: 2px solid var(--dm-accent); outline-offset: 2px; }
+.dm-rg-branch path { stroke: var(--dm-border); stroke-width: 1.5; }
+.dm-rg-relation path { stroke: var(--dm-accent); stroke-width: 1; stroke-dasharray: 5 5; opacity: .7; }
+.dm-rg-relation text { fill: var(--dm-accent); font: 10px sans-serif; paint-order: stroke; stroke: var(--dm-bg); stroke-width: 4px; }
+.dm-rg-object { overflow: visible; }
+.dm-rg-card { position: relative; box-sizing: border-box; height: 192px; border: 1px solid var(--dm-border); border-radius: 10px; background: var(--dm-panel); color: var(--dm-text); overflow: hidden; box-shadow: 0 3px 10px color-mix(in srgb, var(--dm-text) 4%, transparent); }
+.dm-rg-card[data-selected="true"] { border-color: var(--dm-accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--dm-accent) 18%, transparent); }
+.dm-rg-card[data-kind="Problem"] { border-top: 3px solid var(--dm-accent); }
+.dm-rg-card[data-kind="route"] { background: var(--dm-soft); }
+.dm-rg-card[data-status="abandoned"] { border-style: dashed; }
+.dm-rg-card-main { box-sizing: border-box; display: flex; flex-direction: column; gap: 6px; width: 100%; height: 100%; border: 0; border-radius: 9px; padding: 12px 14px 30px; text-align: left; color: inherit; background: transparent; cursor: pointer; font: inherit; overflow: hidden; }
+.dm-rg-card-main:focus-visible { outline: 2px solid var(--dm-accent); outline-offset: -3px; }
+.dm-rg-kicker { display: block; color: var(--dm-muted); font-size: 10px; }
+.dm-rg-title { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; }
+.dm-rg-ref { color: var(--dm-muted); font: 10px ui-monospace, monospace; }
+.dm-rg-summary { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; color: var(--dm-muted); font-size: 11px; line-height: 1.55; overflow-wrap: anywhere; }
+.dm-rg-status { margin-top: auto; color: var(--dm-muted); font-size: 10px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; max-width: 100%; }
+.dm-rg-collapse { position: absolute; right: 10px; bottom: 6px; border: 0; background: transparent; color: var(--dm-muted); padding: 3px 5px; cursor: pointer; font: 10px sans-serif; }
+.dm-rg-collapse:hover { color: var(--dm-accent); }
+.dm-rg-detail { margin-top: 16px; min-width: 0; }
+@media (max-width: 640px) { .dm-rg-viewport { height: 480px; } .dm-rg-toolbar { gap: 5px; } .dm-rg-toolbar > strong { flex-basis: 100%; } }
+`);
+})(css => { if (typeof module !== 'undefined' && module.exports) module.exports = css; else globalThis.DshMathResearchGraphTheme = css; });
+
+(function(root) {
+  function factory(React) {
+    const {createElement: h, useState, useRef, useEffect} = React;
+    return function ProjectAccess({request, sessionId, project, context, onChange, busy}) {
+      const [attempt, setAttempt] = useState(null), [pending, setPending] = useState(false), [error, setError] = useState('');
+      const life = useRef({active: true, pending: false});
+      useEffect(() => { life.current.active = true; return () => { life.current.active = false; }; }, []);
+      const current = !!project && context?.current_project_id === project.id;
+      async function submit(action, extra = {}) {
+        const state = life.current;
+        if (!state.active || state.pending || busy || !context) return;
+        const operation = attempt || {action, args: {session_id: sessionId, expected_rev: context.rev, operation_id: crypto.randomUUID(), ...extra}};
+        state.pending = true; setPending(true); setAttempt(operation); setError('');
+        try {
+          await request(operation.action, operation.args);
+          if (!state.active) return;
+          // Idempotent receipts may describe an older revision; reload current settings.
+          const fresh = await request('project-context', {session_id: sessionId, query: '', offset: 0, limit: 50});
+          if (!state.active) return;
+          setAttempt(null); onChange(fresh);
+        } catch (failure) {
+          if (!state.active) return;
+          const code = /^([A-Z][A-Z0-9_]*)(?::|$)/.exec(String(failure.code || ''))?.[1];
+          if (['VERSION_CONFLICT', 'INVALID_SCHEMA', 'OPERATION_CONFLICT', 'PROJECT_NOT_FOUND'].includes(code)) {
+            setAttempt(null);
+            try { const fresh = await request('project-context', {session_id: sessionId, query: '', offset: 0, limit: 50}); if (state.active) onChange(fresh); } catch (_) { /* Original failure remains visible. */ }
+          }
+          if (state.active) setError(failure.message);
+        } finally { state.pending = false; if (state.active) setPending(false); }
+      }
+      const disabled = busy || pending || !context;
+      return h('section', {className: 'dm-chat-project', 'aria-label': '当前会话研究设置'},
+        h('div', {className: 'dm-actions'},
+          h('span', {className: 'dm-panel-meta', role: 'status'}, current ? `当前会话研究项目：${project.title}` : context?.current_project_id ? '正在浏览其他项目' : '当前会话尚未选定研究项目'),
+          project && !current && h('button', {type: 'button', className: 'dm-button dm-small', disabled: disabled || !!attempt, onClick: () => submit('project-associate', {project_id: project.id})}, '在当前会话继续此项目'),
+          current && h('button', {type: 'button', className: 'dm-button dm-small dm-ghost', disabled: disabled || !!attempt, onClick: () => submit('project-disassociate', {project_id: project.id})}, '取消当前会话关联')),
+        h('label', {className: 'dm-record-text'}, h('input', {type: 'checkbox', checked: context?.auto_record !== false, disabled: disabled || !!attempt, onChange: event => submit('project-preferences', {auto_record: event.target.checked})}), ' 自动记录数学研究阶段成果'),
+        h('p', {className: 'dm-local-hint'}, '选定项目后，普通聊天中的数学研究默认保存可读论证、依据与未决问题。简单讲解不自动记录；关闭后仍可明确要求保存。'),
+        project?.mode === 'legacy_readonly_copy' && h('p', {className: 'dm-local-hint'}, '旧研究库副本仍为只读，关联后可查阅，不能续写。'),
+        pending && h('p', {role: 'status', className: 'dm-operation-status'}, '正在保存会话设置…'),
+        error && h('p', {role: 'alert', className: 'dm-error'}, error),
+        attempt && !pending && h('div', {className: 'dm-actions'}, h('p', {className: 'dm-local-hint'}, '设置结果未确认，请重试原请求。'), h('button', {type: 'button', className: 'dm-button dm-small', disabled, onClick: () => submit(attempt.action)}, '重试保存会话设置')));
+    };
+  }
+  if (typeof module !== 'undefined') module.exports = factory;
+  root.DshMathProjectAccessUI = factory;
+})(globalThis);
+
 globalThis.DshMathTheme = `
 /* One enablement control for this single-component package. Keep native runtime
    status visible; the package switch owns mounting and unmounting the bundle. */
@@ -2705,6 +3032,9 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
   }
   const Graph = globalThis.DshMathProcessGraph;
   const ProcessGraph = globalThis.DshMathGraphUI(React, Graph);
+  const Research = globalThis.DshMathResearchGraph;
+  const ResearchGraph = globalThis.DshMathResearchGraphUI(React, RecordReader);
+  const ProjectAccess = globalThis.DshMathProjectAccessUI(React);
   const TAB_ID = 'dsh-math:projects';
   const pendingPromotionLinks = new Map(), retainedDocuments = new Map(), activeDocuments = new Map();
   const promotionKey = (session, project) => JSON.stringify([session, project]);
@@ -2772,6 +3102,7 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
     const [focus, setFocus] = useState(null), [attachment, setAttachment] = useState(null), [editor, setEditor] = useState(null);
     const [sources, setSources] = useState([]), [candidate, setCandidate] = useState([]), [replay, setReplay] = useState(null), [preview, setPreview] = useState(null), [verdict, setVerdict] = useState(''), [findings, setFindings] = useState(''), [receipt, setReceipt] = useState(null);
     const [process, setProcess] = useState(null), [operation, setOperation] = useState('');
+    const [access, setAccess] = useState(null);
     const [downloadNotice, setDownloadNotice] = useState(''); const downloadUrls = useRef([]);
     const [draftSummary, setDraftSummary] = useState(null), [draftError, setDraftError] = useState('');
     const [decision, setDecision] = useState(null), [localNotice, setLocalNotice] = useState('');
@@ -2867,8 +3198,9 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
       const state = lifetime.current, loading = ++state.loading;
       const list = knownList || await api('list');
       const nextView = id ? await api('overview', {project_id: id}) : null;
+      const context = sessionId ? await api('project-context', {session_id: sessionId, query: '', offset: 0, limit: 50}) : null;
       if (!state.active || loading !== state.loading) return;
-      setProjects(list); setView(nextView); setSelected(id);
+      setProjects(list); setView(nextView); setSelected(id); setAccess(context);
       setPromotionLink(pendingPromotionLinks.get(promotionKey(sessionId, id)) || null);
       setAttachment(null); setReplay(null); setReceipt(null); setProcess(null); setContextObject(null); setDownloadNotice('');
       // Switching scopes restores only that session/project's in-window document.
@@ -2893,7 +3225,8 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
       activeDocuments.set(surface.current, () => local.current);
       run(async () => {
         const list = await api('list');
-        const current = list.find(p => p.session_id === sessionId);
+        const context = sessionId ? await api('project-context', {session_id: sessionId, query: '', offset: 0, limit: 50}) : null;
+        const current = list.find(p => p.id === context?.current_project_id) || list.find(p => p.session_id === sessionId);
         await load(current?.id || '', list);
       }, '读取研究项目');
       readDraftSummary();
@@ -3008,7 +3341,8 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
     const readProcess = selectedSources => run(async () => {
       // Read only. Never discover logs or invoke run_control/model tools here.
       const result = await api('replay', {project_id: selected, sources: selectedSources});
-      setProcess(Graph.build(view, result)); // Reject a changed research head rather than mix snapshots.
+      const verified = Graph.build(view, result); // Reject a changed research head rather than mix snapshots.
+      setProcess({operations: verified, research: Research.build(view, verified)});
     });
     const tabs = [['overview', '工作台', '研究概览'], ['records', '研究记录', '记录与审核'], ['process', '研究过程', '研究过程'], ['replay', '导出', '回放与导出']];
     const changeTab = id => {
@@ -3046,6 +3380,7 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
         h('select', {className: 'dm-input', value: selected, disabled: busy, onChange: e => { const id = e.target.value; return leave(() => run(() => load(id))); }, 'aria-label': '选择研究项目'},
           h('option', {value: ''}, '选择研究项目'), ...projects.map(p => h('option', {key: p.id, value: p.id}, `${p.title} · ${p.id.slice(0, 8)}${p.mode === 'legacy_readonly_copy' ? ' · 只读' : ''}${p.session_id === sessionId ? ' · 当前会话' : ''}`))),
         h('span', {className: 'dm-panel-meta'}, `${projects.length} 个项目`)),
+      sessionId && h(ProjectAccess, {request: workbenchRequest.current, sessionId, project: view?.project || null, context: access, onChange: result => setAccess(previous => ({...previous, ...result})), busy}),
       !view && !creating && h('section', {className: 'dm-welcome', 'aria-label': '研究起点'},
         h('div', {className: 'dm-welcome-overline'}, h('span', {className: 'dm-welcome-line', 'aria-hidden': 'true'}), '一个问题，一条清晰的路径'),
         h('h3', null, projects.length ? '继续你的研究。' : '从一个明确的\n问题开始。'),
@@ -3079,9 +3414,11 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
             h('div', {className: 'dm-actions'},
               h(Button, {size: 'small', disabled: busy || !sources.length, onClick: () => readProcess(sources)}, `加入所选来源（${sources.length}）`),
               h(Button, {size: 'small', variant: 'ghost', onClick: () => setTab('replay')}, '选择工具账本'))),
-          process ? h(ProcessGraph, {key: pretty([process.research_head, process.sources]), graph: process,
-            inspect: value => inspect(view.objects.find(object => object.id === value.id && object.rev === value.rev))}) :
-            h('p', {className: 'dm-empty'}, busy ? '正在读取已记录过程…' : '点击“查看研究过程”，查看已记录的步骤与产物。')),
+          process ? h(React.Fragment, {key: pretty([process.operations.research_head, process.operations.sources])},
+            h(ResearchGraph, {graph: process.research, view, inspect: value => inspect(view.objects.find(object => object.id === value.id && object.rev === value.rev))}),
+            h('details', {className: 'dm-details'}, h('summary', null, '操作来源与版本历史'), h(ProcessGraph, {graph: process.operations,
+              inspect: value => inspect(view.objects.find(object => object.id === value.id && object.rev === value.rev))}))) :
+            h('p', {className: 'dm-empty'}, busy ? '正在读取已记录过程…' : '点击“查看研究过程”，查看问题、研究路线与笔记之间的联系。')),
         h('section', panelProps('overview'),
           goal && h('section', {className: 'dm-goal'},
             h('div', {className: 'dm-section-label'}, '当前目标', h('span', {className: 'dm-panel-meta'}, `seq ${view.snapshot.state.seq}`)),
@@ -3193,7 +3530,7 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
     ctx.effect(() => {
       if (typeof document === 'undefined') return;
       const style = document.createElement('style');
-      style.id = 'dsh-math-theme'; style.textContent = (globalThis.DshMathTheme || '') + (globalThis.DshMathPreview.styles?.() || '');
+      style.id = 'dsh-math-theme'; style.textContent = (globalThis.DshMathTheme || '') + (globalThis.DshMathResearchGraphTheme || '') + (globalThis.DshMathPreview.styles?.() || '');
       document.head.appendChild(style);
       const beforeUnload = event => { if ([...retainedDocuments.values()].some(hasLocalWork) || [...activeDocuments.values()].some(get => get().busy || hasLocalWork(get()))) { event.preventDefault(); event.returnValue = ''; } };
       if (typeof window !== 'undefined') window.addEventListener?.('beforeunload', beforeUnload);

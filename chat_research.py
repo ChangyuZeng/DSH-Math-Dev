@@ -27,7 +27,7 @@ class ChatResearch:
 
     def _open(self, project_id, writable=False):
         return self.projects.open_project(project_id, writable=writable,
-                                         session_id=self.session_id, model=True,
+                                         session_id=self.session_id, model=True, chat=True,
                                          actor=self.actor, origin=self.origin)
 
     def read(self, project_id, ref=None, offset=0, limit=12000):

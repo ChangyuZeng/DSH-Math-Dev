@@ -356,7 +356,8 @@ class Workbench:
 
     def _project(self, project_id, session_id, writable=False):
         self._identity(session_id)
-        return self.projects.open_project(project_id, require_writable=writable, session_id=session_id, model=self.actor["kind"] == "model")
+        return self.projects.open_project(project_id, require_writable=writable, session_id=session_id,
+                                          model=self.actor["kind"] == "model", chat=self.actor["kind"] == "model")
 
     def scratchpad_read(self, session_id, project_id, rev=None):
         if rev is not None:

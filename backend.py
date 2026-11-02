@@ -141,9 +141,16 @@ class Projects:
 
     @contextmanager
     def open_project(self, project_id, *, writable=False, require_writable=False,
-                     actor=None, origin=None, session_id=None, model=False):
-        """Single gate for formal and sidecar access; no sidecar grants research authority."""
+                     actor=None, origin=None, session_id=None, model=False, chat=False):
+        """Single gate; only ordinary chat may use human-authorized associations."""
         metadata = self.metadata(project_id)
+        if chat:
+            from project_access import ProjectAccess
+            with ProjectAccess(self.root).authorized(metadata, session_id):
+                with self.open_project(project_id, writable=writable, require_writable=require_writable,
+                                       actor=actor, origin=origin) as opened:
+                    yield opened
+            return
         if model:
             require(metadata["session_id"] == session_id, "PROJECT_SCOPE", "Choose a project owned by this exact session; cross-session access is forbidden")
         if writable or require_writable:
@@ -387,6 +394,9 @@ def dispatch(root, request):
     fields(request, "action args")
     action, args = request["action"], request["args"]
     projects = Projects(root)
+    if action in ("project-context", "project-associate", "project-disassociate", "project-preferences"):
+        from project_access import dispatch_access
+        return dispatch_access(root, action, args)
     if action in ("material-begin", "material-chunk", "material-preview", "material-confirm", "material-cleanup", "material-read", "material-bytes"):
         from material_store import dispatch_material
         return dispatch_material(root, action, args)

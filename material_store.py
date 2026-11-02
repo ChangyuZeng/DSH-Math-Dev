@@ -183,7 +183,9 @@ class Materials:
     def _project(self, session_id, project_id, *, writable=False):
         identifier(session_id)
         metadata = self.projects.metadata(project_id)
-        require(metadata['session_id'] == session_id, 'PROJECT_SCOPE', 'Project belongs to another session')
+        from project_access import ProjectAccess
+        with ProjectAccess(self.root).authorized(metadata, session_id):
+            pass
         if writable:
             require(metadata['schema_version'] == 4 and metadata.get('mode') == 'daily_research',
                     'READ_ONLY', 'Material import requires a schema4 daily project')
@@ -273,13 +275,14 @@ class Materials:
         with self._locked():
             path, state = self._load(session_id, upload_id)
             require(not state['cleaned'], 'UPLOAD_CLOSED', 'Upload is closed')
-            if state['preview'] is not None:
-                return state['preview']
             project_id = state['request']['project_id']
-            objects = {}
             if project_id is not None:
                 self._project(session_id, project_id, writable=True)
-                with self.projects.open_project(project_id) as (_, store):
+            if state['preview'] is not None:
+                return state['preview']
+            objects = {}
+            if project_id is not None:
+                with self.projects.open_project(project_id, session_id=session_id, chat=True, require_writable=True) as (_, store):
                     objects = store.snapshot()['state']['objects']
             rows = []
             for row in state['request']['files']:
@@ -319,7 +322,8 @@ class Materials:
             state['confirmation'] = request
             self._save(path, state)  # Freeze before the first formal journal mutation.
             results = []
-            with self.projects.open_project(project_id, writable=True, actor={'kind': 'human', 'id': 'local-user'},
+            with self.projects.open_project(project_id, writable=True, session_id=session_id, chat=True,
+                    actor={'kind': 'human', 'id': 'local-user'},
                     origin={'source': 'dsh-math-human', 'session_id': session_id, 'run_id': None, 'tool_call_id': None}) as (_, store):
                 for item in preview['files']:
                     result = {key: item[key] for key in ('file_id', 'name', 'sha256')}
@@ -382,7 +386,7 @@ class Materials:
         require(limit <= 12000, 'TOO_LARGE', 'Read at most 12000 characters')
         metadata = self._project(session_id, project_id)
         require(metadata['schema_version'] == 4, 'READ_ONLY', 'Materials require schema4')
-        with self.projects.open_project(project_id, session_id=session_id, model=True) as (_, store):
+        with self.projects.open_project(project_id, session_id=session_id, model=True, chat=True) as (_, store):
             obj = store.get(ref['id'], ref['rev'])
             data = obj['data']
             require(obj['kind'] == 'Evidence' and data['production'] == {'method': 'dsh-math-material-import', 'version': '1'},
@@ -410,7 +414,7 @@ class Materials:
         integer(limit, 1)
         require(limit <= 384 * 1024, 'TOO_LARGE', 'Download at most 384 KiB per request')
         material = self.read(session_id, project_id, ref, 0, 1)
-        with self.projects.open_project(project_id, session_id=session_id, model=True) as (_, store):
+        with self.projects.open_project(project_id, session_id=session_id, model=True, chat=True) as (_, store):
             obj = store.get(ref['id'], ref['rev'])
             descriptor = next(a for a in obj['data']['attachments'] if a['sha256'] == material['sha256'])
             raw = read_regular(safe_path(store.root, descriptor['relative_path']))

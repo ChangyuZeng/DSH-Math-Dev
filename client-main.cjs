@@ -38,6 +38,9 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
   }
   const Graph = globalThis.DshMathProcessGraph;
   const ProcessGraph = globalThis.DshMathGraphUI(React, Graph);
+  const Research = globalThis.DshMathResearchGraph;
+  const ResearchGraph = globalThis.DshMathResearchGraphUI(React, RecordReader);
+  const ProjectAccess = globalThis.DshMathProjectAccessUI(React);
   const TAB_ID = 'dsh-math:projects';
   const pendingPromotionLinks = new Map(), retainedDocuments = new Map(), activeDocuments = new Map();
   const promotionKey = (session, project) => JSON.stringify([session, project]);
@@ -105,6 +108,7 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
     const [focus, setFocus] = useState(null), [attachment, setAttachment] = useState(null), [editor, setEditor] = useState(null);
     const [sources, setSources] = useState([]), [candidate, setCandidate] = useState([]), [replay, setReplay] = useState(null), [preview, setPreview] = useState(null), [verdict, setVerdict] = useState(''), [findings, setFindings] = useState(''), [receipt, setReceipt] = useState(null);
     const [process, setProcess] = useState(null), [operation, setOperation] = useState('');
+    const [access, setAccess] = useState(null);
     const [downloadNotice, setDownloadNotice] = useState(''); const downloadUrls = useRef([]);
     const [draftSummary, setDraftSummary] = useState(null), [draftError, setDraftError] = useState('');
     const [decision, setDecision] = useState(null), [localNotice, setLocalNotice] = useState('');
@@ -200,8 +204,9 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
       const state = lifetime.current, loading = ++state.loading;
       const list = knownList || await api('list');
       const nextView = id ? await api('overview', {project_id: id}) : null;
+      const context = sessionId ? await api('project-context', {session_id: sessionId, query: '', offset: 0, limit: 50}) : null;
       if (!state.active || loading !== state.loading) return;
-      setProjects(list); setView(nextView); setSelected(id);
+      setProjects(list); setView(nextView); setSelected(id); setAccess(context);
       setPromotionLink(pendingPromotionLinks.get(promotionKey(sessionId, id)) || null);
       setAttachment(null); setReplay(null); setReceipt(null); setProcess(null); setContextObject(null); setDownloadNotice('');
       // Switching scopes restores only that session/project's in-window document.
@@ -226,7 +231,8 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
       activeDocuments.set(surface.current, () => local.current);
       run(async () => {
         const list = await api('list');
-        const current = list.find(p => p.session_id === sessionId);
+        const context = sessionId ? await api('project-context', {session_id: sessionId, query: '', offset: 0, limit: 50}) : null;
+        const current = list.find(p => p.id === context?.current_project_id) || list.find(p => p.session_id === sessionId);
         await load(current?.id || '', list);
       }, '读取研究项目');
       readDraftSummary();
@@ -341,7 +347,8 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
     const readProcess = selectedSources => run(async () => {
       // Read only. Never discover logs or invoke run_control/model tools here.
       const result = await api('replay', {project_id: selected, sources: selectedSources});
-      setProcess(Graph.build(view, result)); // Reject a changed research head rather than mix snapshots.
+      const verified = Graph.build(view, result); // Reject a changed research head rather than mix snapshots.
+      setProcess({operations: verified, research: Research.build(view, verified)});
     });
     const tabs = [['overview', '工作台', '研究概览'], ['records', '研究记录', '记录与审核'], ['process', '研究过程', '研究过程'], ['replay', '导出', '回放与导出']];
     const changeTab = id => {
@@ -379,6 +386,7 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
         h('select', {className: 'dm-input', value: selected, disabled: busy, onChange: e => { const id = e.target.value; return leave(() => run(() => load(id))); }, 'aria-label': '选择研究项目'},
           h('option', {value: ''}, '选择研究项目'), ...projects.map(p => h('option', {key: p.id, value: p.id}, `${p.title} · ${p.id.slice(0, 8)}${p.mode === 'legacy_readonly_copy' ? ' · 只读' : ''}${p.session_id === sessionId ? ' · 当前会话' : ''}`))),
         h('span', {className: 'dm-panel-meta'}, `${projects.length} 个项目`)),
+      sessionId && h(ProjectAccess, {request: workbenchRequest.current, sessionId, project: view?.project || null, context: access, onChange: result => setAccess(previous => ({...previous, ...result})), busy}),
       !view && !creating && h('section', {className: 'dm-welcome', 'aria-label': '研究起点'},
         h('div', {className: 'dm-welcome-overline'}, h('span', {className: 'dm-welcome-line', 'aria-hidden': 'true'}), '一个问题，一条清晰的路径'),
         h('h3', null, projects.length ? '继续你的研究。' : '从一个明确的\n问题开始。'),
@@ -412,9 +420,11 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
             h('div', {className: 'dm-actions'},
               h(Button, {size: 'small', disabled: busy || !sources.length, onClick: () => readProcess(sources)}, `加入所选来源（${sources.length}）`),
               h(Button, {size: 'small', variant: 'ghost', onClick: () => setTab('replay')}, '选择工具账本'))),
-          process ? h(ProcessGraph, {key: pretty([process.research_head, process.sources]), graph: process,
-            inspect: value => inspect(view.objects.find(object => object.id === value.id && object.rev === value.rev))}) :
-            h('p', {className: 'dm-empty'}, busy ? '正在读取已记录过程…' : '点击“查看研究过程”，查看已记录的步骤与产物。')),
+          process ? h(React.Fragment, {key: pretty([process.operations.research_head, process.operations.sources])},
+            h(ResearchGraph, {graph: process.research, view, inspect: value => inspect(view.objects.find(object => object.id === value.id && object.rev === value.rev))}),
+            h('details', {className: 'dm-details'}, h('summary', null, '操作来源与版本历史'), h(ProcessGraph, {graph: process.operations,
+              inspect: value => inspect(view.objects.find(object => object.id === value.id && object.rev === value.rev))}))) :
+            h('p', {className: 'dm-empty'}, busy ? '正在读取已记录过程…' : '点击“查看研究过程”，查看问题、研究路线与笔记之间的联系。')),
         h('section', panelProps('overview'),
           goal && h('section', {className: 'dm-goal'},
             h('div', {className: 'dm-section-label'}, '当前目标', h('span', {className: 'dm-panel-meta'}, `seq ${view.snapshot.state.seq}`)),
@@ -526,7 +536,7 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
     ctx.effect(() => {
       if (typeof document === 'undefined') return;
       const style = document.createElement('style');
-      style.id = 'dsh-math-theme'; style.textContent = (globalThis.DshMathTheme || '') + (globalThis.DshMathPreview.styles?.() || '');
+      style.id = 'dsh-math-theme'; style.textContent = (globalThis.DshMathTheme || '') + (globalThis.DshMathResearchGraphTheme || '') + (globalThis.DshMathPreview.styles?.() || '');
       document.head.appendChild(style);
       const beforeUnload = event => { if ([...retainedDocuments.values()].some(hasLocalWork) || [...activeDocuments.values()].some(get => get().busy || hasLocalWork(get()))) { event.preventDefault(); event.returnValue = ''; } };
       if (typeof window !== 'undefined') window.addEventListener?.('beforeunload', beforeUnload);

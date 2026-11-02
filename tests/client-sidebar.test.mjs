@@ -7,6 +7,8 @@ import Forms from '../forms.cjs';
 const source = readFileSync(new URL('../client-main.cjs', import.meta.url), 'utf8');
 const graphSource = readFileSync(new URL('../process-graph.cjs', import.meta.url), 'utf8');
 const graphUISource = readFileSync(new URL('../graph-ui.cjs', import.meta.url), 'utf8');
+const integrationSources = ['research-graph.cjs', 'research-graph-ui.cjs', 'research-graph-theme.cjs', 'project-access-ui.cjs']
+  .map(file => readFileSync(new URL(`../${file}`, import.meta.url), 'utf8'));
 
 // Hook/element contracts only, not a DOM renderer or visual acceptance evidence.
 // Function children stay opaque unless a test explicitly calls that component.
@@ -95,6 +97,7 @@ function loadPlugin({react = hooks(), globals = {}} = {}) {
   vm.createContext(context);
   vm.runInContext(graphSource, context);
   vm.runInContext(graphUISource, context);
+  for (const integrationSource of integrationSources) vm.runInContext(integrationSource, context);
   vm.runInContext(source, context);
   assert.equal(typeof context.DshMathProcessGraph.build, 'function');
   assert.equal(typeof context.DshMathGraphUI, 'function');
@@ -203,7 +206,8 @@ function visibleNodes(tree) {
 const component = (tree, name) => nodes(tree).find(node => node.type?.name === name);
 const visibleComponent = (tree, name) => visibleNodes(tree).find(node => node.type?.name === name);
 const panel = (tree, id) => nodes(tree).find(node => node.props.role === 'tabpanel' && node.props.id.endsWith(`-${id}-panel`));
-const readActions = ['list', 'overview', 'project-draft-read'];
+const readActions = ['list', 'overview', 'project-draft-read', 'project-context'];
+const contextRead = sessionId => ({action: 'project-context', args: {session_id: sessionId, query: '', offset: 0, limit: 50}});
 function button(tree, label) {
   const found = visibleNodes(tree).find(node => (node.children.includes(label) || node.props['aria-label'] === label) && typeof node.props.onClick === 'function');
   assert.ok(found, `Missing button: ${label}`);
@@ -225,7 +229,7 @@ function deferred() {
 // All fixtures and API replies are in-memory. No real fetch, project registration,
 // database write, replay, or export is allowed by this test harness.
 function overview(id) {
-  const problem = {id: `P-${id}`, rev: 1, kind: 'Problem', data: {title: id}};
+  const problem = {id: `P-${id}`, rev: 1, kind: 'Problem', data: {title: id, parent: null}};
   const obligation = {id: `O-${id}`, rev: 1, kind: 'Obligation', data: {statement: '待审核', problem_ref: {id: problem.id, rev: 1}, candidates: [{id: `N-${id}`, rev: 1}]}};
   const note = {id: `N-${id}`, rev: 1, kind: 'Note', data: {title: '候选', problem_ref: {id: problem.id, rev: 1}}};
   for (const object of [problem, obligation, note]) object.schema_version = 4;
@@ -259,6 +263,7 @@ function processFixture(id, {history = false} = {}) {
   return {view, replay};
 }
 const processNode = tree => nodes(tree).find(node => typeof node.type === 'function' && node.type.name === 'ProcessGraph');
+const processLifetime = tree => nodes(tree).find(node => typeof node.type === 'symbol' && node.key !== null && processNode(node));
 const projects = ['a', 'b'].map(id => ({id, title: id, session_id: `session-${id}`}));
 function viewTest({effects = false, handle, globals = {}} = {}) {
   const sessions = new Set();
@@ -276,11 +281,19 @@ function viewTest({effects = false, handle, globals = {}} = {}) {
         assert.ok(sessions.has(body.args.session_id), 'Draft summaries may read only an explicitly rendered session');
         assert.equal(body.args.session_id, session, 'Every summary dispatch must use the currently bound session, never scan past sessions');
       }
+      if (body.action === 'project-context') {
+        assert.deepEqual(body, contextRead(session), 'Context reads must be bounded and use only the currently bound session');
+        assert.ok(sessions.has(body.args.session_id), 'Context reads require an explicitly rendered session');
+      }
       if (controls.apiFailure?.action === body.action) return {json: async () => ({ok: false, error: controls.apiFailure.code, message: 'synthetic precommit rejection'})};
       if (controls.failure && body.action === 'overview') return {json: async () => ({ok: false, error: controls.failure})};
       const intercepted = controls.handle?.(body);
       if (intercepted !== undefined) return {json: async () => ({ok: true, value: await intercepted})};
       if (body.action === 'project-draft-read') return {json: async () => ({ok: true, value: {draft: null, validation: null}})};
+      if (body.action === 'project-context') return {json: async () => ({ok: true, value: {
+        session_id: body.args.session_id, rev: 0, current_project_id: null, auto_record: false,
+        projects, offset: 0, next_offset: null, total: projects.length,
+      }})};
       assert.ok(['list', 'overview'].includes(body.action), `Unexpected write API: ${body.action}`);
       return {json: async () => ({ok: true, value: body.action === 'list' ? projects : overview(body.args.project_id)})};
     },
@@ -463,7 +476,9 @@ test('theme disposal removes only the style node owned by that plugin generation
   assert.notEqual(ownedFirst, ownedSecond);
   for (const owned of [ownedFirst, ownedSecond]) {
     assert.equal(owned.id, 'dsh-math-theme');
-    assert.equal(owned.textContent, '.dsh-math-view{}');
+    const themeContext = {};
+    vm.runInNewContext(integrationSources[2], themeContext);
+    assert.equal(owned.textContent, '.dsh-math-view{}' + themeContext.DshMathResearchGraphTheme);
   }
   first.dispose(); first.dispose();
   assert.deepEqual(children, [foreign, ownedSecond]);
@@ -521,7 +536,7 @@ test('an empty workspace has one primary create action and a secondary import mo
   assert.ok(welcome(t.render()));
   assert.equal(byTitle(t.render(), '项目准备'), undefined);
   assert.equal(nodes(t.render()).filter(node => node.props.variant === 'primary').length, 1);
-  assert.deepEqual(t.requests.map(request => request.action), ['list', 'project-draft-read'], 'Opening and cancelling forms must not create research data');
+  assert.deepEqual(t.requests.map(request => request.action), ['list', 'project-draft-read', 'project-context', 'project-context'], 'Opening and cancelling forms must not create research data');
 });
 
 test('overview leads with the goal and actions, while records keeps every group', async () => {
@@ -715,7 +730,7 @@ test('selecting no project clears its view, draft, candidate and replay sources'
   nodes(t.render()).find(node => node.props.label === '来源 1 完整路径').props.change('/test/a.jsonl');
   const before = t.requests.length;
   await t.choose('');
-  assert.deepEqual(t.requests.slice(before).map(request => request.action), ['list']);
+  assert.deepEqual(t.requests.slice(before), [{action: 'list', args: {}}, contextRead('test-session')]);
   assert.equal(picker(t.render()).props.value, '');
   assert.equal(t.render().props['aria-busy'], false);
   assert.ok(welcome(t.render()));
@@ -750,7 +765,7 @@ test('session key remounts isolate all local state and initialize the matching p
   assert.equal(t.wrap(undefined).key, '');
   t.render('session-a'); await settle();
   assert.equal(picker(t.render()).props.value, 'a');
-  assert.deepEqual(t.requests.map(request => request.action), ['list', 'project-draft-read', 'overview']);
+  assert.deepEqual(t.requests.map(request => request.action), ['list', 'project-draft-read', 'project-context', 'overview', 'project-context']);
   button(t.render(), '写笔记').props.onClick();
   button(t.render(), '新建项目').props.onClick();
   assert.equal(nodes(t.render()).find(node => node.type?.name === 'ProjectForm').key, 'session-a');
@@ -765,7 +780,7 @@ test('session key remounts isolate all local state and initialize the matching p
   await settle();
   assert.equal(picker(t.render()).props.value, 'b');
   assert.equal(button(t.render(), '研究概览').props['data-active'], true);
-  assert.deepEqual(t.requests.map(request => request.action), ['list', 'project-draft-read', 'overview', 'list', 'project-draft-read', 'overview']);
+  assert.deepEqual(t.requests.map(request => request.action), ['list', 'project-draft-read', 'project-context', 'overview', 'project-context', 'list', 'project-draft-read', 'project-context', 'overview', 'project-context']);
   assert.deepEqual(t.requests.filter(request => request.action === 'overview').map(request => request.args.project_id), ['a', 'b']);
   button(t.render(), '记录与审核').props.onClick();
   assert.equal(nodes(t.render()).some(node => node.type === t.Editor), false);
@@ -774,7 +789,7 @@ test('session key remounts isolate all local state and initialize the matching p
   button(t.render(), '新建项目').props.onClick();
   assert.equal(nodes(t.render()).find(node => node.type?.name === 'ProjectForm').key, 'session-b');
   assert.equal(nodes(t.render()).find(node => node.type?.name === 'ProjectForm').props.sessionId, 'session-b');
-  assert.equal(t.requests.length, 6, 'Rerenders must not restart initialization');
+  assert.equal(t.requests.length, 10, 'Rerenders must not restart initialization');
   assert.deepEqual(t.requests.filter(body => body.action === 'project-draft-read').map(body => body.args.session_id), ['session-a', 'session-b']);
 });
 
@@ -792,7 +807,7 @@ test('switching to a session without a project clears the previous scope', async
   assert.equal(byTitle(tree, '当前目标'), undefined);
   assert.equal(byClass(tree, 'dm-goal'), undefined);
   assert.equal(nodes(tree).some(node => node.type === t.Editor), false);
-  assert.deepEqual(t.requests.slice(before).map(request => request.action), ['list', 'project-draft-read']);
+  assert.deepEqual(t.requests.slice(before), [{action: 'list', args: {}}, {action: 'project-draft-read', args: {session_id: 'session-without-project'}}, contextRead('session-without-project'), contextRead('session-without-project')]);
   assert.equal(t.requests.at(-1).args.session_id, 'session-without-project');
 });
 
@@ -813,7 +828,7 @@ test('a late successful or failed A response cannot contaminate a completed B se
     const refresh = button(t.render(), '刷新').props.onClick();
     assert.equal(t.render().props['aria-busy'], true);
     const beforeLate = t.requests.length;
-    assert.equal(beforeLate, 8, 'Two initializations and one explicit refresh include only their scoped draft reads');
+    assert.equal(beforeLate, 11, 'Two initializations and one explicit refresh include only their scoped draft and context reads');
     if (outcome === 'resolve') a.resolve(overview('a'));
     else a.reject(Error('late A failure'));
     await settle();
@@ -848,7 +863,7 @@ test('effect cleanup/setup keeps a newer operation busy when an older finally fi
   newList.resolve(projects); await settle();
   assert.equal(picker(t.render()).props.value, 'a');
   assert.equal(t.render().props['aria-busy'], false);
-  assert.deepEqual(t.requests.map(request => request.action), ['list', 'project-draft-read', 'list', 'project-draft-read', 'overview']);
+  assert.deepEqual(t.requests.map(request => request.action), ['list', 'project-draft-read', 'list', 'project-draft-read', 'project-context', 'overview', 'project-context']);
 });
 
 test('double save callbacks dispatch only one mocked commit before the disabled render', async () => {
@@ -870,7 +885,7 @@ test('double save callbacks dispatch only one mocked commit before the disabled 
   pending.resolve({}); await first;
   assert.equal(t.render().props['aria-busy'], false);
   assert.equal(nodes(t.render()).some(node => node.type === t.Editor), false);
-  assert.deepEqual(t.requests.map(body => body.action), ['project-draft-read', 'list', 'list', 'overview', 'commit', 'list', 'overview']);
+  assert.deepEqual(t.requests.map(body => body.action), ['project-draft-read', 'list', 'project-context', 'list', 'overview', 'project-context', 'commit', 'list', 'overview', 'project-context']);
 });
 
 test('an unmounted save completion cannot dispatch a refresh in the new session', async () => {
@@ -904,7 +919,13 @@ test('process entry reads only project replay and selected sources require an ex
   const first = enter(), duplicate = enter();
   assert.deepEqual(t.requests.slice(before), [{action: 'replay', args: {project_id: 'a', sources: []}}]);
   await Promise.all([first, duplicate]);
-  const initial = processNode(t.render()), frozen = JSON.stringify(initial.props.graph);
+  const initial = processNode(t.render()), initialLifetime = processLifetime(t.render()), frozen = JSON.stringify(initial.props.graph);
+  assert.ok(initialLifetime, 'Both graph components require a keyed snapshot lifetime');
+  const research = component(initialLifetime, 'ResearchGraph');
+  assert.equal(research.props.graph.format, 'dsh-math-research-graph-v1');
+  assert.equal(research.props.graph.project_id, 'a');
+  assert.equal(research.props.view, t.fixtures.a.view);
+  assert.equal(nodes(initialLifetime).filter(node => node.type === 'details').some(node => processNode(node)?.props.graph === initial.props.graph), true, 'Operations history remains within its native disclosure');
   assert.equal(initial.props.graph.format, 'dsh-math-process-graph-v1');
   assert.equal(initial.props.graph.counts.records, 3, 'Load the real projection, not a fake Graph factory');
   assert.deepEqual(Array.from(initial.props.graph.sources, source => source.path), ['research/events.jsonl']);
@@ -916,7 +937,7 @@ test('process entry reads only project replay and selected sources require an ex
   await button(t.render(), '研究过程').props.onClick();
   assert.equal(t.requests.length, before + 1, 'Returning to a frozen graph must not reload sources');
   assert.equal(processNode(t.render()).props.graph, initial.props.graph);
-  assert.equal(processNode(t.render()).key, initial.key);
+  assert.equal(processLifetime(t.render()).key, initialLifetime.key);
   assert.equal(JSON.stringify(initial.props.graph), frozen);
   const add = button(t.render(), '加入所选来源（1）');
   assert.equal(add.props.disabled, false);
@@ -924,7 +945,7 @@ test('process entry reads only project replay and selected sources require an ex
   assert.deepEqual(t.requests.at(-1), {action: 'replay', args: {project_id: 'a', sources: [{adapter: 'ledger-py-v1', path: '/synthetic/second.jsonl'}]}});
   const loaded = processNode(t.render());
   assert.deepEqual(Array.from(loaded.props.graph.sources, source => source.path), ['research/events.jsonl', '/synthetic/second.jsonl']);
-  assert.notEqual(loaded.key, initial.key, 'A changed source snapshot must own a fresh graph UI lifetime');
+  assert.notEqual(processLifetime(t.render()).key, initialLifetime.key, 'A changed source snapshot must own a fresh graph UI lifetime');
   button(t.render(), '选择工具账本').props.onClick();
   button(t.render(), '移除来源').props.onClick();
   await button(t.render(), '研究过程').props.onClick();
@@ -962,7 +983,7 @@ test('refresh, project changes and no-project selection clear the process snapsh
   const previous = processNode(t.render()).props.graph, before = t.requests.length;
   await button(t.render(), '刷新').props.onClick();
   assert.equal(processNode(t.render()), undefined);
-  assert.deepEqual(t.requests.slice(before).map(request => request.action), ['project-draft-read', 'list', 'overview']);
+  assert.deepEqual(t.requests.slice(before).map(request => request.action), ['project-draft-read', 'list', 'overview', 'project-context']);
   assert.equal(button(t.render(), '研究过程').props['data-active'], true);
   await button(t.render(), '查看研究过程').props.onClick();
   assert.notEqual(processNode(t.render()).props.graph, previous);
@@ -1472,7 +1493,7 @@ test('current-session draft summary has absent, incomplete, complete, committed 
     t.render(session); await settle(); const tree = t.render();
     assert.equal(nodes(tree).filter(node => node.props.variant === 'primary').length, 1); button(welcome(tree), label).props.onClick();
     assert.equal(component(t.render(), 'ProjectForm').props.sessionId, session);
-    assert.deepEqual(t.requests, [{action: 'list', args: {}}, {action: 'project-draft-read', args: {session_id: session}}]);
+    assert.deepEqual(t.requests, [{action: 'list', args: {}}, {action: 'project-draft-read', args: {session_id: session}}, contextRead(session), contextRead(session)]);
   });
 });
 

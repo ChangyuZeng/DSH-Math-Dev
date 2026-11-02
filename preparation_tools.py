@@ -16,7 +16,7 @@ from schema import StoreError, decode, fields, identifier, require
 
 # Scratch names remain internal compatibility transports, never registered in chat.
 TOOLS = frozenset(("math_project_prepare", "math_project_draft_read", "math_scratchpad_read", "math_scratchpad_save",
-                   "math_research_read", "math_research_record", "math_material_read"))
+                   "math_research_read", "math_research_record", "math_material_read", "math_project_context"))
 MAX_REQUEST_BYTES = 2 * 1024 * 1024
 
 
@@ -29,6 +29,10 @@ def execute(root, request):
     require(type(arguments) is dict, "INVALID_SCHEMA", "Expected direct object tool arguments")
     workbench = Workbench(root, actor={"kind": "model", "id": "dsh-math-chat"},
                           origin={"source": "dsh-math-chat", "session_id": session_id, "run_id": None, "tool_call_id": call_id})
+    if name == "math_project_context":
+        from project_access import ProjectAccess
+        fields(arguments, "query offset limit")
+        return ProjectAccess(root).context(session_id=session_id, **arguments)
     if name == "math_project_prepare":
         arguments = {"draft_id": None, **arguments}
         fields(arguments, "draft_id expected_rev operation_id patch")
