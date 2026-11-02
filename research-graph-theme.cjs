@@ -17,8 +17,8 @@
 .dm-rg-viewport { display: block; width: 100%; height: clamp(420px, 65vh, 760px); border: 1px solid var(--dm-border); border-radius: 12px; background: var(--dm-bg); touch-action: none; cursor: grab; user-select: none; }
 .dm-rg-viewport:active { cursor: grabbing; }
 .dm-rg-viewport:focus-visible { outline: 2px solid var(--dm-accent); outline-offset: 2px; }
-.dm-rg-branch path { stroke: var(--dm-border); stroke-width: 1.5; }
-.dm-rg-relation path { stroke: var(--dm-accent); stroke-width: 1; stroke-dasharray: 5 5; opacity: .7; }
+.dm-rg-branch path { stroke: var(--dm-muted); stroke-width: 1.75; vector-effect: non-scaling-stroke; }
+.dm-rg-relation path { stroke: var(--dm-accent); stroke-width: 1.5; stroke-dasharray: 5 5; opacity: .85; vector-effect: non-scaling-stroke; }
 .dm-rg-relation text { fill: var(--dm-accent); font: 10px sans-serif; paint-order: stroke; stroke: var(--dm-bg); stroke-width: 4px; }
 .dm-rg-object { overflow: visible; }
 .dm-rg-card { position: relative; box-sizing: border-box; height: 192px; border: 1px solid var(--dm-border); border-radius: 10px; background: var(--dm-panel); color: var(--dm-text); overflow: hidden; box-shadow: 0 3px 10px color-mix(in srgb, var(--dm-text) 4%, transparent); }
