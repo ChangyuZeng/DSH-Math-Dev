@@ -931,7 +931,7 @@ test('process entry reads only project replay and selected sources require an ex
   assert.equal(processNode(t.render()).props.graph, loaded.props.graph, 'Removing a selection does not mutate an already-read snapshot');
   assert.equal(button(t.render(), '加入所选来源（0）').props.disabled, true);
   assert.equal(t.requests.length, before + 2);
-  await button(t.render(), '读取本项目记录').props.onClick();
+  await button(t.render(), '刷新过程').props.onClick();
   assert.deepEqual(t.requests.at(-1), {action: 'replay', args: {project_id: 'a', sources: []}});
   assert.deepEqual(Array.from(processNode(t.render()).props.graph.sources, source => source.path), ['research/events.jsonl']);
   assert.ok(t.requests.every(request => [...readActions, 'replay'].includes(request.action)), 'No model, mutation, audit export, or source discovery request');
@@ -944,7 +944,7 @@ test('a stale process head reports an error without replacing a frozen snapshot'
     const previous = processNode(t.render());
     const fallback = t.controls.handle;
     t.controls.handle = body => body.action === 'replay' ? {...t.fixtures.a.replay, research_head: 'f'.repeat(64)} : fallback(body);
-    await button(t.render(), existing ? '读取本项目记录' : '研究过程').props.onClick();
+    await button(t.render(), existing ? '刷新过程' : '研究过程').props.onClick();
     const message = '过程图：回放与概览的研究 head 不一致，请刷新后重试。';
     assert.deepEqual(alerts(t.render()).map(node => node.children[0]), [message]);
     assert.equal(processNode(t.render())?.props.graph, previous?.props.graph);
@@ -964,11 +964,11 @@ test('refresh, project changes and no-project selection clear the process snapsh
   assert.equal(processNode(t.render()), undefined);
   assert.deepEqual(t.requests.slice(before).map(request => request.action), ['project-draft-read', 'list', 'overview']);
   assert.equal(button(t.render(), '研究过程').props['data-active'], true);
-  await button(t.render(), '读取本项目记录').props.onClick();
+  await button(t.render(), '查看研究过程').props.onClick();
   assert.notEqual(processNode(t.render()).props.graph, previous);
   await t.choose('b');
   assert.equal(processNode(t.render()), undefined);
-  await button(t.render(), '读取本项目记录').props.onClick();
+  await button(t.render(), '查看研究过程').props.onClick();
   assert.equal(processNode(t.render()).props.graph.project_id, 'b');
   await t.choose('');
   assert.equal(processNode(t.render()), undefined);
@@ -991,7 +991,7 @@ test('process references open the exact historical revision in the records tab',
     const detail = byTitle(t.render(), `N-a@${rev}`);
     assert.ok(detail);
     assert.equal(visibleComponent(detail, 'RecordReader').props.object, t.fixtures.a.view.objects.find(object => object.id === 'N-a' && object.rev === rev));
-    button(t.render(), '关闭详情').props.onClick();
+    visibleComponent(detail, 'RecordReader').props.onClose();
     await button(t.render(), '研究过程').props.onClick();
     assert.equal(processNode(t.render()).props.graph, graph.props.graph);
   }
@@ -1011,14 +1011,14 @@ test('late process replies cannot publish state or clear a newer session operati
     assert.equal(b.project_id, 'b');
     const newer = deferred(), fallback = t.controls.handle;
     t.controls.handle = body => body.action === 'replay' ? newer.promise : fallback(body);
-    const pending = button(t.render(), '读取本项目记录').props.onClick(), before = t.requests.length;
+    const pending = button(t.render(), '刷新过程').props.onClick(), before = t.requests.length;
     if (outcome === 'resolve') a.resolve(t.fixtures.a.replay);
     else a.reject(Error('late graph A failure'));
     await operation;
     assert.equal(processNode(t.render()).props.graph, b);
     assert.equal(picker(t.render()).props.value, 'b');
     assert.equal(t.render().props['aria-busy'], true, 'A finally must not clear B busy');
-    assert.equal(button(t.render(), '读取本项目记录').props.disabled, true);
+    assert.equal(button(t.render(), '刷新过程').props.disabled, true);
     assert.equal(alerts(t.render()).length, 0);
     assert.equal(t.react.writesAfterUnmount.length, 0);
     assert.equal(t.requests.length, before);

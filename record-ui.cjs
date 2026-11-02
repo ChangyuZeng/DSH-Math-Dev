@@ -197,21 +197,27 @@
       useEffect(() => { if (autoFocus) { heading.current?.focus?.({preventScroll: true}); heading.current?.scrollIntoView?.({block: 'nearest'}); } }, [key, autoFocus]);
       if (!object) return h('p', {className: 'dm-muted'}, '选择一条记录阅读。');
       const d = object.data || {}, refs = references(object), incoming = backlinks(view, object), row = recordRows(view).find(r => refKey(r.object) === key);
-      const field = (label, value) => h(Field, {key: label, label, value});
+      const hasContent = value => value != null && (typeof value === 'string' ? value.trim().length > 0 : Array.isArray(value) ? value.some(hasContent) : typeof value === 'object' ? Object.values(value).some(hasContent) : true);
+      const field = (label, value) => hasContent(value) ? h(Field, {key: label, label, value}) : null;
       let fields;
       switch (object.kind) {
         case 'Problem': fields = [field('问题陈述', d.statement), field('量词', d.quantifiers), field('对象与范围', d.domain), field('约定', d.conventions), field('完成条件', d.completion_criteria), field('目标类型（登记值）', d.target_type), field('知识状态（登记值）', d.knowledge_status), field('与父问题的关系', d.relation), field('来源（未核实为真）', d.sources)]; break;
         case 'Note': fields = [field('简述', d.summary), field('正文', d.body), field('主张', d.statement), field('假设', d.assumptions), field('缺口', d.gaps), field('笔记类型', d.note_type), ...(d.route_id ? [field('路线', d.route_id)] : []), ...(d.failure ? Object.entries({inputs: '失败输入', location: '失败位置', observed: '观察结果', negated_scope: '否定范围', retry_change: '再次尝试应改变什么'}).map(([k, label]) => field(label, d.failure[k])) : [])]; break;
         case 'Obligation': fields = [field('待证陈述', d.statement), field('适用范围', d.scope), field('完成条件', d.completion_criteria), field('下一步', d.next_action), field('登记原因', d.reason), field('记录中的状态（非验证结论）', stateLabel(d.state)), field('检查方式（登记值）', d.check_method), ...(d.checker_id ? [field('固定 checker', d.checker_id)] : [])]; break;
         case 'Evidence': fields = [field('材料类型', d.evidence_type), field('支持范围', d.support_scope), field('局限与未核实项', d.limits), field('来源状态（非真实性验证）', d.source_status), field('来源定位', d.source?.locator), field('来源版本', d.source?.version), field('访问时间', d.source?.accessed_at), field('来源条件', d.source?.conditions), field('生产或导入方式', d.production?.method), field('生产方式版本', d.production?.version), ...(d.citation ? [field('引文标题', d.citation.title), field('页码', d.citation.page), field('章节', d.citation.section), field('定理', d.citation.theorem), field('摘录 SHA256', d.citation.excerpt_sha256), field('来源条件映射（登记值）', d.citation.condition_map)] : []), field('附件元数据（原文未自动加载）', d.attachments)]; break;
-        case 'Review': fields = [field('审核方式', d.method), field('登记结论（仅指定范围）', d.verdict), field('审核范围', d.scope), field('审核发现', d.findings), field('审核者', d.reviewer), field('checker 版本', d.checker_version), field('错误码', d.error_code), field('依据哈希', d.basis_hash), h(ReviewBasis, {key: 'basis', basis: d.basis}), ...(d.execution ? [field('执行记录（非全局证明）', d.execution)] : [])]; break;
+        case 'Review': fields = [field('审核方式', d.method), field('登记结论（仅指定范围）', d.verdict), field('审核范围', d.scope), field('审核发现', d.findings), field('审核者', d.reviewer), field('checker 版本', d.checker_version), field('错误码', d.error_code), field('依据哈希', d.basis_hash), hasContent(d.basis) && h(ReviewBasis, {key: 'basis', basis: d.basis}), ...(d.execution ? [field('执行记录（非全局证明）', d.execution)] : [])]; break;
         default: fields = [h('p', {key: 'unknown', className: 'dm-muted'}, '未知记录类型，未猜测字段含义；完整内容保留在原始 JSON。')];
       }
-      return h('article', {className: 'dm-record-reader'}, h('div', {className: 'dm-reader-actions'}, typeof onClose === 'function' && button('返回记录列表', onClose), typeof onPin === 'function' && button(pinned ? '取消固定此版本' : '固定此精确版本', () => onPin(object), {'aria-pressed': pinned})),
-        h('h3', {className: 'dm-record-heading', ref: heading, tabIndex: -1}, title(object)), h('p', {className: 'dm-record-meta'}, `${kindLabel(object.kind)} · `, h('code', {}, key)), h(Copy, {value: key, label: '复制 ID@rev', disabled: !validRef(object)}),
-        row && !row.latest && h('p', {role: 'status'}, `正在阅读历史版本 ${key}；存在 @${row.latestRev}，未自动升级。`), h(Registered, {row}), ...fields,
-        h('section', {className: 'dm-record-section dm-record-refs'}, h('h4', {}, '引用与参考材料（精确版本）'), refs.length ? h('ul', {}, ...refs.map((r, i) => h('li', {key: i}, h(Ref, {value: r.ref, relation: r.relation, view, inspect})))) : h('p', {className: 'dm-muted'}, '无已登记引用。')),
-        h('section', {className: 'dm-record-section dm-record-refs'}, h('h4', {}, '被引用位置（含项目内历史记录）'), incoming.length ? h('ul', {}, ...incoming.map((r, i) => h('li', {key: i}, h(Ref, {value: r.object, relation: r.relation, view, inspect})))) : h('p', {className: 'dm-muted'}, '当前项目快照未登记回指。')),
+      const technicalLabels = new Set(['目标类型（登记值）', '知识状态（登记值）', '笔记类型', '路线', '检查方式（登记值）', '固定 checker', '材料类型', '来源定位', '来源版本', '访问时间', '生产或导入方式', '生产方式版本', '页码', '章节', '定理', '摘录 SHA256', '附件元数据（原文未自动加载）', '审核者', 'checker 版本', '依据哈希', '执行记录（非全局证明）']);
+      const content = fields.filter(value => value && !technicalLabels.has(value.props?.label));
+      const metadata = fields.filter(value => value && technicalLabels.has(value.props?.label));
+      return h('article', {className: 'dm-record-reader'}, typeof onClose === 'function' && h('div', {className: 'dm-reader-actions'}, button('返回记录列表', onClose)),
+        h('h3', {className: 'dm-record-heading', ref: heading, tabIndex: -1}, title(object)), h('p', {className: 'dm-record-meta'}, `${kindLabel(object.kind)} · `, h('code', {}, key), pinned && ' · 已固定'),
+        h('details', {className: 'dm-details'}, h('summary', {}, '复制与固定'), h(Copy, {value: key, label: '复制 ID@rev', disabled: !validRef(object)}), typeof onPin === 'function' && button(pinned ? '取消固定此版本' : '固定此精确版本', () => onPin(object), {'aria-pressed': pinned})),
+        row && !row.latest && h('p', {role: 'status'}, `正在阅读历史版本 ${key}；存在 @${row.latestRev}，未自动升级。`), h(Registered, {row}), ...content,
+        refs.length > 0 && h('section', {className: 'dm-record-section dm-record-refs'}, h('h4', {}, '引用与参考材料（精确版本）'), h('ul', {}, ...refs.map((r, i) => h('li', {key: i}, h(Ref, {value: r.ref, relation: r.relation, view, inspect}))))),
+        incoming.length > 0 && h('details', {className: 'dm-details dm-record-refs'}, h('summary', {}, `被引用位置 · ${incoming.length}（含历史记录）`), h('ul', {}, ...incoming.map((r, i) => h('li', {key: i}, h(Ref, {value: r.object, relation: r.relation, view, inspect}))))),
+        metadata.length > 0 && h('details', {className: 'dm-details'}, h('summary', {}, '技术与来源信息'), ...metadata),
         children, raw(object));
     }
     function RecordBrowser({view, inspect}) {
@@ -223,16 +229,21 @@
       const select = (label, value, setter, options) => h('label', {}, label, h('select', {value, onChange: change(setter)}, ...options.map(([v, caption]) => h('option', {key: v, value: v}, caption))));
       const open = object => { setSelected({id: object.id, rev: object.rev}); if (typeof inspect === 'function') inspect(object); };
       const selectedObject = exactObject(view, selected);
+      const extraFilters = Number(!!group) + Number(!!status) + Number(history !== 'latest');
+      const resetExtraFilters = () => { setGroup(''); setStatus(''); setHistory('latest'); setLimit(PAGE_SIZE); };
       return h('section', {className: 'dm-record-browser', 'aria-label': '项目内记录检索'},
-        h('div', {className: 'dm-record-filters'}, h('label', {}, '搜索 ID、标题或正文', h('input', {type: 'search', value: query, onChange: change(setQuery), placeholder: '仅搜索当前项目'})),
-          select('类型', kind, setKind, [['', '全部类型'], ...[...new Set(allRows.map(r => r.object.kind))].map(k => [k, kindLabel(k)])]),
-          select('登记分组', group, setGroup, [['', '全部分组'], ...Object.keys(view?.groups || {}).map(k => [k, groupLabels[k] || k])]),
-          select('登记审核状态', status, setStatus, [['', '全部状态'], ...[...new Set(allRows.map(r => r.status))].map(k => [k, k === 'unassessed' ? '无此版本评估' : stateLabel(k)])]),
-          select('版本', history, setHistory, [['latest', '每个 ID 的最新版本'], ['all', '全部精确版本'], ['historical', '仅历史版本']])),
+        h('div', {className: 'dm-record-filters'}, h('label', {}, '搜索记录', h('input', {type: 'search', value: query, onChange: change(setQuery), placeholder: 'ID、标题或正文'})),
+          select('类型', kind, setKind, [['', '全部类型'], ...[...new Set(allRows.map(r => r.object.kind))].map(k => [k, kindLabel(k)])])),
+        h('details', {className: 'dm-details dm-record-advanced'}, h('summary', {}, `更多筛选${extraFilters ? ` · ${extraFilters} 项生效` : ''}`),
+          h('div', {className: 'dm-record-filters'},
+            select('登记分组', group, setGroup, [['', '全部分组'], ...Object.keys(view?.groups || {}).map(k => [k, groupLabels[k] || k])]),
+            select('登记审核状态', status, setStatus, [['', '全部状态'], ...[...new Set(allRows.map(r => r.status))].map(k => [k, k === 'unassessed' ? '无此版本评估' : stateLabel(k)])]),
+            select('版本', history, setHistory, [['latest', '每个 ID 的最新版本'], ['all', '全部精确版本'], ['historical', '仅历史版本']])),
+          button('重置更多筛选', resetExtraFilters, {disabled: !extraFilters})),
         selected && h('div', {className: 'dm-record-selected'}, h('p', {}, `保留选中：${refKey(selected)}（过滤不改变版本）`), selectedObject ? button('重新打开选中版本', () => open(selectedObject)) : h('p', {role: 'status'}, '本次快照无此精确版本；未替换为新版。')),
-        h('p', {role: 'status'}, `匹配 ${result.total} 条，已显示 ${result.rows.length} 条；仅搜索已载入的本项目快照。`),
+        h('p', {role: 'status'}, `匹配 ${result.total} 条${result.hasMore ? ` · 已显示 ${result.rows.length} 条` : ''}`),
         h('ul', {className: 'dm-record-results'}, ...result.rows.map(row => h('li', {key: refKey(row.object), className: 'dm-record-item'}, button(title(row.object), () => open(row.object), {'aria-current': selected && refKey(selected) === refKey(row.object) ? 'true' : undefined}), h('p', {className: 'dm-record-meta'}, `${kindLabel(row.object.kind)} · ${refKey(row.object)} · ${row.latest ? '最新' : '历史'} · ${row.assessment ? `已登记：${stateLabel(row.assessment.state)}` : '无此版本审核评估'}`)))),
-        !result.total && h('p', {className: 'dm-muted'}, '没有匹配记录。可更改筛选；已选精确版本不会自动升级。'), result.hasMore && button('再显示 60 条', () => setLimit(n => n + PAGE_SIZE)));
+        !result.total && h('p', {className: 'dm-muted'}, '没有匹配记录，请调整搜索或筛选。'), result.hasMore && button('再显示 60 条', () => setLimit(n => n + PAGE_SIZE)));
     }
     function ReviewBasis({basis}) {
       if (!basis || typeof basis !== 'object') return h(Field, {label: '精确审核依据', value: basis});

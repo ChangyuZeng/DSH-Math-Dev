@@ -1048,21 +1048,20 @@ globalThis.DshMathFormUI = function (React, F, Preview) {
       const candidateCurrent = state.candidatePreview && state.candidatePreview.body === state.body && state.candidatePreview.rev === (state.pad?.rev || 0);
       return h('section', {hidden: !active, className: 'dm-scratchpad', 'aria-label': '项目草稿本', 'aria-busy': state.busy},
         h('div', {className: 'dm-panel-header'}, h('h3', {className: 'dm-panel-title'}, '草稿本'), h('span', {className: 'dm-panel-meta', role: 'status'}, state.busy ? '正在保存…' : state.dirty ? '未保存' : state.pad ? `v${state.pad.rev} 已保存` : '尚无版本')),
-        h('p', {className: 'dm-record-text'}, writable ? '随手整理 Markdown 与公式。停止输入 800ms 后保存；不进入正式研究记录或默认导出。' : '此项目只读。草稿本、正式记录及审核均不可写。'),
+        h('p', {className: 'dm-record-text'}, writable ? '写下想法，自动保存。' : '此项目只读。'),
         h('label', {className: 'dm-field'}, '草稿本标题', h(/[\r\n]/.test(state.title) ? 'textarea' : 'input', {className: 'dm-input', value: state.title, maxLength: 2000, disabled: !writable || !state.loaded, onChange: event => edit('title', event.target.value)})),
-        h('div', {className: 'dm-actions'}, button(previewMode ? '编辑正文' : '预览 Markdown / 公式', () => setPreviewMode(!previewMode)),
-          button('读取最新版本', () => controller.current?.load(), state.loading || state.busy),
-          writable && button('立即保存', () => controller.current?.flush(), state.busy || !state.loaded || !state.dirty && !state.attempt)),
+        h('div', {className: 'dm-actions'}, button(previewMode ? '继续编辑' : '预览', () => setPreviewMode(!previewMode)),
+          writable && (state.dirty || state.attempt) && button('立即保存', () => controller.current?.flush(), state.busy || !state.loaded)),
         previewMode ? renderPreview(state.body) : h('label', {className: 'dm-field'}, '草稿正文', h('textarea', {className: 'dm-input dm-scratch-body', rows: 14, value: state.body, disabled: !writable || !state.loaded, placeholder: '支持 Markdown 和 $公式$；不确定的想法也可以先记录。', onChange: event => edit('body', event.target.value)})),
-        state.notice && h('p', {role: 'status', className: 'dm-record-text'}, state.notice),
+        state.notice && (state.blocked || state.incoming) && h('p', {role: 'status', className: 'dm-record-text'}, state.notice),
         state.error && h('p', {role: 'alert', className: 'dm-error'}, state.error),
         state.incoming && h('div', {className: 'dm-conflict'}, h('p', null, '版本冲突：本地内容未丢失，自动保存已暂停。比较后选择；不会自动合并。保留我的修改后，请点击“立即保存”。'),
           compare({fields: [{key: 'title', label: '标题'}, {key: 'body', label: '正文'}], local: state, remote: state.incoming.scratchpad || {},
             localVersion: `v${state.pad?.rev || 0}（本地编辑）`, remoteVersion: `v${state.incoming.scratchpad?.rev || 0}`}),
           button('保留我的修改，稍后重新保存', () => controller.current?.useIncoming(true), state.busy || !writable),
           button('使用服务器版本', () => { if (window.confirm('确定用服务器版本替换本地未保存内容？')) controller.current?.useIncoming(false); }, state.busy)),
-        (writable || hasCandidate(state)) && h('section', {className: 'dm-candidate', 'aria-label': '粘贴候选到草稿'},
-          h('h4', null, '粘贴候选到草稿'),
+        (writable || hasCandidate(state)) && h('details', {className: 'dm-details dm-candidate', 'aria-label': '粘贴候选到草稿'},
+          h('summary', null, hasCandidate(state) ? '粘贴候选（有未采用内容）' : '粘贴候选到草稿'),
           h('p', {className: 'dm-record-text'}, '只处理你粘贴的内容，不读取其他会话、不调用模型。先预览，再明确追加到草稿；未经审核，不会直接登记正式记录或提交审核。未采用候选仅在本窗口保留，刷新或关闭可能丢失。'),
           h('label', {className: 'dm-field'}, '候选内容', h('textarea', {className: 'dm-input dm-candidate-input', rows: 5, value: state.candidateText || '', disabled: !writable, onChange: event => editCandidate('candidateText', event.target.value)})),
           h('label', {className: 'dm-field'}, '来源备注（可选）', h('textarea', {className: 'dm-input', rows: 2, value: state.candidateSource || '', disabled: !writable, onChange: event => editCandidate('candidateSource', event.target.value)})),
@@ -1072,15 +1071,18 @@ globalThis.DshMathFormUI = function (React, F, Preview) {
             compare({fields: [{key: 'body', label: '正文'}], local: {body: state.candidatePreview.body}, remote: {body: state.candidatePreview.result}, localLabel: '原稿', remoteLabel: '追加后的草稿（未经审核）', localVersion: `v${state.candidatePreview.rev} + 本地编辑`}),
             !candidateCurrent && h('p', {role: 'alert', className: 'dm-local-hint'}, '原稿版本已改变，请重新预览。'),
             button('追加到草稿（未经审核）', () => { setAllowLeave(false); controller.current?.adoptCandidate(); }, candidateBlocked || !candidateCurrent, true))),
-        writable && h('div', {className: 'dm-actions dm-promotion'}, button('整理为笔记', () => promote('Note'), state.busy || !state.loaded || !state.body.trim()),
-          button('整理为待证事项', () => promote('Obligation'), state.busy || !state.loaded || !state.body.trim())),
+        writable && h('details', {className: 'dm-details'}, h('summary', null, '整理为研究记录'),
+          h('p', {className: 'dm-record-text'}, '草稿不进入正式记录或默认导出。整理后补全字段再保存。'),
+          h('div', {className: 'dm-actions dm-promotion'}, button('整理为笔记', () => promote('Note'), state.busy || !state.loaded || !state.body.trim()),
+            button('整理为待证事项', () => promote('Obligation'), state.busy || !state.loaded || !state.body.trim()))),
         h('details', {className: 'dm-details'}, h('summary', null, `历史版本（${state.history.length}）`),
+          button('读取最新版本', () => controller.current?.load(), state.loading || state.busy),
           ...[...state.history].sort((a, b) => b.rev - a.rev).map(item => h('div', {key: item.rev, className: 'dm-history-row'}, button(`查看 v${item.rev}`, () => controller.current?.history(item.rev)), h('span', {className: 'dm-record-text'}, `${item.title || '无标题'} · ${item.saved_at || ''}`))),
           !state.history.length && h('p', {className: 'dm-empty'}, '尚无历史版本')),
         state.preview && h('section', {className: 'dm-panel', 'aria-label': '草稿本历史预览'}, h('h4', null, `历史 v${state.preview.rev} · ${state.preview.title}`), renderPreview(state.preview.body),
           h('div', {className: 'dm-actions'}, writable && button('恢复为新版本', () => controller.current?.restore(state.preview.rev), state.busy || state.dirty || !!state.attempt), button('关闭历史预览', () => controller.current?.clearPreview())),
           state.dirty && h('p', {className: 'dm-local-hint'}, '请先保存当前本地修改，恢复不会抹去历史。')),
-        (state.dirty || state.attempt || hasCandidate(state)) && h('p', {className: 'dm-local-hint'}, hasCandidate(state) ? '尚有未采用的候选。请追加、明确丢弃，或选择仅保留本窗口再离开；候选不会自动写入草稿。' : '切换项目前会尝试保存；失败时不会离开。',
+        (state.blocked || state.attempt || hasCandidate(state)) && h('p', {className: 'dm-local-hint'}, hasCandidate(state) ? '尚有未采用的候选。请追加、明确丢弃，或选择仅保留本窗口再离开；候选不会自动写入草稿。' : '切换项目前会尝试保存；失败时不会离开。',
           button('仅保留本窗口并允许离开', () => setAllowLeave(true)), allowLeave && ' 本地稿已保留在本窗口；刷新或关闭窗口可能丢失。'));
     }
     function LegacyImport({request, sessionId, close, onImported}) {
@@ -1320,21 +1322,27 @@ globalThis.DshMathFormUI = function (React, F, Preview) {
       useEffect(() => { if (autoFocus) { heading.current?.focus?.({preventScroll: true}); heading.current?.scrollIntoView?.({block: 'nearest'}); } }, [key, autoFocus]);
       if (!object) return h('p', {className: 'dm-muted'}, '选择一条记录阅读。');
       const d = object.data || {}, refs = references(object), incoming = backlinks(view, object), row = recordRows(view).find(r => refKey(r.object) === key);
-      const field = (label, value) => h(Field, {key: label, label, value});
+      const hasContent = value => value != null && (typeof value === 'string' ? value.trim().length > 0 : Array.isArray(value) ? value.some(hasContent) : typeof value === 'object' ? Object.values(value).some(hasContent) : true);
+      const field = (label, value) => hasContent(value) ? h(Field, {key: label, label, value}) : null;
       let fields;
       switch (object.kind) {
         case 'Problem': fields = [field('问题陈述', d.statement), field('量词', d.quantifiers), field('对象与范围', d.domain), field('约定', d.conventions), field('完成条件', d.completion_criteria), field('目标类型（登记值）', d.target_type), field('知识状态（登记值）', d.knowledge_status), field('与父问题的关系', d.relation), field('来源（未核实为真）', d.sources)]; break;
         case 'Note': fields = [field('简述', d.summary), field('正文', d.body), field('主张', d.statement), field('假设', d.assumptions), field('缺口', d.gaps), field('笔记类型', d.note_type), ...(d.route_id ? [field('路线', d.route_id)] : []), ...(d.failure ? Object.entries({inputs: '失败输入', location: '失败位置', observed: '观察结果', negated_scope: '否定范围', retry_change: '再次尝试应改变什么'}).map(([k, label]) => field(label, d.failure[k])) : [])]; break;
         case 'Obligation': fields = [field('待证陈述', d.statement), field('适用范围', d.scope), field('完成条件', d.completion_criteria), field('下一步', d.next_action), field('登记原因', d.reason), field('记录中的状态（非验证结论）', stateLabel(d.state)), field('检查方式（登记值）', d.check_method), ...(d.checker_id ? [field('固定 checker', d.checker_id)] : [])]; break;
         case 'Evidence': fields = [field('材料类型', d.evidence_type), field('支持范围', d.support_scope), field('局限与未核实项', d.limits), field('来源状态（非真实性验证）', d.source_status), field('来源定位', d.source?.locator), field('来源版本', d.source?.version), field('访问时间', d.source?.accessed_at), field('来源条件', d.source?.conditions), field('生产或导入方式', d.production?.method), field('生产方式版本', d.production?.version), ...(d.citation ? [field('引文标题', d.citation.title), field('页码', d.citation.page), field('章节', d.citation.section), field('定理', d.citation.theorem), field('摘录 SHA256', d.citation.excerpt_sha256), field('来源条件映射（登记值）', d.citation.condition_map)] : []), field('附件元数据（原文未自动加载）', d.attachments)]; break;
-        case 'Review': fields = [field('审核方式', d.method), field('登记结论（仅指定范围）', d.verdict), field('审核范围', d.scope), field('审核发现', d.findings), field('审核者', d.reviewer), field('checker 版本', d.checker_version), field('错误码', d.error_code), field('依据哈希', d.basis_hash), h(ReviewBasis, {key: 'basis', basis: d.basis}), ...(d.execution ? [field('执行记录（非全局证明）', d.execution)] : [])]; break;
+        case 'Review': fields = [field('审核方式', d.method), field('登记结论（仅指定范围）', d.verdict), field('审核范围', d.scope), field('审核发现', d.findings), field('审核者', d.reviewer), field('checker 版本', d.checker_version), field('错误码', d.error_code), field('依据哈希', d.basis_hash), hasContent(d.basis) && h(ReviewBasis, {key: 'basis', basis: d.basis}), ...(d.execution ? [field('执行记录（非全局证明）', d.execution)] : [])]; break;
         default: fields = [h('p', {key: 'unknown', className: 'dm-muted'}, '未知记录类型，未猜测字段含义；完整内容保留在原始 JSON。')];
       }
-      return h('article', {className: 'dm-record-reader'}, h('div', {className: 'dm-reader-actions'}, typeof onClose === 'function' && button('返回记录列表', onClose), typeof onPin === 'function' && button(pinned ? '取消固定此版本' : '固定此精确版本', () => onPin(object), {'aria-pressed': pinned})),
-        h('h3', {className: 'dm-record-heading', ref: heading, tabIndex: -1}, title(object)), h('p', {className: 'dm-record-meta'}, `${kindLabel(object.kind)} · `, h('code', {}, key)), h(Copy, {value: key, label: '复制 ID@rev', disabled: !validRef(object)}),
-        row && !row.latest && h('p', {role: 'status'}, `正在阅读历史版本 ${key}；存在 @${row.latestRev}，未自动升级。`), h(Registered, {row}), ...fields,
-        h('section', {className: 'dm-record-section dm-record-refs'}, h('h4', {}, '引用与参考材料（精确版本）'), refs.length ? h('ul', {}, ...refs.map((r, i) => h('li', {key: i}, h(Ref, {value: r.ref, relation: r.relation, view, inspect})))) : h('p', {className: 'dm-muted'}, '无已登记引用。')),
-        h('section', {className: 'dm-record-section dm-record-refs'}, h('h4', {}, '被引用位置（含项目内历史记录）'), incoming.length ? h('ul', {}, ...incoming.map((r, i) => h('li', {key: i}, h(Ref, {value: r.object, relation: r.relation, view, inspect})))) : h('p', {className: 'dm-muted'}, '当前项目快照未登记回指。')),
+      const technicalLabels = new Set(['目标类型（登记值）', '知识状态（登记值）', '笔记类型', '路线', '检查方式（登记值）', '固定 checker', '材料类型', '来源定位', '来源版本', '访问时间', '生产或导入方式', '生产方式版本', '页码', '章节', '定理', '摘录 SHA256', '附件元数据（原文未自动加载）', '审核者', 'checker 版本', '依据哈希', '执行记录（非全局证明）']);
+      const content = fields.filter(value => value && !technicalLabels.has(value.props?.label));
+      const metadata = fields.filter(value => value && technicalLabels.has(value.props?.label));
+      return h('article', {className: 'dm-record-reader'}, typeof onClose === 'function' && h('div', {className: 'dm-reader-actions'}, button('返回记录列表', onClose)),
+        h('h3', {className: 'dm-record-heading', ref: heading, tabIndex: -1}, title(object)), h('p', {className: 'dm-record-meta'}, `${kindLabel(object.kind)} · `, h('code', {}, key), pinned && ' · 已固定'),
+        h('details', {className: 'dm-details'}, h('summary', {}, '复制与固定'), h(Copy, {value: key, label: '复制 ID@rev', disabled: !validRef(object)}), typeof onPin === 'function' && button(pinned ? '取消固定此版本' : '固定此精确版本', () => onPin(object), {'aria-pressed': pinned})),
+        row && !row.latest && h('p', {role: 'status'}, `正在阅读历史版本 ${key}；存在 @${row.latestRev}，未自动升级。`), h(Registered, {row}), ...content,
+        refs.length > 0 && h('section', {className: 'dm-record-section dm-record-refs'}, h('h4', {}, '引用与参考材料（精确版本）'), h('ul', {}, ...refs.map((r, i) => h('li', {key: i}, h(Ref, {value: r.ref, relation: r.relation, view, inspect}))))),
+        incoming.length > 0 && h('details', {className: 'dm-details dm-record-refs'}, h('summary', {}, `被引用位置 · ${incoming.length}（含历史记录）`), h('ul', {}, ...incoming.map((r, i) => h('li', {key: i}, h(Ref, {value: r.object, relation: r.relation, view, inspect}))))),
+        metadata.length > 0 && h('details', {className: 'dm-details'}, h('summary', {}, '技术与来源信息'), ...metadata),
         children, raw(object));
     }
     function RecordBrowser({view, inspect}) {
@@ -1346,16 +1354,21 @@ globalThis.DshMathFormUI = function (React, F, Preview) {
       const select = (label, value, setter, options) => h('label', {}, label, h('select', {value, onChange: change(setter)}, ...options.map(([v, caption]) => h('option', {key: v, value: v}, caption))));
       const open = object => { setSelected({id: object.id, rev: object.rev}); if (typeof inspect === 'function') inspect(object); };
       const selectedObject = exactObject(view, selected);
+      const extraFilters = Number(!!group) + Number(!!status) + Number(history !== 'latest');
+      const resetExtraFilters = () => { setGroup(''); setStatus(''); setHistory('latest'); setLimit(PAGE_SIZE); };
       return h('section', {className: 'dm-record-browser', 'aria-label': '项目内记录检索'},
-        h('div', {className: 'dm-record-filters'}, h('label', {}, '搜索 ID、标题或正文', h('input', {type: 'search', value: query, onChange: change(setQuery), placeholder: '仅搜索当前项目'})),
-          select('类型', kind, setKind, [['', '全部类型'], ...[...new Set(allRows.map(r => r.object.kind))].map(k => [k, kindLabel(k)])]),
-          select('登记分组', group, setGroup, [['', '全部分组'], ...Object.keys(view?.groups || {}).map(k => [k, groupLabels[k] || k])]),
-          select('登记审核状态', status, setStatus, [['', '全部状态'], ...[...new Set(allRows.map(r => r.status))].map(k => [k, k === 'unassessed' ? '无此版本评估' : stateLabel(k)])]),
-          select('版本', history, setHistory, [['latest', '每个 ID 的最新版本'], ['all', '全部精确版本'], ['historical', '仅历史版本']])),
+        h('div', {className: 'dm-record-filters'}, h('label', {}, '搜索记录', h('input', {type: 'search', value: query, onChange: change(setQuery), placeholder: 'ID、标题或正文'})),
+          select('类型', kind, setKind, [['', '全部类型'], ...[...new Set(allRows.map(r => r.object.kind))].map(k => [k, kindLabel(k)])])),
+        h('details', {className: 'dm-details dm-record-advanced'}, h('summary', {}, `更多筛选${extraFilters ? ` · ${extraFilters} 项生效` : ''}`),
+          h('div', {className: 'dm-record-filters'},
+            select('登记分组', group, setGroup, [['', '全部分组'], ...Object.keys(view?.groups || {}).map(k => [k, groupLabels[k] || k])]),
+            select('登记审核状态', status, setStatus, [['', '全部状态'], ...[...new Set(allRows.map(r => r.status))].map(k => [k, k === 'unassessed' ? '无此版本评估' : stateLabel(k)])]),
+            select('版本', history, setHistory, [['latest', '每个 ID 的最新版本'], ['all', '全部精确版本'], ['historical', '仅历史版本']])),
+          button('重置更多筛选', resetExtraFilters, {disabled: !extraFilters})),
         selected && h('div', {className: 'dm-record-selected'}, h('p', {}, `保留选中：${refKey(selected)}（过滤不改变版本）`), selectedObject ? button('重新打开选中版本', () => open(selectedObject)) : h('p', {role: 'status'}, '本次快照无此精确版本；未替换为新版。')),
-        h('p', {role: 'status'}, `匹配 ${result.total} 条，已显示 ${result.rows.length} 条；仅搜索已载入的本项目快照。`),
+        h('p', {role: 'status'}, `匹配 ${result.total} 条${result.hasMore ? ` · 已显示 ${result.rows.length} 条` : ''}`),
         h('ul', {className: 'dm-record-results'}, ...result.rows.map(row => h('li', {key: refKey(row.object), className: 'dm-record-item'}, button(title(row.object), () => open(row.object), {'aria-current': selected && refKey(selected) === refKey(row.object) ? 'true' : undefined}), h('p', {className: 'dm-record-meta'}, `${kindLabel(row.object.kind)} · ${refKey(row.object)} · ${row.latest ? '最新' : '历史'} · ${row.assessment ? `已登记：${stateLabel(row.assessment.state)}` : '无此版本审核评估'}`)))),
-        !result.total && h('p', {className: 'dm-muted'}, '没有匹配记录。可更改筛选；已选精确版本不会自动升级。'), result.hasMore && button('再显示 60 条', () => setLimit(n => n + PAGE_SIZE)));
+        !result.total && h('p', {className: 'dm-muted'}, '没有匹配记录，请调整搜索或筛选。'), result.hasMore && button('再显示 60 条', () => setLimit(n => n + PAGE_SIZE)));
     }
     function ReviewBasis({basis}) {
       if (!basis || typeof basis !== 'object') return h(Field, {label: '精确审核依据', value: basis});
@@ -1784,7 +1797,7 @@ globalThis.DshMathGraphUI = function (React, Graph) {
   const button = (text, onClick, props = {}) => h('button', {type: 'button', className: 'dm-button dm-small dm-ghost', onClick, ...props}, text);
   return function ProcessGraph({graph, inspect}) {
     const [selected, setSelected] = useState(null), [collapsed, setCollapsed] = useState({}), [limits, setLimits] = useState({});
-    const [download, setDownload] = useState(''), [message, setMessage] = useState(''), [showJSON, setShowJSON] = useState(false);
+    const [download, setDownload] = useState(''), [message, setMessage] = useState('');
     const [mode, setMode] = useState('summary'), [search, setSearch] = useState('');
     const [statusFilter, setStatusFilter] = useState(''), [kindFilter, setKindFilter] = useState(''), [listLimits, setListLimits] = useState({});
     const detailHeading = useRef(null), originButton = useRef(null);
@@ -1879,9 +1892,8 @@ globalThis.DshMathGraphUI = function (React, Graph) {
           h('label', {className: 'dm-graph-filter'}, '节点类型', h('select', {value: kindFilter, 'aria-label': '节点类型', onChange: change(setKindFilter)},
             h('option', {value: ''}, '全部类型'), ...['event', 'record', 'source'].map(kind => h('option', {key: kind, value: kind}, labels[kind])))),
           button('清除筛选', () => { setSearch(''); setStatusFilter(''); setKindFilter(''); setListLimits({}); }, {disabled: !search && !statusFilter && !kindFilter})),
-        h('p', {className: 'dm-local-hint dm-graph-list-count', 'aria-live': 'polite'}, `已显示 ${shown} 项 · 匹配 ${matched} / ${total} 项（含来源与产物）。筛选仅影响列表，JSON 始终保存完整快照。`),
-        h('p', {className: 'dm-local-hint'}, '按原来源分组，各来源内按 seq 排列；同 seq 保留快照顺序，缺失 seq 的项置后并标为未知。没有跨来源统一时间或推断因果；未知不等于正在运行。'),
-        matched ? sections : h('p', {className: 'dm-graph-empty'}, '没有匹配的已收录记录。可清除筛选；未选择或未纳入的事件不会补读。'));
+        h('p', {className: 'dm-local-hint dm-graph-list-count', 'aria-live': 'polite'}, `${matched} / ${total} 项${shown < matched ? ` · 已显示 ${shown} 项` : ''}`),
+        matched ? sections : h('p', {className: 'dm-graph-empty'}, '没有匹配记录，请调整筛选。'));
     }
     function branch(node) {
       const descendants = children.get(node.id) || [];
@@ -1898,16 +1910,14 @@ globalThis.DshMathGraphUI = function (React, Graph) {
     }
     return h('section', {className: 'dm-process-graph', 'aria-label': '已记录研究过程图'},
       h('div', {className: 'dm-graph-caption'},
-        h('div', null, h('h3', {className: 'dm-panel-title'}, '每一步，都有出处'),
-          h('p', {className: 'dm-record-text'}, `${graph.counts.events} 个动作 · ${graph.counts.records} 个版本产物 · seq ${graph.research_seq}`)),
-        download && h('a', {className: 'dm-button dm-small', href: download, download: `dsh-math-process-${graph.project_id}-seq-${graph.research_seq}.json`,
-          onClick: () => setMessage('已请求浏览器下载 JSON；请在下载列表确认保存结果。')}, '保存 JSON 快照')),
-      h('p', {className: 'dm-local-hint dm-graph-notice'}, '连线表示来源分组与产物归属，不代表推理因果。引用关系见节点详情；点击卡片可查看记录。'),
+        h('div', null, h('h3', {className: 'dm-panel-title'}, '研究过程'),
+          h('p', {className: 'dm-record-text'}, `${graph.counts.events} 个动作 · ${graph.counts.records} 个版本产物`))),
+      h('p', {className: 'dm-local-hint dm-graph-notice'}, '点击节点查看详情；连线表示归属，不代表推理因果。'),
       h('div', {className: 'dm-graph-mode-switch', role: 'group', 'aria-label': '过程显示方式'},
         ...[['summary', '概要'], ['entries', '逐条']].map(([value, label]) => button(label, () => setMode(value),
           {key: value, className: 'dm-button dm-small dm-graph-mode-button', 'aria-pressed': mode === value, 'data-active': mode === value}))),
-      graph.warnings.length > 0 && h('details', {className: 'dm-details dm-graph-warnings'}, h('summary', null, `${graph.warnings.length} 条覆盖范围说明`),
-        h('ul', null, ...graph.warnings.map((warning, index) => h('li', {key: index}, warning)))),
+      graph.nodes.some(node => node.status === 'error' || node.status === 'unknown') && h('p', {className: 'dm-operation-status', role: 'status'},
+        `错误 ${graph.nodes.filter(node => node.status === 'error').length} 项 · 未知 ${graph.nodes.filter(node => node.status === 'unknown').length} 项；未知不表示正在运行。`),
       focused && h('section', {className: 'dm-graph-detail', 'aria-label': '过程节点详情', onKeyDown: event => { if (event.key === 'Escape') { event.stopPropagation(); close(); } }},
         h('div', {className: 'dm-panel-header'}, h('h3', {className: 'dm-panel-title', tabIndex: -1, ref: detailHeading}, focused.title), button('关闭节点详情', close)),
         h('p', {className: 'dm-record-text'}, `${labels[focused.kind]} · ${focused.statusLabel}`),
@@ -1924,10 +1934,16 @@ globalThis.DshMathGraphUI = function (React, Graph) {
               next ? button(next.title, () => choose(next)) : h('span', null, '未收录的精确引用'));
           }))),
       mode === 'summary' ? h('div', {className: 'dm-graph-board'}, h('ul', {className: 'dm-graph-roots', 'aria-label': '研究过程节点'}, ...(children.get(null) || []).map(branch))) : entryList(),
-      h('p', {className: 'dm-local-hint'}, graph.notice),
-      h('p', {className: 'dm-local-hint'}, '快照不是审核包或数学证明，包含记录摘要与来源路径，分享前请检查。此处不展示工具输入/输出原文或模型推理流。'),
-      message && h('p', {className: 'dm-operation-status', role: 'status'}, message),
-      h('details', {className: 'dm-details', onToggle: event => setShowJSON(event.currentTarget.open)}, h('summary', null, '查看可保存的 JSON 快照'), showJSON && h('pre', {className: 'dm-code'}, Graph.serialize(graph))));
+      h('details', {className: 'dm-details dm-graph-warnings'}, h('summary', null, `覆盖范围${graph.warnings.length ? ` · ${graph.warnings.length} 条说明` : ''}`),
+        h('p', {className: 'dm-local-hint'}, graph.notice),
+        h('p', {className: 'dm-local-hint'}, '逐条视图按来源分组、来源内 seq 排列；缺失 seq 标为未知，没有跨来源统一时间或推断因果。'),
+        graph.warnings.length > 0 && h('ul', null, ...graph.warnings.map((warning, index) => h('li', {key: index}, warning)))),
+      h('details', {className: 'dm-details'}, h('summary', null, 'JSON 快照与下载'),
+        h('p', {className: 'dm-local-hint'}, `研究 seq ${graph.research_seq} · 筛选不改变完整快照。快照不是审核包或数学证明；包含摘要与来源路径，分享前请检查。`),
+        download && h('a', {className: 'dm-button dm-small', href: download, download: `dsh-math-process-${graph.project_id}-seq-${graph.research_seq}.json`,
+          onClick: () => setMessage('已请求浏览器下载 JSON；请在下载列表确认保存结果。')}, '保存 JSON 快照'),
+        message && h('p', {className: 'dm-operation-status', role: 'status'}, message),
+        h('pre', {className: 'dm-code'}, Graph.serialize(graph))));
   };
 };
 
@@ -2234,6 +2250,8 @@ summary.dm-editor-section-heading { cursor: pointer; }
 .dm-diff-local > :first-child, .dm-diff-remote > :last-child, .dm-diff-changed > div { background: color-mix(in srgb, var(--dm-accent) 6%, var(--dm-bg)); border-left: 2px solid var(--dm-accent); }
 .dm-comparison-field { margin: 8px 0; }
 .dm-comparison-field > summary { cursor: pointer; font-size: 12px; }
+details.dm-candidate:not([open]) { margin: 10px 0; padding: 0; border: 0; background: transparent; }
+.dm-record-advanced > .dm-record-filters { margin-top: 10px; }
 .dm-candidate-input { min-height: 130px; }
 .dm-candidate-preview { margin-top: 14px; }
 .dm-graph-mode-switch { display: flex; gap: 6px; margin: 12px 0; }
@@ -2753,20 +2771,22 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
         `正式记录 ${promotionLink.target.id}@${promotionLink.target.rev} 已保存；来源草稿 v${promotionLink.scratchpad_rev} 链接待登记。`,
         h(Button, {disabled: busy || !writable, onClick: () => run(async () => { await linkPromotion(promotionLink); await load(); })}, '重试来源链接')),
       view && h(React.Fragment, null,
-        h('div', {className: 'dm-stats'}, ...stats.map(([label, value]) => h('div', {className: 'dm-stat', key: label}, h('span', {className: 'dm-stat-value'}, value), h('span', {className: 'dm-stat-label'}, label)))),
+        tab === 'overview' && h('div', {className: 'dm-stats'}, ...stats.map(([label, value]) => h('div', {className: 'dm-stat', key: label}, h('span', {className: 'dm-stat-value'}, value), h('span', {className: 'dm-stat-label'}, label)))),
         !writable && h('p', {className: 'dm-readonly', role: 'status'}, '只读项目 · 不可编辑草稿本、登记／修订记录或提交审核。'),
         h('nav', {className: 'dm-tabs', role: 'tablist', 'aria-label': '研究工作台视图', onKeyDown: navigateTabs}, ...tabs.map(([id, label, title]) => h('button', {key: id, type: 'button', role: 'tab', id: `${surface.current}-${id}-tab`, 'aria-controls': `${surface.current}-${id}-panel`, 'aria-selected': tab === id, tabIndex: tab === id ? 0 : -1, className: 'dm-tab', title, 'aria-label': title, 'data-active': tab === id, onClick: () => changeTab(id)}, label))),
         h('div', panelProps('scratchpad'), h(Scratchpad, {key: `${sessionId}:${selected}`, request: workbenchRequest.current, sessionId, projectId: selected, writable,
           active: tab === 'scratchpad', registerGuard, onPromote: (kind, pad) => edit(kind, null, pad)})),
         h('section', panelProps('process'),
           h('div', {className: 'dm-actions dm-graph-tools'},
-            h(Button, {size: 'small', disabled: busy, onClick: () => readProcess([])}, '读取本项目记录'),
-            h(Button, {size: 'small', disabled: busy || !sources.length, onClick: () => readProcess(sources)}, `加入所选来源（${sources.length}）`),
-            h(Button, {size: 'small', variant: 'ghost', onClick: () => setTab('replay')}, '选择工具账本')),
-          h('p', {className: 'dm-record-text'}, '只读快照，不自动扫描会话或启动研究。额外来源在“回放与导出”中明确选择后加入。'),
+            h(Button, {size: 'small', variant: 'primary', disabled: busy, onClick: () => readProcess([])}, process ? '刷新过程' : '查看研究过程')),
+          h('details', {className: 'dm-details'}, h('summary', null, '更多来源'),
+            h('p', {className: 'dm-record-text'}, '只加入你明确选择的来源，不自动扫描其他会话。'),
+            h('div', {className: 'dm-actions'},
+              h(Button, {size: 'small', disabled: busy || !sources.length, onClick: () => readProcess(sources)}, `加入所选来源（${sources.length}）`),
+              h(Button, {size: 'small', variant: 'ghost', onClick: () => setTab('replay')}, '选择工具账本'))),
           process ? h(ProcessGraph, {key: pretty([process.research_head, process.sources]), graph: process,
             inspect: value => inspect(view.objects.find(object => object.id === value.id && object.rev === value.rev))}) :
-            h('p', {className: 'dm-empty'}, busy ? '正在读取已记录过程…' : '尚未读取。点击“读取本项目记录”生成过程图。')),
+            h('p', {className: 'dm-empty'}, busy ? '正在读取已记录过程…' : '点击“查看研究过程”，查看已记录的步骤与产物。')),
         h('section', panelProps('overview'),
           goal && h('section', {className: 'dm-goal'},
             h('div', {className: 'dm-section-label'}, '当前目标', h('span', {className: 'dm-panel-meta'}, `seq ${view.snapshot.state.seq}`)),
@@ -2783,7 +2803,7 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
             h('p', {className: 'dm-record-text'}, '开放性与数学结论不由软件自动判定；当前状态由版本化记录推导。'),
             navigateSession && h(Button, {onClick: () => leave(() => navigateSession(view.project.session_id))}, '进入关联普通会话'))),
         h('section', {...panelProps('records'), className: 'dm-records'},
-          h(Panel, {title: '研究记录', meta: '正文优先 · 精确版本可追溯'}, writable && recordActions({busy, edit})),
+          h(Panel, {title: '研究记录'}, writable && recordActions({busy, edit})),
           editor && writable && h(Panel, {title: '编辑研究记录'}, editor.promotion && h('p', {className: 'dm-record-text'}, `整理自草稿本 v${editor.promotion.scratchpad_rev}；请补全正式字段。保存后登记精确来源链接，原草稿保留。`),
             h(Editor, {key: editor.operation_id, initial: editor, initialDirty: local.current.dirty, initialAttempt: local.current.attempt, objects: view.objects, busy, inspect,
               onDraftChange: (next, meta) => { if (lifetime.current.active && local.current.draft?.operation_id === next.operation_id) changeEditor(next, meta); },
@@ -2797,7 +2817,7 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
                 h('div', {className: 'dm-actions'},
                   ['Note', 'Obligation', 'Evidence'].includes(focus.kind) && writable && h(Button, {disabled: busy, onClick: () => edit(focus.kind, focus)}, '修订此记录'),
                   ['Note', 'Obligation'].includes(focus.kind) && writable && h(Button, {disabled: busy || !!local.current.review?.attempt, onClick: () => replaceLocal(() => requestReview(), 'review')}, '人工审核预览'),
-                  h(Button, {onClick: () => setContextObject(focus)}, '准备上下文包'), h(Button, {variant: 'ghost', onClick: closeDetail}, '关闭详情')),
+                  h('details', {className: 'dm-details'}, h('summary', null, '更多操作'), h(Button, {onClick: () => setContextObject(focus)}, '准备上下文包'))),
                 focus.kind === 'Obligation' && writable && h(Refs, {label: '审核所选候选', objects: view.objects.filter(o => (focus.data.candidates || []).some(r => F.refKey(r) === F.refKey(o))), kinds: ['Note'], problem: focus.data.problem_ref, value: candidate, single: true, change: v => replaceLocal(() => { setCandidate(v); clearReview(); }, 'review'), inspect}),
                 focus.kind === 'Evidence' && (focus.data.attachments || []).map(a => h(Button, {key: a.sha256, onClick: () => run(async () => setAttachment(await api('attachment', {project_id: selected, object_id: focus.id, rev: focus.rev, sha256: a.sha256})), '读取归档原文')}, `查看原文 ${a.logical_name}`)),
                 attachment && h('pre', {className: 'dm-code'}, attachment.text === null ? pretty(attachment) : attachment.text)),
@@ -2828,7 +2848,7 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
             h(Button, {variant: 'primary', disabled: busy, onClick: () => { setReceipt(null); return run(async () => setReceipt(await api('export', {project_id: selected, sources, expected_seq: view.snapshot.state.seq})), '生成本地审核包'); }}, '生成本地审核包')),
           replay && h('section', {className: 'dm-replay-result'}, h('p', {role: 'status'}, `已读取 ${replay.events?.length ?? '未知'} 条回放事件；仅限明确选择的来源。`), h('details', {className: 'dm-details'}, h('summary', null, '回放原始记录'), h('pre', {className: 'dm-code'}, pretty(replay)))),
           receipt && h(ExportReceipt, {receipt})))),
-      view && h('div', {className: 'dm-import-compact'}, h(Button, {variant: 'ghost', size: 'small', disabled: busy, onClick: () => leave(() => setImporting(true))}, '导入旧研究库（只读副本）')),
+      view && tab === 'overview' && h('div', {className: 'dm-import-compact'}, h(Button, {variant: 'ghost', size: 'small', disabled: busy, onClick: () => leave(() => setImporting(true))}, '导入旧研究库（只读副本）')),
       !view && h('section', {className: 'dm-import', 'aria-label': '导入旧研究库（只读副本）'},
         h('div', {className: 'dm-import-copy'},
           h('div', {className: 'dm-import-heading'}, h('h3', null, '延续已有研究'), h('span', {className: 'dm-badge'}, '只读副本')),

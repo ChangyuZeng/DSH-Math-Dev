@@ -103,8 +103,8 @@ test('Reader sends text through injected safe Preview, preserves full raw, and o
   assert.equal(nodes(tree, n => n.props.dangerouslySetInnerHTML).length, 0);
   assert.equal(nodes(tree, n => n.type === 'a' || n.type === 'img').length, 0);
   assert.match(strings(tree), /N@1/);
-  assert.equal(nodes(tree, n => n.type === 'details')[0].props.open, undefined);
-  assert.match(strings(nodes(tree, n => n.type === 'details')[0]), /https:\/\/tracker.invalid/);
+  assert.equal(nodes(tree, n => n.type === 'details' && n.props.className === 'dm-record-raw')[0].props.open, undefined);
+  assert.match(strings(nodes(tree, n => n.type === 'details' && n.props.className === 'dm-record-raw')[0]), /https:\/\/tracker.invalid/);
   assert.equal(nodes(tree, n => n.type === 'button').length, 0, 'Reader has no built-in edit, review, or pin without callbacks');
   const heading = nodes(tree, n => n.type === 'h3')[0]; assert.equal(heading.props.tabIndex, -1); assert.ok(heading.props.ref);
 });
@@ -226,7 +226,7 @@ test('title fallback is a 160-codepoint visual summary without changing original
   const h = harness(), tree = h.render('RecordReader', {object, view});
   assert.equal(strings(nodes(tree, n => n.type === 'h3')[0]), summary);
   assert.equal(nodes(tree, n => n.props.label === '待证陈述')[0].props.value, statement);
-  assert.equal(JSON.parse(nodes(nodes(tree, n => n.type === 'details')[0], n => n.type === 'pre')[0].children[0]).data.statement, statement);
+  assert.equal(JSON.parse(nodes(nodes(tree, n => n.type === 'details' && n.props.className === 'dm-record-raw')[0], n => n.type === 'pre')[0].children[0]).data.statement, statement);
   assert.equal(UI.filterRecords(view, {query: 'searchable-tail'}).rows[0].object, object);
   assert.equal(UI.buildContextPack(view, object, UI.initialContextRefs(view, object)).records.find(o => o.kind === 'Obligation').data.statement, statement);
   assert.equal(UI.title(note('N', 1, {title: '长标题'.repeat(100), statement})), '长标题'.repeat(100), 'Real title is not replaced by a statement summary');

@@ -5,7 +5,7 @@ globalThis.DshMathGraphUI = function (React, Graph) {
   const button = (text, onClick, props = {}) => h('button', {type: 'button', className: 'dm-button dm-small dm-ghost', onClick, ...props}, text);
   return function ProcessGraph({graph, inspect}) {
     const [selected, setSelected] = useState(null), [collapsed, setCollapsed] = useState({}), [limits, setLimits] = useState({});
-    const [download, setDownload] = useState(''), [message, setMessage] = useState(''), [showJSON, setShowJSON] = useState(false);
+    const [download, setDownload] = useState(''), [message, setMessage] = useState('');
     const [mode, setMode] = useState('summary'), [search, setSearch] = useState('');
     const [statusFilter, setStatusFilter] = useState(''), [kindFilter, setKindFilter] = useState(''), [listLimits, setListLimits] = useState({});
     const detailHeading = useRef(null), originButton = useRef(null);
@@ -100,9 +100,8 @@ globalThis.DshMathGraphUI = function (React, Graph) {
           h('label', {className: 'dm-graph-filter'}, '节点类型', h('select', {value: kindFilter, 'aria-label': '节点类型', onChange: change(setKindFilter)},
             h('option', {value: ''}, '全部类型'), ...['event', 'record', 'source'].map(kind => h('option', {key: kind, value: kind}, labels[kind])))),
           button('清除筛选', () => { setSearch(''); setStatusFilter(''); setKindFilter(''); setListLimits({}); }, {disabled: !search && !statusFilter && !kindFilter})),
-        h('p', {className: 'dm-local-hint dm-graph-list-count', 'aria-live': 'polite'}, `已显示 ${shown} 项 · 匹配 ${matched} / ${total} 项（含来源与产物）。筛选仅影响列表，JSON 始终保存完整快照。`),
-        h('p', {className: 'dm-local-hint'}, '按原来源分组，各来源内按 seq 排列；同 seq 保留快照顺序，缺失 seq 的项置后并标为未知。没有跨来源统一时间或推断因果；未知不等于正在运行。'),
-        matched ? sections : h('p', {className: 'dm-graph-empty'}, '没有匹配的已收录记录。可清除筛选；未选择或未纳入的事件不会补读。'));
+        h('p', {className: 'dm-local-hint dm-graph-list-count', 'aria-live': 'polite'}, `${matched} / ${total} 项${shown < matched ? ` · 已显示 ${shown} 项` : ''}`),
+        matched ? sections : h('p', {className: 'dm-graph-empty'}, '没有匹配记录，请调整筛选。'));
     }
     function branch(node) {
       const descendants = children.get(node.id) || [];
@@ -119,16 +118,14 @@ globalThis.DshMathGraphUI = function (React, Graph) {
     }
     return h('section', {className: 'dm-process-graph', 'aria-label': '已记录研究过程图'},
       h('div', {className: 'dm-graph-caption'},
-        h('div', null, h('h3', {className: 'dm-panel-title'}, '每一步，都有出处'),
-          h('p', {className: 'dm-record-text'}, `${graph.counts.events} 个动作 · ${graph.counts.records} 个版本产物 · seq ${graph.research_seq}`)),
-        download && h('a', {className: 'dm-button dm-small', href: download, download: `dsh-math-process-${graph.project_id}-seq-${graph.research_seq}.json`,
-          onClick: () => setMessage('已请求浏览器下载 JSON；请在下载列表确认保存结果。')}, '保存 JSON 快照')),
-      h('p', {className: 'dm-local-hint dm-graph-notice'}, '连线表示来源分组与产物归属，不代表推理因果。引用关系见节点详情；点击卡片可查看记录。'),
+        h('div', null, h('h3', {className: 'dm-panel-title'}, '研究过程'),
+          h('p', {className: 'dm-record-text'}, `${graph.counts.events} 个动作 · ${graph.counts.records} 个版本产物`))),
+      h('p', {className: 'dm-local-hint dm-graph-notice'}, '点击节点查看详情；连线表示归属，不代表推理因果。'),
       h('div', {className: 'dm-graph-mode-switch', role: 'group', 'aria-label': '过程显示方式'},
         ...[['summary', '概要'], ['entries', '逐条']].map(([value, label]) => button(label, () => setMode(value),
           {key: value, className: 'dm-button dm-small dm-graph-mode-button', 'aria-pressed': mode === value, 'data-active': mode === value}))),
-      graph.warnings.length > 0 && h('details', {className: 'dm-details dm-graph-warnings'}, h('summary', null, `${graph.warnings.length} 条覆盖范围说明`),
-        h('ul', null, ...graph.warnings.map((warning, index) => h('li', {key: index}, warning)))),
+      graph.nodes.some(node => node.status === 'error' || node.status === 'unknown') && h('p', {className: 'dm-operation-status', role: 'status'},
+        `错误 ${graph.nodes.filter(node => node.status === 'error').length} 项 · 未知 ${graph.nodes.filter(node => node.status === 'unknown').length} 项；未知不表示正在运行。`),
       focused && h('section', {className: 'dm-graph-detail', 'aria-label': '过程节点详情', onKeyDown: event => { if (event.key === 'Escape') { event.stopPropagation(); close(); } }},
         h('div', {className: 'dm-panel-header'}, h('h3', {className: 'dm-panel-title', tabIndex: -1, ref: detailHeading}, focused.title), button('关闭节点详情', close)),
         h('p', {className: 'dm-record-text'}, `${labels[focused.kind]} · ${focused.statusLabel}`),
@@ -145,9 +142,15 @@ globalThis.DshMathGraphUI = function (React, Graph) {
               next ? button(next.title, () => choose(next)) : h('span', null, '未收录的精确引用'));
           }))),
       mode === 'summary' ? h('div', {className: 'dm-graph-board'}, h('ul', {className: 'dm-graph-roots', 'aria-label': '研究过程节点'}, ...(children.get(null) || []).map(branch))) : entryList(),
-      h('p', {className: 'dm-local-hint'}, graph.notice),
-      h('p', {className: 'dm-local-hint'}, '快照不是审核包或数学证明，包含记录摘要与来源路径，分享前请检查。此处不展示工具输入/输出原文或模型推理流。'),
-      message && h('p', {className: 'dm-operation-status', role: 'status'}, message),
-      h('details', {className: 'dm-details', onToggle: event => setShowJSON(event.currentTarget.open)}, h('summary', null, '查看可保存的 JSON 快照'), showJSON && h('pre', {className: 'dm-code'}, Graph.serialize(graph))));
+      h('details', {className: 'dm-details dm-graph-warnings'}, h('summary', null, `覆盖范围${graph.warnings.length ? ` · ${graph.warnings.length} 条说明` : ''}`),
+        h('p', {className: 'dm-local-hint'}, graph.notice),
+        h('p', {className: 'dm-local-hint'}, '逐条视图按来源分组、来源内 seq 排列；缺失 seq 标为未知，没有跨来源统一时间或推断因果。'),
+        graph.warnings.length > 0 && h('ul', null, ...graph.warnings.map((warning, index) => h('li', {key: index}, warning)))),
+      h('details', {className: 'dm-details'}, h('summary', null, 'JSON 快照与下载'),
+        h('p', {className: 'dm-local-hint'}, `研究 seq ${graph.research_seq} · 筛选不改变完整快照。快照不是审核包或数学证明；包含摘要与来源路径，分享前请检查。`),
+        download && h('a', {className: 'dm-button dm-small', href: download, download: `dsh-math-process-${graph.project_id}-seq-${graph.research_seq}.json`,
+          onClick: () => setMessage('已请求浏览器下载 JSON；请在下载列表确认保存结果。')}, '保存 JSON 快照'),
+        message && h('p', {className: 'dm-operation-status', role: 'status'}, message),
+        h('pre', {className: 'dm-code'}, Graph.serialize(graph))));
   };
 };

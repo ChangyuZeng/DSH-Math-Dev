@@ -1,6 +1,6 @@
 {
   "name": "dsh-math",
-  "version": "0.7.5",
+  "version": "0.7.6",
   "description": "Local mathematical scratchpad, conversational project preparation, exact evidence references and human review in the DSH sidebar",
   "engines": {"dsh": "0.2.1-rc.5"},
   "license": "UNLICENSED",

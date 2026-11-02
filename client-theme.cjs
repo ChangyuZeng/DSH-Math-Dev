@@ -301,6 +301,8 @@ summary.dm-editor-section-heading { cursor: pointer; }
 .dm-diff-local > :first-child, .dm-diff-remote > :last-child, .dm-diff-changed > div { background: color-mix(in srgb, var(--dm-accent) 6%, var(--dm-bg)); border-left: 2px solid var(--dm-accent); }
 .dm-comparison-field { margin: 8px 0; }
 .dm-comparison-field > summary { cursor: pointer; font-size: 12px; }
+details.dm-candidate:not([open]) { margin: 10px 0; padding: 0; border: 0; background: transparent; }
+.dm-record-advanced > .dm-record-filters { margin-top: 10px; }
 .dm-candidate-input { min-height: 130px; }
 .dm-candidate-preview { margin-top: 14px; }
 .dm-graph-mode-switch { display: flex; gap: 6px; margin: 12px 0; }

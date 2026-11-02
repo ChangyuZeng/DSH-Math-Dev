@@ -172,12 +172,9 @@ test('unsupported downloads expose a complete explicit JSON fallback without cla
   t.render(); let tree = t.render();
   assert.equal(downloads(tree).length, 0);
   assert.deepEqual(status(tree), ['当前客户端不能创建下载；可展开下方 JSON 快照手动保存。']);
-  const json = nodes(tree).find(node => node.type === 'details' && typeof node.props.onToggle === 'function');
-  assert.ok(json); assert.equal(nodes(json).some(node => node.type === 'pre'), false);
-  json.props.onToggle({currentTarget: {open: true}}); tree = t.render();
-  assert.deepEqual(JSON.parse(nodes(tree).find(node => node.type === 'pre').children[0]), graph);
-  nodes(tree).find(node => node.type === 'details' && node.props.onToggle).props.onToggle({currentTarget: {open: false}});
-  assert.equal(nodes(t.render()).some(node => node.type === 'pre'), false);
+  const json = nodes(tree).find(node => node.type === 'details' && nodes(node).some(child => child.type === 'summary' && child.children[0] === 'JSON 快照与下载'));
+  assert.ok(json); assert.equal(json.props.open, undefined, 'Native disclosure is closed by default');
+  assert.deepEqual(JSON.parse(nodes(json).find(node => node.type === 'pre').children[0]), graph);
   t.unmount(); assert.deepEqual(t.created, []); assert.deepEqual(t.revoked, []);
 });
 
@@ -281,7 +278,6 @@ test('untrusted labels, source locators and unknown facts remain literal text, n
   assert.ok(nodes(pane).some(node => node.type === 'dd' && node.children[0] === literal));
   assert.deepEqual(JSON.parse(nodes(pane).find(node => node.type === 'pre').children[0]), {path: literal});
   assert.ok(nodes(tree).some(node => node.type === 'li' && node.children[0] === literal));
-  nodes(tree).find(node => node.type === 'details' && node.props.onToggle).props.onToggle({currentTarget: {open: true}});
   tree = t.render();
   assert.ok(nodes(tree).some(node => node.type === 'pre' && node.children[0] === Graph.serialize(graph)));
   for (const node of nodes(tree)) {
@@ -293,7 +289,7 @@ test('untrusted labels, source locators and unknown facts remain literal text, n
   assert.doesNotMatch(source, /dangerouslySetInnerHTML|\.innerHTML\s*=/);
   assert.equal(t.context.__xss, undefined);
   assert.match(text(tree), /不代表推理因果/);
-  assert.match(text(tree), /不展示工具输入\/输出原文或模型推理流/);
+  assert.match(text(tree), /公开研究产物的只读快照，不是内部思维链/);
   assert.equal(t.inspections.length, 0); t.unmount();
 });
 
@@ -332,8 +328,8 @@ test('summary remains default and list filters preserve tree folding, pagination
   filter(tree, '节点类型', 'record'); tree = t.render();
   filter(tree, '搜索已收录记录', '  N-SYNTHETIC@85  '); tree = t.render();
   assert.deepEqual(rowTitles(tree), ['Synthetic note 85'], 'Exact references are searchable, case insensitive');
-  const json = nodes(tree).find(node => node.type === 'details' && node.props.onToggle);
-  json.props.onToggle({currentTarget: {open: true}}); tree = t.render();
+  const json = nodes(tree).find(node => node.type === 'details' && nodes(node).some(child => child.type === 'summary' && child.children[0] === 'JSON 快照与下载'));
+  assert.equal(json.props.open, undefined);
   assert.ok(nodes(tree).some(node => node.type === 'pre' && node.children[0] === bytes));
   assert.equal(t.created.length, 1);
   assert.equal(await t.created[0].blob.text(), bytes);
@@ -457,7 +453,6 @@ test('unsupported download fallback stays complete even when the list has no mat
   t.render(); button(t.render(), '逐条').props.onClick(); let tree = t.render();
   filter(tree, '搜索已收录记录', 'no matches'); tree = t.render();
   assert.equal(classes(tree, 'dm-graph-empty').length, 1);
-  nodes(tree).find(node => node.type === 'details' && node.props.onToggle).props.onToggle({currentTarget: {open: true}});
   tree = t.render();
   assert.equal(nodes(tree).find(node => node.type === 'pre').children[0], Graph.serialize(graph));
   assert.deepEqual(JSON.parse(nodes(tree).find(node => node.type === 'pre').children[0]), graph);
