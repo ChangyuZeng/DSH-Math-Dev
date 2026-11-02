@@ -7,7 +7,7 @@
   const RESEARCH = 'research/events.jsonl';
   const ZERO = '0'.repeat(64);
   const NOTICE = '这是已记录公开研究产物的只读投影，非实时运行状态、非内部思维链、非审核证据或证明。父子仅表示来源分组和实际产物归属，不表示执行因果；引用边只来自显式引用。未选来源就是未采集；本次读取不调用模型，但整个会话模型请求总数仍未知。';
-  const KINDS = {Problem: '研究目标', Note: '研究笔记', Obligation: '待办义务', Evidence: '证据记录', Review: '审查记录', Run: '离线运行记录'};
+  const KINDS = {Problem: '研究目标', Note: '研究笔记', Obligation: '待证事项', Evidence: '参考材料', Review: '审查记录', Run: '离线运行记录'};
   const RESEARCH_KINDS = {commit: '研究提交', review: '审查提交', control: '研究控制记录', recovery: '日志恢复记录'};
   const LEDGER_KINDS = {
     'tool.started': '工具开始记录', 'tool.finished': '工具结束记录',
@@ -17,7 +17,7 @@
   };
   const RELATIONS = {
     parent_problem: '父目标引用', problem_ref: '研究目标引用', uses: '使用',
-    candidate_for: '候选用于', candidates: '候选引用', evidence: '证据引用',
+    candidate_for: '候选用于', candidates: '候选引用', evidence: '材料引用',
     dependencies: '依赖引用', review_target: '审查对象', review_candidate: '审查候选', condition_gap: '条件缺口',
   };
   const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -194,7 +194,7 @@
         }
         if (obj.kind === 'Note') enumFact('笔记类型', data.note_type, ['argument', 'observation', 'computation', 'source', 'failed_attempt']);
         if (obj.kind === 'Obligation') enumFact('对象登记状态', data.state, ['open', 'candidate', 'closed', 'needs_recheck']);
-        if (obj.kind === 'Evidence') enumFact('证据类型', data.evidence_type, ['proof_text', 'source_excerpt', 'computation', 'witness', 'figure']);
+        if (obj.kind === 'Evidence') enumFact('材料类型', data.evidence_type, ['proof_text', 'source_excerpt', 'computation', 'witness', 'figure']);
         if (obj.kind === 'Review') {
           enumFact('登记的审查方法', data.method, ['human', 'program', 'model']);
           enumFact('登记的审查 verdict（非本图判定）', data.verdict, ['pass', 'fail', 'inconclusive', 'error']);

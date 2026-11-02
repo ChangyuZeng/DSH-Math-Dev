@@ -530,22 +530,22 @@ test('overview leads with the goal and actions, while records keeps every group'
   const t = viewTest({handle: body => body.action === 'overview' ? snapshot : undefined});
   await t.choose('a');
   const tree = t.render(), flat = nodes(tree), goal = byClass(tree, 'dm-goal');
-  const groupTitles = ['当前目标', '已接受 / 已关闭', '候选结论', '证明义务', '失败路线', '研究笔记'];
+  const groupTitles = ['当前目标', '已接受 / 已关闭', '候选结论', '待证事项', '失败路线', '笔记'];
   assert.ok(goal);
   assert.equal(welcome(tree), undefined);
   assert.equal(button(nodes(tree).find(node => node.type === 'header'), '新建项目').props.variant, 'ghost');
   assert.equal(byClass(goal, 'dm-goal-title').children[0], goalObject.data.title);
   assert.equal(component(byClass(goal, 'dm-goal-statement'), 'Preview').props.text, goalObject.data.statement);
   assert.equal(nodes(tree).filter(node => node.children.includes('P-a@1') && node.props.onClick).length, 1, 'Do not duplicate the target in the digest');
-  assert.deepEqual(flat.filter(node => groupTitles.includes(node.props.title)).map(node => node.props.title), ['证明义务', '研究笔记']);
-  const firstGroup = byTitle(tree, '证明义务');
+  assert.deepEqual(flat.filter(node => groupTitles.includes(node.props.title)).map(node => node.props.title), ['待证事项', '笔记']);
+  const firstGroup = byTitle(tree, '待证事项');
   assert.ok(flat.indexOf(goal) < flat.indexOf(firstGroup));
-  for (const label of ['登记笔记', '登记义务', '登记证据']) assert.ok(flat.indexOf(button(goal, label)) < flat.indexOf(firstGroup));
+  for (const label of ['写笔记', '添加待证事项', '添加参考材料']) assert.ok(flat.indexOf(button(goal, label)) < flat.indexOf(firstGroup));
   assert.ok(nodes(goal).some(node => node.children.includes('登记的是研究记录，不是证明。程序检查不替代人工审核。')));
   const details = byClass(tree, 'dm-project-details');
   assert.equal(details.type, 'details');
   assert.ok(details.props.open === undefined || details.props.open === false);
-  assert.ok(flat.indexOf(details) > flat.indexOf(byTitle(tree, '研究笔记')));
+  assert.ok(flat.indexOf(details) > flat.indexOf(byTitle(tree, '笔记')));
   assert.ok(nodes(details).some(node => node.children.includes('开放性与数学结论不由软件自动判定；当前状态由版本化记录推导。')));
 
   button(tree, '记录与审核').props.onClick();
@@ -572,7 +572,7 @@ test('overview truncation still reaches all records by title and exact historica
   snapshot.objects.push(...notes);
   const t = viewTest({handle: body => body.action === 'overview' ? snapshot : undefined});
   await t.choose('a');
-  const digest = t.render(), notePanel = byTitle(digest, '研究笔记');
+  const digest = t.render(), notePanel = byTitle(digest, '笔记');
   const rows = panel => nodes(panel).filter(node => node.props.className === 'dm-record');
   assert.equal(rows(notePanel).length, 3);
   assert.deepEqual(rows(notePanel).map(node => node.key), notes.slice(0, 3).map(object => `${object.id}@${object.rev}`));
@@ -599,7 +599,7 @@ test('overview truncation still reaches all records by title and exact historica
   }
   // Digest title and exact-reference controls still share that same navigation contract.
   button(t.render(), '研究概览').props.onClick();
-  const row = rows(byTitle(t.render(), '研究笔记'))[0];
+  const row = rows(byTitle(t.render(), '笔记'))[0];
   for (const opener of [byClass(row, 'dm-record-title'), button(row, `${notes[0].id}@${notes[0].rev}`)]) {
     assert.equal(opener.type, 'button'); opener.props.onClick();
     const reader = visibleComponent(t.render(), 'RecordReader'); assert.equal(reader.props.object, notes[0]); reader.props.onClose();
@@ -607,10 +607,40 @@ test('overview truncation still reaches all records by title and exact historica
   assert.equal(t.requests.length, before, 'Opening already-loaded records is local, not a write or a new research request');
 });
 
-test('overview registration opens the record editor before the record lists', async () => {
-  for (const [label, kind] of [['登记笔记', 'Note'], ['登记义务', 'Obligation'], ['登记证据', 'Evidence']]) {
-    const t = viewTest(); await t.choose('a');
-    button(t.render(), label).props.onClick();
+test('overview and records render primary writing and collapsed native secondary actions without a component wrapper', async () => {
+  const t = viewTest(); await t.choose('a');
+  for (const [tab, surface] of [['研究概览', 'overview'], ['记录与审核', 'records']]) {
+    button(t.render(), tab).props.onClick();
+    const tree = panel(t.render(), surface), actions = byClass(tree, 'dm-record-actions');
+    assert.equal(actions.type, 'div', 'Actions render directly even with opaque function children');
+    const primary = button(actions, '写笔记'), more = byClass(actions, 'dm-record-more');
+    assert.equal(primary.props.variant, 'primary');
+    assert.equal(nodes(more).includes(primary), false);
+    assert.equal(more.type, 'details');
+    assert.ok(more.props.open === undefined || more.props.open === false, 'Native disclosure starts collapsed');
+    assert.ok(nodes(more).some(node => node.type === 'summary' && node.children.includes('更多记录')));
+    for (const label of ['添加待证事项', '添加参考材料']) {
+      assert.ok(nodes(more).includes(button(actions, label)), 'Secondary action must remain within the disclosure');
+      assert.notEqual(button(actions, label).props.variant, 'primary');
+    }
+    assert.equal(nodes(actions).filter(node => node.props.variant === 'primary').length, 1);
+    for (const old of ['登记笔记', '登记义务', '登记证据']) assert.equal(nodes(actions).some(node => node.children.includes(old)), false);
+  }
+});
+
+test('record choices close native details and keep original kinds on both action surfaces', async () => {
+  for (const tab of ['研究概览', '记录与审核']) for (const [label, kind] of [['写笔记', 'Note'], ['添加待证事项', 'Obligation'], ['添加参考材料', 'Evidence']]) {
+    const t = viewTest(); await t.choose('a'); button(t.render(), tab).props.onClick();
+    const surface = panel(t.render(), tab === '研究概览' ? 'overview' : 'records');
+    const removed = [];
+    button(surface, label).props.onClick({currentTarget: {closest(selector) {
+      assert.equal(selector, 'details');
+      return kind === 'Note' ? null : {removeAttribute(name) {
+        assert.equal(editNode(t), undefined, 'Disclosure closes before starting the original edit action');
+        removed.push(name);
+      }};
+    }}});
+    assert.deepEqual(removed, kind === 'Note' ? [] : ['open']);
     const tree = t.render(), flat = nodes(tree), editor = flat.find(node => node.type === t.Editor);
     assert.equal(button(tree, '记录与审核').props['data-active'], true);
     assert.equal(editor.props.initial.kind, kind);
@@ -620,11 +650,38 @@ test('overview registration opens the record editor before the record lists', as
   }
 });
 
+test('secondary choice closes disclosure without bypassing the dirty replacement guard', async () => {
+  for (const label of ['添加待证事项', '添加参考材料']) {
+    const t = viewTest(); await t.choose('a'); button(t.render(), '写笔记').props.onClick();
+    const draft = changeFormalDraft(t); let closed = false;
+    button(panel(t.render(), 'records'), label).props.onClick({currentTarget: {closest: () => ({removeAttribute(name) { assert.equal(name, 'open'); closed = true; }})}});
+    await settle();
+    assert.equal(closed, true); assert.equal(editNode(t).props.initial, draft);
+    assert.ok(unsaved(t)); unsaved(t).props.finish('cancel'); await settle();
+    assert.equal(editNode(t).props.initial, draft); assert.equal(writeRequests(t).length, 0);
+  }
+});
+
+test('busy refresh disables all record choices on both surfaces and prevents replacement', async () => {
+  const t = viewTest(); await t.choose('a'); const gate = deferred();
+  t.controls.handle = body => body.action === 'overview' ? gate.promise : undefined;
+  const refresh = button(t.render(), '刷新').props.onClick(); await settle();
+  for (const surface of ['overview', 'records']) for (const label of ['写笔记', '添加待证事项', '添加参考材料']) {
+    const choice = nodes(panel(t.render(), surface)).find(node => node.children.includes(label) && typeof node.props.onClick === 'function');
+    assert.ok(choice);
+    assert.equal(choice.props.disabled, true);
+    choice.props.onClick(); assert.equal(editNode(t), undefined);
+  }
+  gate.resolve(overview('a')); await refresh;
+  assert.equal(button(panel(t.render(), 'overview'), '写笔记').props.disabled, false);
+  assert.ok(t.requests.every(request => readActions.includes(request.action)));
+});
+
 test('refresh retains a draft and sources but project change clears transient state', async () => {
   const t = viewTest(); await t.choose('a');
   button(t.render(), 'O-a@1').props.onClick();
   nodes(t.render()).find(node => node.type === t.Refs).props.change([{id: 'N-a', rev: 1}]);
-  button(t.render(), '笔记').props.onClick();
+  button(t.render(), '写笔记').props.onClick();
   const draft = nodes(t.render()).find(node => node.type === t.Editor).props.initial;
   button(t.render(), '回放与导出').props.onClick();
   button(t.render(), '添加回放来源').props.onClick();
@@ -652,7 +709,7 @@ test('selecting no project clears its view, draft, candidate and replay sources'
   const t = viewTest(); await t.choose('a');
   button(t.render(), 'O-a@1').props.onClick();
   nodes(t.render()).find(node => node.type === t.Refs).props.change([{id: 'N-a', rev: 1}]);
-  button(t.render(), '笔记').props.onClick();
+  button(t.render(), '写笔记').props.onClick();
   button(t.render(), '回放与导出').props.onClick();
   button(t.render(), '添加回放来源').props.onClick();
   nodes(t.render()).find(node => node.props.label === '来源 1 完整路径').props.change('/test/a.jsonl');
@@ -676,7 +733,7 @@ test('selecting no project clears its view, draft, candidate and replay sources'
 });
 
 test('failed project load keeps the current draft and reports the error', async () => {
-  const t = viewTest(); await t.choose('a'); button(t.render(), '登记笔记').props.onClick();
+  const t = viewTest(); await t.choose('a'); button(t.render(), '写笔记').props.onClick();
   const draft = nodes(t.render()).find(node => node.type === t.Editor).props.initial;
   t.controls.failure = 'UNUSABLE'; await t.choose('b');
   const tree = t.render();
@@ -694,7 +751,7 @@ test('session key remounts isolate all local state and initialize the matching p
   t.render('session-a'); await settle();
   assert.equal(picker(t.render()).props.value, 'a');
   assert.deepEqual(t.requests.map(request => request.action), ['list', 'project-draft-read', 'overview']);
-  button(t.render(), '登记笔记').props.onClick();
+  button(t.render(), '写笔记').props.onClick();
   button(t.render(), '新建项目').props.onClick();
   assert.equal(nodes(t.render()).find(node => node.type?.name === 'ProjectForm').key, 'session-a');
   button(t.render(), '回放与导出').props.onClick();
@@ -725,7 +782,7 @@ test('switching to a session without a project clears the previous scope', async
   const t = viewTest({effects: true});
   t.render('session-a'); await settle();
   assert.equal(picker(t.render()).props.value, 'a');
-  button(t.render(), '登记笔记').props.onClick();
+  button(t.render(), '写笔记').props.onClick();
   const before = t.requests.length;
   t.render('session-without-project'); await settle();
   const tree = t.render();
@@ -749,7 +806,7 @@ test('a late successful or failed A response cannot contaminate a completed B se
     assert.equal(t.requests.at(-1).args.project_id, 'b');
     b.resolve(overview('b')); await settle();
     assert.equal(picker(t.render()).props.value, 'b');
-    button(t.render(), '登记笔记').props.onClick();
+    button(t.render(), '写笔记').props.onClick();
     const draft = nodes(t.render()).find(node => node.type === t.Editor).props.initial;
     const refreshing = deferred();
     t.controls.handle = body => body.action === 'list' ? refreshing.promise : undefined;
@@ -796,7 +853,7 @@ test('effect cleanup/setup keeps a newer operation busy when an older finally fi
 
 test('double save callbacks dispatch only one mocked commit before the disabled render', async () => {
   const pending = deferred(), t = viewTest({handle: body => body.action === 'commit' ? pending.promise : undefined});
-  await t.choose('a'); button(t.render(), '登记笔记').props.onClick();
+  await t.choose('a'); button(t.render(), '写笔记').props.onClick();
   const editor = nodes(t.render()).find(node => node.type === t.Editor);
   const request = {operation_id: 'synthetic-only', changes: []};
   const first = editor.props.save(request), second = editor.props.save(request);
@@ -819,7 +876,7 @@ test('double save callbacks dispatch only one mocked commit before the disabled 
 test('an unmounted save completion cannot dispatch a refresh in the new session', async () => {
   const pending = deferred(), t = viewTest({effects: true, handle: body => body.action === 'commit' ? pending.promise : undefined});
   t.render('session-a'); await settle();
-  button(t.render(), '登记笔记').props.onClick();
+  button(t.render(), '写笔记').props.onClick();
   const save = nodes(t.render()).find(node => node.type === t.Editor).props.save;
   const operation = save({operation_id: 'synthetic-only', changes: []});
   t.render('session-b'); await settle();
@@ -1120,9 +1177,12 @@ test('legacy readonly view suppresses every research mutation but retains explic
   const fixture = overview('a'); fixture.project.schema_version = 3; fixture.project.mode = 'legacy_readonly_copy'; fixture.objects.forEach(object => { object.schema_version = 3; });
   const t = viewTest({handle: body => body.action === 'overview' ? fixture : body.action === 'export' ? {path: '/synthetic/derived-audit', exported: true} : undefined}); await t.choose('a');
   assert.equal(nodes(t.render()).find(node => node.type?.name === 'Scratchpad').props.writable, false);
-  for (const text of ['登记笔记', '登记义务', '登记证据']) assert.equal(nodes(t.render()).some(node => node.children.includes(text)), false);
+  for (const surface of ['overview', 'records']) {
+    assert.equal(byClass(panel(t.render(), surface), 'dm-record-more'), undefined);
+    for (const text of ['写笔记', '添加待证事项', '添加参考材料', '更多记录']) assert.equal(nodes(panel(t.render(), surface)).some(node => node.children.includes(text)), false);
+  }
   button(t.render(), 'O-a@1').props.onClick();
-  for (const text of ['笔记', '义务', '证据', '修订此记录', '人工审核预览', '本人提交审核记录']) assert.equal(nodes(t.render()).some(node => node.children.includes(text)), false);
+  for (const text of ['笔记', '待证事项', '参考材料', '修订此记录', '人工审核预览', '本人提交审核记录']) assert.equal(nodes(t.render()).some(node => node.children.includes(text) && typeof node.props.onClick === 'function'), false);
   assert.equal(t.requests.some(body => body.action === 'export'), false); button(t.render(), '回放与导出').props.onClick();
   assert.equal(t.requests.some(body => body.action === 'export'), false); await button(t.render(), '生成本地审核包').props.onClick();
   assert.equal(visibleComponent(t.render(), 'ExportReceipt').props.receipt.path, '/synthetic/derived-audit');
@@ -1190,7 +1250,7 @@ async function openReview(t) {
 }
 
 test('dirty formal editor stays mounted across every tab with stable key and no leave dialog or implicit write', async () => {
-  const t = processTest(); await t.choose('a'); button(t.render(), '登记笔记').props.onClick();
+  const t = processTest(); await t.choose('a'); button(t.render(), '写笔记').props.onClick();
   const original = editNode(t); assert.equal(original.props.initialDirty, false, 'A blank document does not inherit a dirty flag');
   const edited = changeFormalDraft(t);
   for (const tab of ['研究概览', '项目草稿本', '研究过程', '回放与导出', '记录与审核']) {
@@ -1204,7 +1264,7 @@ test('dirty formal editor stays mounted across every tab with stable key and no 
 });
 
 test('project switching protects dirty documents with cancel, keep and discard; current project owns the saved bytes', async () => {
-  const t = viewTest(); await t.choose('a'); button(t.render(), '登记笔记').props.onClick();
+  const t = viewTest(); await t.choose('a'); button(t.render(), '写笔记').props.onClick();
   const edited = changeFormalDraft(t), key = editNode(t).key;
   let navigation = t.choose('b'); await settle();
   assert.equal(picker(t.render()).props.value, 'a'); assert.equal(unsaved(t).props.decision.keep, true);
@@ -1221,7 +1281,7 @@ test('project switching protects dirty documents with cancel, keep and discard; 
 test('editor busy/unknown callbacks gate departure and original requests survive keep without allowing replacement', async () => {
   let lose = true;
   const t = viewTest({handle: body => body.action === 'commit' ? (lose ? (lose = false, Promise.reject(Error('unknown transport receipt'))) : {}) : undefined});
-  await t.choose('a'); button(t.render(), '登记笔记').props.onClick(); changeFormalDraft(t);
+  await t.choose('a'); button(t.render(), '写笔记').props.onClick(); changeFormalDraft(t);
   let editor = editNode(t); editor.props.onBusyChange(true);
   const before = t.requests.length; await t.choose('b'); assert.equal(picker(t.render()).props.value, 'a'); assert.equal(unsaved(t), undefined); assert.equal(t.requests.length, before);
   editor.props.onBusyChange(false);
@@ -1241,7 +1301,7 @@ test('editor busy/unknown callbacks gate departure and original requests survive
 
 test('cross-session remount retains only the matching session/project document and ignores stale child callbacks', async () => {
   const t = viewTest({effects: true}); t.render('session-a'); await settle();
-  button(t.render(), '登记笔记').props.onClick(); const edited = changeFormalDraft(t, 'session A exact\r\n');
+  button(t.render(), '写笔记').props.onClick(); const edited = changeFormalDraft(t, 'session A exact\r\n');
   const stale = editNode(t); stale.props.onAttemptChange(Forms.request(edited));
   const empty = t.render('session-b'); assert.equal(editNode(t, empty), undefined); await settle();
   assert.equal(picker(t.render()).props.value, 'b'); assert.equal(editNode(t), undefined);
@@ -1261,7 +1321,7 @@ test('beforeunload observes a blank editor busy callback even without a retained
     removeEventListener: (name, callback) => listeners.get(name)?.delete(callback)}});
   testContext.after(() => { t.react.unmount(); t.ctx.dispose(); });
   const unload = () => { const event = {prevented: false, preventDefault() { this.prevented = true; }}; for (const callback of listeners.get('beforeunload') || []) callback(event); return event; };
-  t.render('session-a'); await settle(); button(t.render(), '登记笔记').props.onClick();
+  t.render('session-a'); await settle(); button(t.render(), '写笔记').props.onClick();
   const editor = editNode(t); assert.equal(editor.props.initialDirty, false); assert.equal(unload().prevented, false);
   editor.props.onBusyChange(true); const event = unload(); assert.equal(event.prevented, true); assert.equal(event.returnValue, '');
   assert.equal(editor.props.initialDirty, false, 'Busy protection must not manufacture a dirty edit or commit');
@@ -1272,13 +1332,13 @@ test('beforeunload observes a blank editor busy callback even without a retained
 
 test('sidebar and conversation buffers remain separate and a clean surface cannot delete the other retained draft', async () => {
   const t = viewTest({effects: true}); t.render('session-a'); await settle();
-  button(t.render(), '登记笔记').props.onClick(); const sidebarDraft = changeFormalDraft(t, 'sidebar-only exact\r\n');
+  button(t.render(), '写笔记').props.onClick(); const sidebarDraft = changeFormalDraft(t, 'sidebar-only exact\r\n');
   t.switchSurface(false); t.render('session-a'); await settle();
   assert.equal(editNode(t), undefined, 'Conversation starts with no sidebar draft');
-  button(t.render(), '登记笔记').props.onClick(); assert.equal(editNode(t).props.initialDirty, false);
+  button(t.render(), '写笔记').props.onClick(); assert.equal(editNode(t).props.initialDirty, false);
   t.switchSurface(true); t.render('session-a'); await settle();
   assert.equal(editNode(t).props.initialDirty, true); assert.deepEqual(plain(editNode(t).props.initial), plain(sidebarDraft), 'Clean conversation teardown cannot remove sidebar content');
-  t.switchSurface(false); t.render('session-a'); await settle(); button(t.render(), '登记笔记').props.onClick();
+  t.switchSurface(false); t.render('session-a'); await settle(); button(t.render(), '写笔记').props.onClick();
   const conversationDraft = changeFormalDraft(t, 'conversation-only exact\n');
   t.switchSurface(true); t.render('session-a'); await settle();
   assert.equal(editNode(t).props.initial.data.body, sidebarDraft.data.body); assert.equal(editNode(t).props.initialDirty, true);

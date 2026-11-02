@@ -30,7 +30,7 @@ function fixture(kind='Note',extras={}){
 const submit=tree=>tree.props.onSubmit({preventDefault(){}});
 const deferred=()=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return {promise,resolve,reject};};
 
-for(const [kind,labels] of [['Note',['笔记标题','完整正文','主张']],['Obligation',['义务陈述','适用范围','下一步']],['Evidence',['原文摘录 / 证明全文','来源地址或出处','支持范围']]])test(`${kind}: synchronous edits survive stale handlers and parent draft echoes`,async()=>{
+for(const [kind,labels] of [['Note',['笔记标题','完整正文','主张']],['Obligation',['待证陈述','适用范围','下一步']],['Evidence',['原文摘录 / 证明全文','来源地址或出处','支持范围']]])test(`${kind}: synchronous edits survive stale handlers and parent draft echoes`,async()=>{
   const changed=[],saved=[];const t=fixture(kind,{onDraftChange:(draft,meta)=>changed.push({draft,meta}),save:r=>saved.push(r)});
   const first=t.render();
   for(const [i,label] of labels.entries())field(first,label).props.change(`  合成 ${i}\r\nΩ $x$  `);
@@ -76,7 +76,7 @@ test('attachment completion survives an unrelated parent read lock without auto-
 });
 
 test('all existing editable fields are grouped without concealing required scope fields',()=>{
-  const expected={Note:['笔记标题','完整正文','简述','主张','笔记类型','依赖前提','拟解决的义务','支撑证据','假设（每行一项）','尚存缺口（每行一项）','路线标识'],Obligation:['义务陈述','登记原因','下一步','当前提交状态','依赖前提','候选笔记','支撑证据','适用范围','完成条件（每行一项）'],Evidence:['证据类型','原文摘录 / 证明全文','来源地址或出处','版本 / commit','访问日期','来源材料状态','生产或导入方式','生产方式版本','摘录附件名称','支持范围','局限与未核实项（每行一项）']};
+  const expected={Note:['笔记标题','完整正文','简述','主张','笔记类型','依赖前提','拟解决的待证事项','参考材料','假设（每行一项）','尚存缺口（每行一项）','路线标识'],Obligation:['待证陈述','登记原因','下一步','当前提交状态','依赖前提','候选笔记','参考材料','适用范围','完成条件（每行一项）'],Evidence:['材料类型','原文摘录 / 证明全文','来源地址或出处','版本 / commit','访问日期','来源材料状态','生产或导入方式','生产方式版本','摘录附件名称','支持范围','局限与未核实项（每行一项）']};
   for(const kind of Object.keys(expected)){
     const t=fixture(kind),tree=t.render();expected[kind].forEach(label=>field(tree,label));
     assert.deepEqual(nodes(tree).filter(node=>node.props.className==='dm-editor-section').map(node=>node.props['aria-label']),['内容','依据','范围与缺口']);
@@ -134,7 +134,7 @@ test('provided source requires actual excerpt or a pre-existing non-placeholder 
 
 test('program-checked obligations cannot silently enter the human revision path',async()=>{
   let saved=0;const t=fixture('Obligation',{save:()=>saved++});t.initial.data.check_method='program';
-  await submit(t.render());assert.equal(saved,0);assert.ok(button(t.render(),'程序检查义务必须通过其专用入口修订'));
+  await submit(t.render());assert.equal(saved,0);assert.ok(button(t.render(),'程序检查事项必须通过其专用入口修订'));
 });
 
 test('selected historical reference survives search and does not upgrade revision',()=>{

@@ -45,6 +45,19 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
   function Button({children, onClick, disabled, variant = '', size = '', icon = false, title, type = 'button'}) {
     return h('button', {type, onClick, disabled, title, className: `dm-button ${variant ? `dm-${variant}` : ''} ${size ? `dm-${size}` : ''}`}, icon && h(MathIcon), children);
   }
+  function recordActions({busy, edit}) {
+    const choose = (kind, event) => {
+      event?.currentTarget?.closest('details')?.removeAttribute('open');
+      edit(kind);
+    };
+    return h('div', {className: 'dm-actions dm-record-actions'},
+      h(Button, {variant: 'primary', disabled: busy, onClick: event => choose('Note', event)}, '写笔记'),
+      h('details', {className: 'dm-record-more'},
+        h('summary', null, '更多记录'),
+        h('div', {className: 'dm-actions dm-record-secondary'},
+          h(Button, {disabled: busy, onClick: event => choose('Obligation', event)}, '添加待证事项'),
+          h(Button, {disabled: busy, onClick: event => choose('Evidence', event)}, '添加参考材料'))));
+  }
   function Field({label, value, change, multiline = true, wide = false}) {
     const multi = multiline || /[\r\n]/.test(value || ''); // Preserve legacy multiline values verbatim.
     return h('label', {className: `dm-field ${wide ? 'dm-wide' : ''}`}, label,
@@ -268,7 +281,7 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
         throw error;
       }
     }, '提交本人审核记录');
-    const groups = {targets: '当前目标', accepted: '已接受 / 已关闭', candidates: '候选结论', obligations: '证明义务', failed_routes: '失败路线', notes: '研究笔记'};
+    const groups = {targets: '当前目标', accepted: '已接受 / 已关闭', candidates: '候选结论', obligations: '待证事项', failed_routes: '失败路线', notes: '笔记'};
     function record(row) {
       const object = row.object;
       return h('div', {className: 'dm-record', key: `${object.id}@${object.rev}`},
@@ -307,7 +320,7 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
       (draftSummary.validation?.complete ? '查看并确认草稿' : draftSummary.validation?.missing_fields?.length ? `继续准备 · 还缺 ${draftSummary.validation.missing_fields.length} 项` : '继续准备 · 检查待修正项') : '新建项目';
     const goal = view?.groups.targets[0]?.object;
     const stats = view ? [
-      ['研究记录', view.objects.length], ['证明义务', view.groups.obligations.length], ['研究笔记', view.groups.notes.length], ['证据材料', view.objects.filter(o => o.kind === 'Evidence').length],
+      ['研究记录', view.objects.length], ['待证事项', view.groups.obligations.length], ['笔记', view.groups.notes.length], ['参考材料', view.objects.filter(o => o.kind === 'Evidence').length],
     ] : [];
     return h('div', {ref: root, className: `dsh-math-view ${sidebar ? 'dm-sidebar' : ''}`, 'aria-busy': busy},
       decision && h(UnsavedPrompt, {decision, finish: finishDecision}),
@@ -367,8 +380,7 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
             h('div', {className: 'dm-goal-statement'}, h(Preview, {text: goal.data.statement || ''})),
             writable && h(Button, {variant: 'primary', onClick: () => changeTab('scratchpad')}, '继续草稿'),
             h('div', {className: 'dm-record-meta'}, link(ref(goal))),
-            writable && h('div', {className: 'dm-actions dm-next-actions'},
-              h(Button, {disabled: busy, onClick: () => edit('Note')}, '登记笔记'), h(Button, {disabled: busy, onClick: () => edit('Obligation')}, '登记义务'), h(Button, {disabled: busy, onClick: () => edit('Evidence')}, '登记证据')),
+            writable && recordActions({busy, edit}),
             F.nextActions(view).length > 0 && h('div', {className: 'dm-next-action-list'}, h('h4', null, '下一步'), ...F.nextActions(view).map(item => h('div', {key: F.refKey(item.ref), className: 'dm-next-action'}, h('span', null, item.text), link(item.ref)))),
             h('p', {className: 'dm-local-hint'}, '登记的是研究记录，不是证明。程序检查不替代人工审核。')),
           groupPanels(3),
@@ -377,7 +389,7 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
             h('p', {className: 'dm-record-text'}, '开放性与数学结论不由软件自动判定；当前状态由版本化记录推导。'),
             navigateSession && h(Button, {onClick: () => leave(() => navigateSession(view.project.session_id))}, '进入关联普通会话'))),
         h('section', {...panelProps('records'), className: 'dm-records'},
-          h(Panel, {title: '研究记录', meta: '正文优先 · 精确版本可追溯'}, writable && h('div', {className: 'dm-actions'}, h(Button, {disabled: busy, onClick: () => edit('Note')}, '笔记'), h(Button, {disabled: busy, onClick: () => edit('Obligation')}, '义务'), h(Button, {disabled: busy, onClick: () => edit('Evidence')}, '证据'))),
+          h(Panel, {title: '研究记录', meta: '正文优先 · 精确版本可追溯'}, writable && recordActions({busy, edit})),
           editor && writable && h(Panel, {title: '编辑研究记录'}, editor.promotion && h('p', {className: 'dm-record-text'}, `整理自草稿本 v${editor.promotion.scratchpad_rev}；请补全正式字段。保存后登记精确来源链接，原草稿保留。`),
             h(Editor, {key: editor.operation_id, initial: editor, initialDirty: local.current.dirty, initialAttempt: local.current.attempt, objects: view.objects, busy, inspect,
               onDraftChange: (next, meta) => { if (lifetime.current.active && local.current.draft?.operation_id === next.operation_id) changeEditor(next, meta); },
@@ -492,7 +504,7 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
       const service = child.get('betterSidebar');
       child.effect(() => {
         const dispose = service.registerTab({
-          id: TAB_ID, title: '数学研究', description: '管理研究目标、笔记、证据与人工审核。', icon: size => h(MathIcon, {size}), single: true, order: 20,
+          id: TAB_ID, title: '数学研究', description: '管理研究目标、笔记、参考材料与人工审核。', icon: size => h(MathIcon, {size}), single: true, order: 20,
           component: ({scope}) => h(MathView, {sessionId: scope.sessionId, navigateSession, sidebar: true}),
         });
         sidebar = service;

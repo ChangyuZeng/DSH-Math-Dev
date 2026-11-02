@@ -31,6 +31,11 @@ globalThis.DshMathTheme = `
 .dm-title > .dm-icon { color: var(--dm-muted); }
 .dm-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
 .dm-header .dm-actions { gap: 3px; }
+.dm-record-actions { align-items: flex-start; }
+.dm-record-more { min-width: 0; }
+.dm-record-more > summary { padding: 5px 8px; min-height: 30px; color: var(--dm-muted); cursor: pointer; border-radius: 6px; }
+.dm-record-more > summary:hover { background: var(--dm-soft); color: var(--dm-text); }
+.dm-record-secondary { margin-top: 7px; }
 .dm-button {
   display: inline-flex; align-items: center; justify-content: center; gap: 5px;
   max-width: 100%; min-height: 30px; padding: 5px 10px; border: 1px solid var(--dm-border);

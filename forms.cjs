@@ -46,7 +46,7 @@
       view.snapshot?.usable === true && !!view.objects?.some(object => object.kind === 'Problem') && view.objects.every(object => object.schema_version === 4);
   }
   function promoteDraft(kind, problem, uuid, scratchpad) {
-    if (!['Note', 'Obligation'].includes(kind) || !scratchpad?.rev) throw Error('请先保存草稿本，再整理为笔记或义务');
+    if (!['Note', 'Obligation'].includes(kind) || !scratchpad?.rev) throw Error('请先保存草稿本，再整理为笔记或待证事项');
     const initial = draft(kind, problem, uuid);
     if (kind === 'Note') Object.assign(initial.data, {title: scratchpad.title, body: scratchpad.body});
     else initial.data.statement = scratchpad.body;
@@ -62,7 +62,7 @@
       for (const [key, label] of [['title', '笔记标题'], ['summary', '简述'], ['body', '完整正文'], ['statement', '主张']]) text(data[key], label);
       if (data.note_type === 'failed_attempt') for (const [key, label] of [['inputs', '失败输入'], ['location', '失败位置'], ['observed', '观察结果'], ['negated_scope', '否定范围'], ['retry_change', '再次尝试应改变什么']]) text(data.failure?.[key], label);
     } else if (value.kind === 'Obligation') {
-      for (const [key, label] of [['statement', '义务陈述'], ['scope', '适用范围'], ['next_action', '下一步'], ['reason', '登记原因']]) text(data[key], label);
+      for (const [key, label] of [['statement', '待证陈述'], ['scope', '适用范围'], ['next_action', '下一步'], ['reason', '登记原因']]) text(data[key], label);
       list(data.completion_criteria, '完成条件');
     } else if (value.kind === 'Evidence') {
       text(data.source?.locator, '来源地址或出处'); text(data.support_scope, '支持范围'); list(data.limits, '局限与未核实项');

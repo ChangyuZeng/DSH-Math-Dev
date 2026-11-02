@@ -11,7 +11,7 @@
   const refKey = r => validRef(r) ? `${r.id}@${r.rev}` : '无有效精确版本';
   const objects = view => list(view?.objects).filter(o => validRef(o) && typeof o.kind === 'string' && o.data && typeof o.data === 'object');
   const exactObject = (view, r) => validRef(r) ? objects(view).find(o => o.id === r.id && o.rev === r.rev) || null : null;
-  const kindLabels = {Problem: '研究问题', Note: '笔记', Obligation: '待证义务', Evidence: '证据', Review: '审核记录'};
+  const kindLabels = {Problem: '研究问题', Note: '笔记', Obligation: '待证事项', Evidence: '参考材料', Review: '审核记录'};
   const stateLabels = {unreviewed: '未审核', open: '未关闭', candidate: '候选', accepted: '已登记接受', closed: '已登记关闭', needs_recheck: '需重新检查', rejected: '已登记拒绝', failed_attempt: '失败尝试'};
   const kindLabel = kind => own(kindLabels, kind) ? kindLabels[kind] : text(kind);
   const stateLabel = state => own(stateLabels, state) ? `${stateLabels[state]}（${state}）` : text(state);
@@ -23,7 +23,7 @@
     const characters = Array.from(statement);
     return characters.length > 160 ? characters.slice(0, 159).join('') + '…' : statement;
   }
-  const groupLabels = {targets: '研究目标', accepted: '已登记接受/关闭', candidates: '候选', obligations: '待证义务', failed_routes: '失败路线', notes: '笔记'};
+  const groupLabels = {targets: '研究目标', accepted: '已登记接受/关闭', candidates: '候选', obligations: '待证事项', failed_routes: '失败路线', notes: '笔记'};
   function references(object) {
     const d = object?.data || {}, out = [];
     const add = (relation, value) => { if (value != null) out.push({relation, ref: value, valid: validRef(value)}); };
@@ -203,14 +203,14 @@
         case 'Problem': fields = [field('问题陈述', d.statement), field('量词', d.quantifiers), field('对象与范围', d.domain), field('约定', d.conventions), field('完成条件', d.completion_criteria), field('目标类型（登记值）', d.target_type), field('知识状态（登记值）', d.knowledge_status), field('与父问题的关系', d.relation), field('来源（未核实为真）', d.sources)]; break;
         case 'Note': fields = [field('简述', d.summary), field('正文', d.body), field('主张', d.statement), field('假设', d.assumptions), field('缺口', d.gaps), field('笔记类型', d.note_type), ...(d.route_id ? [field('路线', d.route_id)] : []), ...(d.failure ? Object.entries({inputs: '失败输入', location: '失败位置', observed: '观察结果', negated_scope: '否定范围', retry_change: '再次尝试应改变什么'}).map(([k, label]) => field(label, d.failure[k])) : [])]; break;
         case 'Obligation': fields = [field('待证陈述', d.statement), field('适用范围', d.scope), field('完成条件', d.completion_criteria), field('下一步', d.next_action), field('登记原因', d.reason), field('记录中的状态（非验证结论）', stateLabel(d.state)), field('检查方式（登记值）', d.check_method), ...(d.checker_id ? [field('固定 checker', d.checker_id)] : [])]; break;
-        case 'Evidence': fields = [field('证据类型', d.evidence_type), field('支持范围', d.support_scope), field('局限与未核实项', d.limits), field('来源状态（非真实性验证）', d.source_status), field('来源定位', d.source?.locator), field('来源版本', d.source?.version), field('访问时间', d.source?.accessed_at), field('来源条件', d.source?.conditions), field('生产或导入方式', d.production?.method), field('生产方式版本', d.production?.version), ...(d.citation ? [field('引文标题', d.citation.title), field('页码', d.citation.page), field('章节', d.citation.section), field('定理', d.citation.theorem), field('摘录 SHA256', d.citation.excerpt_sha256), field('来源条件映射（登记值）', d.citation.condition_map)] : []), field('附件元数据（原文未自动加载）', d.attachments)]; break;
+        case 'Evidence': fields = [field('材料类型', d.evidence_type), field('支持范围', d.support_scope), field('局限与未核实项', d.limits), field('来源状态（非真实性验证）', d.source_status), field('来源定位', d.source?.locator), field('来源版本', d.source?.version), field('访问时间', d.source?.accessed_at), field('来源条件', d.source?.conditions), field('生产或导入方式', d.production?.method), field('生产方式版本', d.production?.version), ...(d.citation ? [field('引文标题', d.citation.title), field('页码', d.citation.page), field('章节', d.citation.section), field('定理', d.citation.theorem), field('摘录 SHA256', d.citation.excerpt_sha256), field('来源条件映射（登记值）', d.citation.condition_map)] : []), field('附件元数据（原文未自动加载）', d.attachments)]; break;
         case 'Review': fields = [field('审核方式', d.method), field('登记结论（仅指定范围）', d.verdict), field('审核范围', d.scope), field('审核发现', d.findings), field('审核者', d.reviewer), field('checker 版本', d.checker_version), field('错误码', d.error_code), field('依据哈希', d.basis_hash), h(ReviewBasis, {key: 'basis', basis: d.basis}), ...(d.execution ? [field('执行记录（非全局证明）', d.execution)] : [])]; break;
         default: fields = [h('p', {key: 'unknown', className: 'dm-muted'}, '未知记录类型，未猜测字段含义；完整内容保留在原始 JSON。')];
       }
       return h('article', {className: 'dm-record-reader'}, h('div', {className: 'dm-reader-actions'}, typeof onClose === 'function' && button('返回记录列表', onClose), typeof onPin === 'function' && button(pinned ? '取消固定此版本' : '固定此精确版本', () => onPin(object), {'aria-pressed': pinned})),
         h('h3', {className: 'dm-record-heading', ref: heading, tabIndex: -1}, title(object)), h('p', {className: 'dm-record-meta'}, `${kindLabel(object.kind)} · `, h('code', {}, key)), h(Copy, {value: key, label: '复制 ID@rev', disabled: !validRef(object)}),
         row && !row.latest && h('p', {role: 'status'}, `正在阅读历史版本 ${key}；存在 @${row.latestRev}，未自动升级。`), h(Registered, {row}), ...fields,
-        h('section', {className: 'dm-record-section dm-record-refs'}, h('h4', {}, '引用与证据（精确版本）'), refs.length ? h('ul', {}, ...refs.map((r, i) => h('li', {key: i}, h(Ref, {value: r.ref, relation: r.relation, view, inspect})))) : h('p', {className: 'dm-muted'}, '无已登记引用。')),
+        h('section', {className: 'dm-record-section dm-record-refs'}, h('h4', {}, '引用与参考材料（精确版本）'), refs.length ? h('ul', {}, ...refs.map((r, i) => h('li', {key: i}, h(Ref, {value: r.ref, relation: r.relation, view, inspect})))) : h('p', {className: 'dm-muted'}, '无已登记引用。')),
         h('section', {className: 'dm-record-section dm-record-refs'}, h('h4', {}, '被引用位置（含项目内历史记录）'), incoming.length ? h('ul', {}, ...incoming.map((r, i) => h('li', {key: i}, h(Ref, {value: r.object, relation: r.relation, view, inspect})))) : h('p', {className: 'dm-muted'}, '当前项目快照未登记回指。')),
         children, raw(object));
     }
@@ -238,7 +238,7 @@
       if (!basis || typeof basis !== 'object') return h(Field, {label: '精确审核依据', value: basis});
       return h('section', {className: 'dm-record-section'}, h('h4', {}, '精确审核依据'),
         ...['target', 'candidate'].filter(k => own(basis, k)).map(k => h('p', {key: k}, `${k === 'target' ? '审核目标' : '所选候选'}：`, basis[k] == null ? '未选择' : refKey(basis[k]))),
-        ...[['objects', '依据对象与哈希'], ['dependencies', '依赖版本'], ['evidence', '证据版本'], ['decisions', '所依赖审核记录']].filter(([k]) => own(basis, k)).map(([k, label]) => h('section', {key: k}, h('h5', {}, label),
+        ...[['objects', '依据对象与哈希'], ['dependencies', '依赖版本'], ['evidence', '材料版本'], ['decisions', '所依赖审核记录']].filter(([k]) => own(basis, k)).map(([k, label]) => h('section', {key: k}, h('h5', {}, label),
           list(basis[k]).length ? h('ul', {}, ...basis[k].map((entry, i) => h('li', {key: i}, k === 'objects' ? `${refKey(entry.ref)} · SHA256 ${text(entry.sha256) || '未返回'}` : k === 'decisions' ? `${refKey(entry.target)} · Review ID ${text(entry.review_id) || '无'} · withdrawn=${own(entry, 'withdrawn') ? text(entry.withdrawn) : '未返回'}` : refKey(entry)))) : h('p', {className: 'dm-muted'}, '返回列表为空'))));
     }
     function ReviewSummary({preview}) {

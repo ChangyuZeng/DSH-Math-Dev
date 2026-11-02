@@ -462,11 +462,11 @@ test('scratch component promotion flushes saved exact revision and readonly expo
     sessionId: unique(), projectId: 'synthetic-project', writable: true, onPromote: (...args) => promoted.push(args)};
   const render = () => mock.render(Scratchpad, props); render(); mock.flush(); await settle(); let tree = render();
   nodes(tree).find(node => node.type === 'textarea').props.onChange({target: {value: 'exact promotion\n'}}); tree = render();
-  const promote = findButton(tree, '整理为笔记').props.onClick(); findButton(tree, '整理为证明义务').props.onClick(); await settle(); assert.equal(promoted.length, 0);
+  const promote = findButton(tree, '整理为笔记').props.onClick(); findButton(tree, '整理为待证事项').props.onClick(); await settle(); assert.equal(promoted.length, 0);
   gate.resolve(); await promote; assert.equal(promoted.length, 1); assert.equal(promoted[0][0], 'Note'); assert.equal(promoted[0][1].rev, 1); assert.equal(promoted[0][1].body, 'exact promotion\n');
   mock.unmount();
   const readonly = hooks(), ui = Workbench(readonly.React, F), readProps = {...props, sessionId: unique(), writable: false, request: server.request};
   readonly.render(ui.Scratchpad, readProps); readonly.flush(); await settle(); const readTree = readonly.render(ui.Scratchpad, readProps);
-  for (const text of ['立即保存', '整理为笔记', '整理为证明义务', '恢复为新版本']) assert.equal(nodes(readTree).some(node => node.type === 'button' && node.children.includes(text)), false);
+  for (const text of ['立即保存', '整理为笔记', '整理为待证事项', '恢复为新版本']) assert.equal(nodes(readTree).some(node => node.type === 'button' && node.children.includes(text)), false);
   assert.ok(nodes(readTree).filter(node => ['input', 'textarea'].includes(node.type)).every(node => node.props.disabled)); readonly.unmount(); t.after(() => { mock.unmount(); readonly.unmount(); });
 });

@@ -239,7 +239,7 @@
             !candidateCurrent && h('p', {role: 'alert', className: 'dm-local-hint'}, '原稿版本已改变，请重新预览。'),
             button('追加到草稿（未经审核）', () => { setAllowLeave(false); controller.current?.adoptCandidate(); }, candidateBlocked || !candidateCurrent, true))),
         writable && h('div', {className: 'dm-actions dm-promotion'}, button('整理为笔记', () => promote('Note'), state.busy || !state.loaded || !state.body.trim()),
-          button('整理为证明义务', () => promote('Obligation'), state.busy || !state.loaded || !state.body.trim())),
+          button('整理为待证事项', () => promote('Obligation'), state.busy || !state.loaded || !state.body.trim())),
         h('details', {className: 'dm-details'}, h('summary', null, `历史版本（${state.history.length}）`),
           ...[...state.history].sort((a, b) => b.rev - a.rev).map(item => h('div', {key: item.rev, className: 'dm-history-row'}, button(`查看 v${item.rev}`, () => controller.current?.history(item.rev)), h('span', {className: 'dm-record-text'}, `${item.title || '无标题'} · ${item.saved_at || ''}`))),
           !state.history.length && h('p', {className: 'dm-empty'}, '尚无历史版本')),

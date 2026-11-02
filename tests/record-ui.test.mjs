@@ -234,7 +234,7 @@ test('title fallback is a 160-codepoint visual summary without changing original
 });
 
 test('Chinese kind/state labels preserve original enums and unknowns without inferred assessments', () => {
-  assert.deepEqual(['Problem', 'Note', 'Obligation', 'Evidence', 'Review'].map(UI.kindLabel), ['研究问题', '笔记', '待证义务', '证据', '审核记录']);
+  assert.deepEqual(['Problem', 'Note', 'Obligation', 'Evidence', 'Review'].map(UI.kindLabel), ['研究问题', '笔记', '待证事项', '参考材料', '审核记录']);
   assert.equal(UI.kindLabel('FutureKind'), 'FutureKind'); assert.equal(UI.kindLabel('__proto__'), '__proto__');
   assert.equal(UI.stateLabel('accepted'), '已登记接受（accepted）'); assert.equal(UI.stateLabel('future_state'), 'future_state');
   const object = note(), assessment = {ref: ref(object), state: 'accepted', reasons: [], review_id: 'R'}, view = viewOf([object, evidence()], {accepted: [{object, assessment}]});
@@ -245,7 +245,7 @@ test('Chinese kind/state labels preserve original enums and unknowns without inf
   assert.equal(strings(stateOptions.find(n => n.props.value === 'accepted')), '已登记接受（accepted）');
   const metas = nodes(tree, n => n.props.className === 'dm-record-meta').map(strings);
   assert.ok(metas.some(s => s.includes('笔记 · N@1') && s.includes('accepted')));
-  assert.ok(metas.some(s => s.includes('证据 · E@1') && s.includes('无此版本审核评估')));
+  assert.ok(metas.some(s => s.includes('参考材料 · E@1') && s.includes('无此版本审核评估')));
   const reader = harness().render('RecordReader', {object, view});
   const registered = nodes(reader, n => n.type?.name === 'Registered')[0]; assert.match(strings(registered.type(registered.props)), /已登记接受（accepted）/);
 });

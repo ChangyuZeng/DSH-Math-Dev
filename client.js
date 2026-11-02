@@ -375,7 +375,7 @@ Please report this to https://github.com/markedjs/marked.`,f){let d="<p>An error
       view.snapshot?.usable === true && !!view.objects?.some(object => object.kind === 'Problem') && view.objects.every(object => object.schema_version === 4);
   }
   function promoteDraft(kind, problem, uuid, scratchpad) {
-    if (!['Note', 'Obligation'].includes(kind) || !scratchpad?.rev) throw Error('请先保存草稿本，再整理为笔记或义务');
+    if (!['Note', 'Obligation'].includes(kind) || !scratchpad?.rev) throw Error('请先保存草稿本，再整理为笔记或待证事项');
     const initial = draft(kind, problem, uuid);
     if (kind === 'Note') Object.assign(initial.data, {title: scratchpad.title, body: scratchpad.body});
     else initial.data.statement = scratchpad.body;
@@ -391,7 +391,7 @@ Please report this to https://github.com/markedjs/marked.`,f){let d="<p>An error
       for (const [key, label] of [['title', '笔记标题'], ['summary', '简述'], ['body', '完整正文'], ['statement', '主张']]) text(data[key], label);
       if (data.note_type === 'failed_attempt') for (const [key, label] of [['inputs', '失败输入'], ['location', '失败位置'], ['observed', '观察结果'], ['negated_scope', '否定范围'], ['retry_change', '再次尝试应改变什么']]) text(data.failure?.[key], label);
     } else if (value.kind === 'Obligation') {
-      for (const [key, label] of [['statement', '义务陈述'], ['scope', '适用范围'], ['next_action', '下一步'], ['reason', '登记原因']]) text(data[key], label);
+      for (const [key, label] of [['statement', '待证陈述'], ['scope', '适用范围'], ['next_action', '下一步'], ['reason', '登记原因']]) text(data[key], label);
       list(data.completion_criteria, '完成条件');
     } else if (value.kind === 'Evidence') {
       text(data.source?.locator, '来源地址或出处'); text(data.support_scope, '支持范围'); list(data.limits, '局限与未核实项');
@@ -496,7 +496,7 @@ globalThis.DshMathFormUI = function (React, F, Preview) {
         if(!ready.logical_name?.trim())mapped.push({field:'logical_name',message:'请填写摘录附件名称'});
         if(ready.data.evidence_type==='source_excerpt'&&ready.data.source_status==='provided'&&!ready.excerpt?.trim()&&(!ready.data.citation?.excerpt_sha256||/^0+$/.test(ready.data.citation.excerpt_sha256)))mapped.push({field:'excerpt',message:'已提供来源必须粘贴可审核的原文摘录；PDF附件不能替代摘录'});
       }
-      if(ready.kind==='Obligation'&&ready.data.check_method!=='human')mapped.push({field:'statement',message:'程序检查义务必须通过其专用入口修订'});
+      if(ready.kind==='Obligation'&&ready.data.check_method!=='human')mapped.push({field:'statement',message:'程序检查事项必须通过其专用入口修订'});
       return mapped;
     }
     async function submit(event){
@@ -527,15 +527,15 @@ globalThis.DshMathFormUI = function (React, F, Preview) {
     let content=[],basis=[],scope=[];
     if(draft.kind==='Note'){
       content=[text('title','笔记标题',true,false),text('body','完整正文'),preview(data.body),text('summary','简述'),text('statement','主张'),h(Select,{label:'笔记类型',field:'note_type',value:data.note_type,change:v=>set(prev=>({note_type:v,failure:v==='failed_attempt'?(prev.failure||{inputs:'',location:'',observed:'',negated_scope:'',retry_change:''}):null})),items:[['observation','观察'],['argument','论证'],['computation','计算记录'],['source','文献笔记'],['failed_attempt','失败尝试']]})];
-      basis=[refs('uses','依赖前提',['Note','Obligation']),refs('candidate_for','拟解决的义务',['Obligation']),refs('evidence','支撑证据',['Evidence'])];
+      basis=[refs('uses','依赖前提',['Note','Obligation']),refs('candidate_for','拟解决的待证事项',['Obligation']),refs('evidence','参考材料',['Evidence'])];
       scope=[list('assumptions','假设'),list('gaps','尚存缺口'),text('route_id','路线标识',false,false)];
       if(data.failure)scope.push(...Object.entries({inputs:'失败输入',location:'失败位置',observed:'观察结果',negated_scope:'否定范围',retry_change:'再次尝试应改变什么'}).map(([key,label])=>h(Text,{key,label,value:data.failure[key],required:true,...field('failure.'+key,label,true),change:v=>set(prev=>({failure:{...prev.failure,[key]:v}}))})));
     }else if(draft.kind==='Obligation'){
-      content=[text('statement','义务陈述'),preview(data.statement),text('reason','登记原因'),text('next_action','下一步'),h(Select,{label:'当前提交状态',field:'state',value:data.state==='candidate'?'candidate':'open',change:v=>set({state:v}),items:[['open','开放'],['candidate','已有候选，等待审核']]}),h('p',{className:'dm-record-text'},'由人工审核；接受和待复核状态由系统派生。')];
-      basis=[refs('uses','依赖前提',['Note','Obligation']),refs('candidates','候选笔记',['Note']),refs('evidence','支撑证据',['Evidence'])];
+      content=[text('statement','待证陈述'),preview(data.statement),text('reason','登记原因'),text('next_action','下一步'),h(Select,{label:'当前提交状态',field:'state',value:data.state==='candidate'?'candidate':'open',change:v=>set({state:v}),items:[['open','开放'],['candidate','已有候选，等待审核']]}),h('p',{className:'dm-record-text'},'由人工审核；接受和待复核状态由系统派生。')];
+      basis=[refs('uses','依赖前提',['Note','Obligation']),refs('candidates','候选笔记',['Note']),refs('evidence','参考材料',['Evidence'])];
       scope=[text('scope','适用范围'),list('completion_criteria','完成条件',true)];
     }else if(draft.kind==='Evidence'){
-      content=[h(Select,{label:'证据类型',field:'evidence_type',value:data.evidence_type,change:v=>set({evidence_type:v,citation:null}),items:[['source_excerpt','来源摘录'],['proof_text','证明原文'],['computation','计算记录'],['witness','有限见证'],['figure','示意图']]}),h(Text,{label:'原文摘录 / 证明全文',value:draft.excerpt||'',...field('excerpt','原文摘录 / 证明全文'),change:v=>update(prev=>({...prev,excerpt:v||null}))}),preview(draft.excerpt)];
+      content=[h(Select,{label:'材料类型',field:'evidence_type',value:data.evidence_type,change:v=>set({evidence_type:v,citation:null}),items:[['source_excerpt','来源摘录'],['proof_text','证明原文'],['computation','计算记录'],['witness','有限见证'],['figure','示意图']]}),h(Text,{label:'原文摘录 / 证明全文',value:draft.excerpt||'',...field('excerpt','原文摘录 / 证明全文'),change:v=>update(prev=>({...prev,excerpt:v||null}))}),preview(draft.excerpt)];
       basis=[source('locator','来源地址或出处',true),source('version','版本 / commit'),source('accessed_at','访问日期'),h(Select,{label:'来源材料状态',field:'source_status',value:data.source_status,change:v=>set({source_status:v}),items:[['unverified_source','待核实来源线索'],['provided','已归档材料（不代表审核通过）']]}),
         h(Text,{label:'生产或导入方式',value:data.production.method,required:true,...field('production.method','生产或导入方式',true),change:v=>set(prev=>({production:{...prev.production,method:v}}))}),h(Text,{label:'生产方式版本',value:data.production.version,required:true,multi:false,...field('production.version','生产方式版本',true),change:v=>set(prev=>({production:{...prev.production,version:v}}))}),
         h(Text,{label:'摘录附件名称',value:draft.logical_name,multi:false,required:true,...field('logical_name','摘录附件名称',true),change:v=>update(prev=>({...prev,logical_name:v}))}),h('label',{className:'dm-field'},'附加文件（总计384 KiB，保留原始字节）',h('input',{type:'file',multiple:true,'data-dm-field':'files',onChange:files})),h('p',{className:'dm-record-text'},(draft.files||[]).map(f=>f.logical_name).join('、')),
@@ -543,12 +543,12 @@ globalThis.DshMathFormUI = function (React, F, Preview) {
       scope=[text('support_scope','支持范围'),list('limits','局限与未核实项',true)];
       if(data.evidence_type==='source_excerpt'){
         scope.push(h('label',{className:'dm-check-label'},h('input',{type:'checkbox',checked:!!data.citation,'data-dm-field':'citation',onChange:e=>set(prev=>({citation:e.target.checked?{title:'',page:null,section:null,theorem:null,excerpt_sha256:'0'.repeat(64),condition_map:[]}:null,source:{...prev.source,conditions:[]}}))}),h('span',null,'添加精确定位与适用条件')));
-        if(data.citation)scope.push(citation('title','文献标题'),citation('page','页码'),citation('section','章节'),citation('theorem','命题 / 定理 / 开放问题编号'),...conditions.map((c,i)=>h('fieldset',{key:i,className:'dm-fieldset'},h('legend',null,`适用条件 ${i+1}`),h(Text,{label:`条件 ${i+1}`,value:c.condition,required:true,...field(`citation.condition_map.${i}.condition`,`条件 ${i+1}`,true),change:v=>condition(i,{condition:v})}),h(Select,{label:`条件 ${i+1} 的适用判断`,field:`citation.condition_map.${i}.assessment`,value:c.assessment,change:v=>condition(i,{assessment:v}),items:[['unresolved','未解决'],['not_satisfied','不满足'],['claimed_satisfied','提交者声称满足（仍需审核）']]}),h(Text,{label:`条件 ${i+1} 的解释`,value:c.explanation,required:true,...field(`citation.condition_map.${i}.explanation`,`条件 ${i+1} 的解释`,true),change:v=>condition(i,{explanation:v})}),h(Refs,{label:`条件 ${i+1} 对应的义务`,field:`citation.condition_map.${i}.obligation`,objects,kinds:['Obligation'],problem:data.problem_ref,value:c.obligation?[c.obligation]:[],single:true,change:v=>condition(i,{obligation:v[0]||null}),inspect}),h('button',{type:'button',className:'dm-button dm-small',onClick:()=>changeConditions(items=>items.filter((_,j)=>j!==i))},'移除此条件'))),h('button',{type:'button',className:'dm-button dm-small',onClick:()=>changeConditions(items=>[...items,{condition:'',assessment:'unresolved',explanation:'',obligation:null}])},'添加适用条件'));
+        if(data.citation)scope.push(citation('title','文献标题'),citation('page','页码'),citation('section','章节'),citation('theorem','命题 / 定理 / 开放问题编号'),...conditions.map((c,i)=>h('fieldset',{key:i,className:'dm-fieldset'},h('legend',null,`适用条件 ${i+1}`),h(Text,{label:`条件 ${i+1}`,value:c.condition,required:true,...field(`citation.condition_map.${i}.condition`,`条件 ${i+1}`,true),change:v=>condition(i,{condition:v})}),h(Select,{label:`条件 ${i+1} 的适用判断`,field:`citation.condition_map.${i}.assessment`,value:c.assessment,change:v=>condition(i,{assessment:v}),items:[['unresolved','未解决'],['not_satisfied','不满足'],['claimed_satisfied','提交者声称满足（仍需审核）']]}),h(Text,{label:`条件 ${i+1} 的解释`,value:c.explanation,required:true,...field(`citation.condition_map.${i}.explanation`,`条件 ${i+1} 的解释`,true),change:v=>condition(i,{explanation:v})}),h(Refs,{label:`条件 ${i+1} 对应的待证事项`,field:`citation.condition_map.${i}.obligation`,objects,kinds:['Obligation'],problem:data.problem_ref,value:c.obligation?[c.obligation]:[],single:true,change:v=>condition(i,{obligation:v[0]||null}),inspect}),h('button',{type:'button',className:'dm-button dm-small',onClick:()=>changeConditions(items=>items.filter((_,j)=>j!==i))},'移除此条件'))),h('button',{type:'button',className:'dm-button dm-small',onClick:()=>changeConditions(items=>[...items,{condition:'',assessment:'unresolved',explanation:'',obligation:null}])},'添加适用条件'));
       }
     }
     const locked=busy||uploading||submitting;
     return h('form',{ref:form,onSubmit:submit,noValidate:true,className:'dm-editor','aria-label':'编辑研究记录','aria-busy':locked},
-      h('h3',{ref:heading,tabIndex:-1,className:'dm-editor-title'},`${draft.expected_rev?'修订':'登记'} ${{Note:'笔记',Obligation:'证明义务',Evidence:'证据'}[draft.kind]}`),h('p',{className:'dm-record-text'},`${draft.id} · 目标 ${F.refKey(data.problem_ref)} · 基于版本 ${draft.expected_rev}`),
+      h('h3',{ref:heading,tabIndex:-1,className:'dm-editor-title'},`${draft.expected_rev?'修订':'登记'} ${{Note:'笔记',Obligation:'待证事项',Evidence:'参考材料'}[draft.kind]}`),h('p',{className:'dm-record-text'},`${draft.id} · 目标 ${F.refKey(data.problem_ref)} · 基于版本 ${draft.expected_rev}`),
       h('p',{className:'dm-editor-status',role:'status'},readOnly?'只读：不能保存正式记录。':uploading?'正在读取附件；尚未保存正式记录。':submitting?'保存请求处理中…':attempt?'保存请求已发送；如未收到确认，请重试原请求核对结果。':dirtyFloor.current?'恢复或整理的内容尚未保存；仅保留在当前界面内存中，需明确保存或放弃。':JSON.stringify(draft)!==baseline.current?'有未保存的修改；仅保留在当前界面内存中。':'填写并明确保存后才会登记正式记录。'),
       errors.length>0&&h('div',{role:'alert',className:'dm-error dm-editor-errors'},h('p',null,`请检查以下 ${errors.length} 项：`),h('ul',null,...errors.map((error,i)=>h('li',{key:i},error.field?h('button',{type:'button',className:'dm-ref',onClick:()=>focusField(error.field)},error.message):error.message)))),
       h('fieldset',{className:'dm-editor-fields',disabled:locked||readOnly||!!attempt},section('content','内容',content),section('basis','依据',basis,draft.kind!=='Evidence'),section('scope','范围与缺口',scope)),
@@ -1073,7 +1073,7 @@ globalThis.DshMathFormUI = function (React, F, Preview) {
             !candidateCurrent && h('p', {role: 'alert', className: 'dm-local-hint'}, '原稿版本已改变，请重新预览。'),
             button('追加到草稿（未经审核）', () => { setAllowLeave(false); controller.current?.adoptCandidate(); }, candidateBlocked || !candidateCurrent, true))),
         writable && h('div', {className: 'dm-actions dm-promotion'}, button('整理为笔记', () => promote('Note'), state.busy || !state.loaded || !state.body.trim()),
-          button('整理为证明义务', () => promote('Obligation'), state.busy || !state.loaded || !state.body.trim())),
+          button('整理为待证事项', () => promote('Obligation'), state.busy || !state.loaded || !state.body.trim())),
         h('details', {className: 'dm-details'}, h('summary', null, `历史版本（${state.history.length}）`),
           ...[...state.history].sort((a, b) => b.rev - a.rev).map(item => h('div', {key: item.rev, className: 'dm-history-row'}, button(`查看 v${item.rev}`, () => controller.current?.history(item.rev)), h('span', {className: 'dm-record-text'}, `${item.title || '无标题'} · ${item.saved_at || ''}`))),
           !state.history.length && h('p', {className: 'dm-empty'}, '尚无历史版本')),
@@ -1134,7 +1134,7 @@ globalThis.DshMathFormUI = function (React, F, Preview) {
   const refKey = r => validRef(r) ? `${r.id}@${r.rev}` : '无有效精确版本';
   const objects = view => list(view?.objects).filter(o => validRef(o) && typeof o.kind === 'string' && o.data && typeof o.data === 'object');
   const exactObject = (view, r) => validRef(r) ? objects(view).find(o => o.id === r.id && o.rev === r.rev) || null : null;
-  const kindLabels = {Problem: '研究问题', Note: '笔记', Obligation: '待证义务', Evidence: '证据', Review: '审核记录'};
+  const kindLabels = {Problem: '研究问题', Note: '笔记', Obligation: '待证事项', Evidence: '参考材料', Review: '审核记录'};
   const stateLabels = {unreviewed: '未审核', open: '未关闭', candidate: '候选', accepted: '已登记接受', closed: '已登记关闭', needs_recheck: '需重新检查', rejected: '已登记拒绝', failed_attempt: '失败尝试'};
   const kindLabel = kind => own(kindLabels, kind) ? kindLabels[kind] : text(kind);
   const stateLabel = state => own(stateLabels, state) ? `${stateLabels[state]}（${state}）` : text(state);
@@ -1146,7 +1146,7 @@ globalThis.DshMathFormUI = function (React, F, Preview) {
     const characters = Array.from(statement);
     return characters.length > 160 ? characters.slice(0, 159).join('') + '…' : statement;
   }
-  const groupLabels = {targets: '研究目标', accepted: '已登记接受/关闭', candidates: '候选', obligations: '待证义务', failed_routes: '失败路线', notes: '笔记'};
+  const groupLabels = {targets: '研究目标', accepted: '已登记接受/关闭', candidates: '候选', obligations: '待证事项', failed_routes: '失败路线', notes: '笔记'};
   function references(object) {
     const d = object?.data || {}, out = [];
     const add = (relation, value) => { if (value != null) out.push({relation, ref: value, valid: validRef(value)}); };
@@ -1326,14 +1326,14 @@ globalThis.DshMathFormUI = function (React, F, Preview) {
         case 'Problem': fields = [field('问题陈述', d.statement), field('量词', d.quantifiers), field('对象与范围', d.domain), field('约定', d.conventions), field('完成条件', d.completion_criteria), field('目标类型（登记值）', d.target_type), field('知识状态（登记值）', d.knowledge_status), field('与父问题的关系', d.relation), field('来源（未核实为真）', d.sources)]; break;
         case 'Note': fields = [field('简述', d.summary), field('正文', d.body), field('主张', d.statement), field('假设', d.assumptions), field('缺口', d.gaps), field('笔记类型', d.note_type), ...(d.route_id ? [field('路线', d.route_id)] : []), ...(d.failure ? Object.entries({inputs: '失败输入', location: '失败位置', observed: '观察结果', negated_scope: '否定范围', retry_change: '再次尝试应改变什么'}).map(([k, label]) => field(label, d.failure[k])) : [])]; break;
         case 'Obligation': fields = [field('待证陈述', d.statement), field('适用范围', d.scope), field('完成条件', d.completion_criteria), field('下一步', d.next_action), field('登记原因', d.reason), field('记录中的状态（非验证结论）', stateLabel(d.state)), field('检查方式（登记值）', d.check_method), ...(d.checker_id ? [field('固定 checker', d.checker_id)] : [])]; break;
-        case 'Evidence': fields = [field('证据类型', d.evidence_type), field('支持范围', d.support_scope), field('局限与未核实项', d.limits), field('来源状态（非真实性验证）', d.source_status), field('来源定位', d.source?.locator), field('来源版本', d.source?.version), field('访问时间', d.source?.accessed_at), field('来源条件', d.source?.conditions), field('生产或导入方式', d.production?.method), field('生产方式版本', d.production?.version), ...(d.citation ? [field('引文标题', d.citation.title), field('页码', d.citation.page), field('章节', d.citation.section), field('定理', d.citation.theorem), field('摘录 SHA256', d.citation.excerpt_sha256), field('来源条件映射（登记值）', d.citation.condition_map)] : []), field('附件元数据（原文未自动加载）', d.attachments)]; break;
+        case 'Evidence': fields = [field('材料类型', d.evidence_type), field('支持范围', d.support_scope), field('局限与未核实项', d.limits), field('来源状态（非真实性验证）', d.source_status), field('来源定位', d.source?.locator), field('来源版本', d.source?.version), field('访问时间', d.source?.accessed_at), field('来源条件', d.source?.conditions), field('生产或导入方式', d.production?.method), field('生产方式版本', d.production?.version), ...(d.citation ? [field('引文标题', d.citation.title), field('页码', d.citation.page), field('章节', d.citation.section), field('定理', d.citation.theorem), field('摘录 SHA256', d.citation.excerpt_sha256), field('来源条件映射（登记值）', d.citation.condition_map)] : []), field('附件元数据（原文未自动加载）', d.attachments)]; break;
         case 'Review': fields = [field('审核方式', d.method), field('登记结论（仅指定范围）', d.verdict), field('审核范围', d.scope), field('审核发现', d.findings), field('审核者', d.reviewer), field('checker 版本', d.checker_version), field('错误码', d.error_code), field('依据哈希', d.basis_hash), h(ReviewBasis, {key: 'basis', basis: d.basis}), ...(d.execution ? [field('执行记录（非全局证明）', d.execution)] : [])]; break;
         default: fields = [h('p', {key: 'unknown', className: 'dm-muted'}, '未知记录类型，未猜测字段含义；完整内容保留在原始 JSON。')];
       }
       return h('article', {className: 'dm-record-reader'}, h('div', {className: 'dm-reader-actions'}, typeof onClose === 'function' && button('返回记录列表', onClose), typeof onPin === 'function' && button(pinned ? '取消固定此版本' : '固定此精确版本', () => onPin(object), {'aria-pressed': pinned})),
         h('h3', {className: 'dm-record-heading', ref: heading, tabIndex: -1}, title(object)), h('p', {className: 'dm-record-meta'}, `${kindLabel(object.kind)} · `, h('code', {}, key)), h(Copy, {value: key, label: '复制 ID@rev', disabled: !validRef(object)}),
         row && !row.latest && h('p', {role: 'status'}, `正在阅读历史版本 ${key}；存在 @${row.latestRev}，未自动升级。`), h(Registered, {row}), ...fields,
-        h('section', {className: 'dm-record-section dm-record-refs'}, h('h4', {}, '引用与证据（精确版本）'), refs.length ? h('ul', {}, ...refs.map((r, i) => h('li', {key: i}, h(Ref, {value: r.ref, relation: r.relation, view, inspect})))) : h('p', {className: 'dm-muted'}, '无已登记引用。')),
+        h('section', {className: 'dm-record-section dm-record-refs'}, h('h4', {}, '引用与参考材料（精确版本）'), refs.length ? h('ul', {}, ...refs.map((r, i) => h('li', {key: i}, h(Ref, {value: r.ref, relation: r.relation, view, inspect})))) : h('p', {className: 'dm-muted'}, '无已登记引用。')),
         h('section', {className: 'dm-record-section dm-record-refs'}, h('h4', {}, '被引用位置（含项目内历史记录）'), incoming.length ? h('ul', {}, ...incoming.map((r, i) => h('li', {key: i}, h(Ref, {value: r.object, relation: r.relation, view, inspect})))) : h('p', {className: 'dm-muted'}, '当前项目快照未登记回指。')),
         children, raw(object));
     }
@@ -1361,7 +1361,7 @@ globalThis.DshMathFormUI = function (React, F, Preview) {
       if (!basis || typeof basis !== 'object') return h(Field, {label: '精确审核依据', value: basis});
       return h('section', {className: 'dm-record-section'}, h('h4', {}, '精确审核依据'),
         ...['target', 'candidate'].filter(k => own(basis, k)).map(k => h('p', {key: k}, `${k === 'target' ? '审核目标' : '所选候选'}：`, basis[k] == null ? '未选择' : refKey(basis[k]))),
-        ...[['objects', '依据对象与哈希'], ['dependencies', '依赖版本'], ['evidence', '证据版本'], ['decisions', '所依赖审核记录']].filter(([k]) => own(basis, k)).map(([k, label]) => h('section', {key: k}, h('h5', {}, label),
+        ...[['objects', '依据对象与哈希'], ['dependencies', '依赖版本'], ['evidence', '材料版本'], ['decisions', '所依赖审核记录']].filter(([k]) => own(basis, k)).map(([k, label]) => h('section', {key: k}, h('h5', {}, label),
           list(basis[k]).length ? h('ul', {}, ...basis[k].map((entry, i) => h('li', {key: i}, k === 'objects' ? `${refKey(entry.ref)} · SHA256 ${text(entry.sha256) || '未返回'}` : k === 'decisions' ? `${refKey(entry.target)} · Review ID ${text(entry.review_id) || '无'} · withdrawn=${own(entry, 'withdrawn') ? text(entry.withdrawn) : '未返回'}` : refKey(entry)))) : h('p', {className: 'dm-muted'}, '返回列表为空'))));
     }
     function ReviewSummary({preview}) {
@@ -1420,7 +1420,7 @@ globalThis.DshMathFormUI = function (React, F, Preview) {
   const RESEARCH = 'research/events.jsonl';
   const ZERO = '0'.repeat(64);
   const NOTICE = '这是已记录公开研究产物的只读投影，非实时运行状态、非内部思维链、非审核证据或证明。父子仅表示来源分组和实际产物归属，不表示执行因果；引用边只来自显式引用。未选来源就是未采集；本次读取不调用模型，但整个会话模型请求总数仍未知。';
-  const KINDS = {Problem: '研究目标', Note: '研究笔记', Obligation: '待办义务', Evidence: '证据记录', Review: '审查记录', Run: '离线运行记录'};
+  const KINDS = {Problem: '研究目标', Note: '研究笔记', Obligation: '待证事项', Evidence: '参考材料', Review: '审查记录', Run: '离线运行记录'};
   const RESEARCH_KINDS = {commit: '研究提交', review: '审查提交', control: '研究控制记录', recovery: '日志恢复记录'};
   const LEDGER_KINDS = {
     'tool.started': '工具开始记录', 'tool.finished': '工具结束记录',
@@ -1430,7 +1430,7 @@ globalThis.DshMathFormUI = function (React, F, Preview) {
   };
   const RELATIONS = {
     parent_problem: '父目标引用', problem_ref: '研究目标引用', uses: '使用',
-    candidate_for: '候选用于', candidates: '候选引用', evidence: '证据引用',
+    candidate_for: '候选用于', candidates: '候选引用', evidence: '材料引用',
     dependencies: '依赖引用', review_target: '审查对象', review_candidate: '审查候选', condition_gap: '条件缺口',
   };
   const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -1607,7 +1607,7 @@ globalThis.DshMathFormUI = function (React, F, Preview) {
         }
         if (obj.kind === 'Note') enumFact('笔记类型', data.note_type, ['argument', 'observation', 'computation', 'source', 'failed_attempt']);
         if (obj.kind === 'Obligation') enumFact('对象登记状态', data.state, ['open', 'candidate', 'closed', 'needs_recheck']);
-        if (obj.kind === 'Evidence') enumFact('证据类型', data.evidence_type, ['proof_text', 'source_excerpt', 'computation', 'witness', 'figure']);
+        if (obj.kind === 'Evidence') enumFact('材料类型', data.evidence_type, ['proof_text', 'source_excerpt', 'computation', 'witness', 'figure']);
         if (obj.kind === 'Review') {
           enumFact('登记的审查方法', data.method, ['human', 'program', 'model']);
           enumFact('登记的审查 verdict（非本图判定）', data.verdict, ['pass', 'fail', 'inconclusive', 'error']);
@@ -1964,6 +1964,11 @@ globalThis.DshMathTheme = `
 .dm-title > .dm-icon { color: var(--dm-muted); }
 .dm-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
 .dm-header .dm-actions { gap: 3px; }
+.dm-record-actions { align-items: flex-start; }
+.dm-record-more { min-width: 0; }
+.dm-record-more > summary { padding: 5px 8px; min-height: 30px; color: var(--dm-muted); cursor: pointer; border-radius: 6px; }
+.dm-record-more > summary:hover { background: var(--dm-soft); color: var(--dm-text); }
+.dm-record-secondary { margin-top: 7px; }
 .dm-button {
   display: inline-flex; align-items: center; justify-content: center; gap: 5px;
   max-width: 100%; min-height: 30px; padding: 5px 10px; border: 1px solid var(--dm-border);
@@ -2429,6 +2434,19 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
   function Button({children, onClick, disabled, variant = '', size = '', icon = false, title, type = 'button'}) {
     return h('button', {type, onClick, disabled, title, className: `dm-button ${variant ? `dm-${variant}` : ''} ${size ? `dm-${size}` : ''}`}, icon && h(MathIcon), children);
   }
+  function recordActions({busy, edit}) {
+    const choose = (kind, event) => {
+      event?.currentTarget?.closest('details')?.removeAttribute('open');
+      edit(kind);
+    };
+    return h('div', {className: 'dm-actions dm-record-actions'},
+      h(Button, {variant: 'primary', disabled: busy, onClick: event => choose('Note', event)}, '写笔记'),
+      h('details', {className: 'dm-record-more'},
+        h('summary', null, '更多记录'),
+        h('div', {className: 'dm-actions dm-record-secondary'},
+          h(Button, {disabled: busy, onClick: event => choose('Obligation', event)}, '添加待证事项'),
+          h(Button, {disabled: busy, onClick: event => choose('Evidence', event)}, '添加参考材料'))));
+  }
   function Field({label, value, change, multiline = true, wide = false}) {
     const multi = multiline || /[\r\n]/.test(value || ''); // Preserve legacy multiline values verbatim.
     return h('label', {className: `dm-field ${wide ? 'dm-wide' : ''}`}, label,
@@ -2652,7 +2670,7 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
         throw error;
       }
     }, '提交本人审核记录');
-    const groups = {targets: '当前目标', accepted: '已接受 / 已关闭', candidates: '候选结论', obligations: '证明义务', failed_routes: '失败路线', notes: '研究笔记'};
+    const groups = {targets: '当前目标', accepted: '已接受 / 已关闭', candidates: '候选结论', obligations: '待证事项', failed_routes: '失败路线', notes: '笔记'};
     function record(row) {
       const object = row.object;
       return h('div', {className: 'dm-record', key: `${object.id}@${object.rev}`},
@@ -2691,7 +2709,7 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
       (draftSummary.validation?.complete ? '查看并确认草稿' : draftSummary.validation?.missing_fields?.length ? `继续准备 · 还缺 ${draftSummary.validation.missing_fields.length} 项` : '继续准备 · 检查待修正项') : '新建项目';
     const goal = view?.groups.targets[0]?.object;
     const stats = view ? [
-      ['研究记录', view.objects.length], ['证明义务', view.groups.obligations.length], ['研究笔记', view.groups.notes.length], ['证据材料', view.objects.filter(o => o.kind === 'Evidence').length],
+      ['研究记录', view.objects.length], ['待证事项', view.groups.obligations.length], ['笔记', view.groups.notes.length], ['参考材料', view.objects.filter(o => o.kind === 'Evidence').length],
     ] : [];
     return h('div', {ref: root, className: `dsh-math-view ${sidebar ? 'dm-sidebar' : ''}`, 'aria-busy': busy},
       decision && h(UnsavedPrompt, {decision, finish: finishDecision}),
@@ -2751,8 +2769,7 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
             h('div', {className: 'dm-goal-statement'}, h(Preview, {text: goal.data.statement || ''})),
             writable && h(Button, {variant: 'primary', onClick: () => changeTab('scratchpad')}, '继续草稿'),
             h('div', {className: 'dm-record-meta'}, link(ref(goal))),
-            writable && h('div', {className: 'dm-actions dm-next-actions'},
-              h(Button, {disabled: busy, onClick: () => edit('Note')}, '登记笔记'), h(Button, {disabled: busy, onClick: () => edit('Obligation')}, '登记义务'), h(Button, {disabled: busy, onClick: () => edit('Evidence')}, '登记证据')),
+            writable && recordActions({busy, edit}),
             F.nextActions(view).length > 0 && h('div', {className: 'dm-next-action-list'}, h('h4', null, '下一步'), ...F.nextActions(view).map(item => h('div', {key: F.refKey(item.ref), className: 'dm-next-action'}, h('span', null, item.text), link(item.ref)))),
             h('p', {className: 'dm-local-hint'}, '登记的是研究记录，不是证明。程序检查不替代人工审核。')),
           groupPanels(3),
@@ -2761,7 +2778,7 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
             h('p', {className: 'dm-record-text'}, '开放性与数学结论不由软件自动判定；当前状态由版本化记录推导。'),
             navigateSession && h(Button, {onClick: () => leave(() => navigateSession(view.project.session_id))}, '进入关联普通会话'))),
         h('section', {...panelProps('records'), className: 'dm-records'},
-          h(Panel, {title: '研究记录', meta: '正文优先 · 精确版本可追溯'}, writable && h('div', {className: 'dm-actions'}, h(Button, {disabled: busy, onClick: () => edit('Note')}, '笔记'), h(Button, {disabled: busy, onClick: () => edit('Obligation')}, '义务'), h(Button, {disabled: busy, onClick: () => edit('Evidence')}, '证据'))),
+          h(Panel, {title: '研究记录', meta: '正文优先 · 精确版本可追溯'}, writable && recordActions({busy, edit})),
           editor && writable && h(Panel, {title: '编辑研究记录'}, editor.promotion && h('p', {className: 'dm-record-text'}, `整理自草稿本 v${editor.promotion.scratchpad_rev}；请补全正式字段。保存后登记精确来源链接，原草稿保留。`),
             h(Editor, {key: editor.operation_id, initial: editor, initialDirty: local.current.dirty, initialAttempt: local.current.attempt, objects: view.objects, busy, inspect,
               onDraftChange: (next, meta) => { if (lifetime.current.active && local.current.draft?.operation_id === next.operation_id) changeEditor(next, meta); },
@@ -2876,7 +2893,7 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
       const service = child.get('betterSidebar');
       child.effect(() => {
         const dispose = service.registerTab({
-          id: TAB_ID, title: '数学研究', description: '管理研究目标、笔记、证据与人工审核。', icon: size => h(MathIcon, {size}), single: true, order: 20,
+          id: TAB_ID, title: '数学研究', description: '管理研究目标、笔记、参考材料与人工审核。', icon: size => h(MathIcon, {size}), single: true, order: 20,
           component: ({scope}) => h(MathView, {sessionId: scope.sessionId, navigateSession, sidebar: true}),
         });
         sidebar = service;
