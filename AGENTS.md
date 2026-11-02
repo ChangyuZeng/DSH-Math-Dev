@@ -18,6 +18,12 @@
 - 不自动启动研究调用或 75 格计算；不修改原始审核文件、历史 run、研究数据、旧包或第三方插件源码。`modelRuns: []` 的验收配置保持关闭研究能力。
 - 每次版本验收通过后，默认更新本机 Desktop 的 `dsh-math` 到该版本并推送 GitHub（见下节），无需再次询问；更新只替换 `dsh-math`，不改 Desktop 其他插件、模型设置或研究数据。
 
+## 浏览器使用
+
+- 用户于 2026-11-02 要求避免插件优化时的空白测试 Chrome 干扰日常链接。手动预览通过系统默认浏览器打开，沿用用户平时的浏览器；不修改系统默认应用。
+- 自动界面验收使用 Playwright 独立的无界面 Chromium Headless Shell，保留隔离 `math-dev` 与测试配置。缺少运行时可执行 `python3 -m playwright install chromium --only-shell`；不指定日常 Chrome 的 `executable_path`、`channel="chrome"` 或个人用户目录。
+- 使用 `try/finally` 或等效资源管理保证验收成功、失败均关闭本次创建的浏览器。仅清理可核对来源的本次测试进程；现存 Harness 内置浏览器与用户浏览器单独诊断，不能按 Chrome 名称批量退出。
+
 ## Desktop 更新与 GitHub 同步
 
 - 用户于 2026-10-31 授权：每个版本在隔离 `math-dev` 完成既定验收（`npm run build && npm test`、真实界面、无 Better Sidebar 回退、源码／tgz／实际安装文件哈希、新导出及搬移副本的 `verify_bundle.py`）后，即可更新本机 Desktop 并提交、推送 `origin/main`。
