@@ -1,0 +1,62 @@
+{
+  "format": "dsh-math-four-harness-evaluation-v1",
+  "status": "draft_not_executable",
+  "execution_authorized": false,
+  "protocol_revision": "v1",
+  "problem": {
+    "id": "RING15-D20-1179649",
+    "D": 1048576,
+    "pairs": 15,
+    "target_h": 1179649,
+    "baseline_h": 1179648,
+    "open_status": "pending_refresh_and_expert_review",
+    "materials_sha256": null,
+    "checker_sha256": null,
+    "reviewer_ids": []
+  },
+  "model": {
+    "provider": "openai-codex",
+    "model": "gpt-6-astra",
+    "effort": "max",
+    "resolved_version": null,
+    "qualification": "not_run",
+    "fallback_allowed": false
+  },
+  "arms": [
+    {"id":"C","name":"Codex plain","commit":null,"adapter_sha256":null,"prompt_sha256":null,"qualification":"pending"},
+    {"id":"X","name":"Xean-adapted","commit":null,"adapter_sha256":null,"prompt_sha256":null,"qualification":"pending"},
+    {"id":"R","name":"Rethlas-adapted","commit":null,"adapter_sha256":null,"prompt_sha256":null,"qualification":"pending"},
+    {"id":"M","name":"dsh-math-adapted","commit":null,"adapter_sha256":null,"prompt_sha256":null,"qualification":"pending"}
+  ],
+  "repeats_per_arm": 5,
+  "order_seed": null,
+  "execution_order": [],
+  "per_run_budget": {
+    "wall_seconds": 7200,
+    "model_requests": 120,
+    "total_tokens": 1000000,
+    "max_output_tokens": 16384,
+    "context_tokens": 65536,
+    "tool_calls": 500,
+    "cpu_cores": 2,
+    "cpu_seconds": 14400,
+    "memory_bytes": 4294967296,
+    "artifact_bytes": 1073741824,
+    "tool_timeout_seconds": 60
+  },
+  "live_smoke": {"authorized":false,"max_requests_per_arm":2,"max_requests_total":8,"target_problem_allowed":false},
+  "network_during_research": false,
+  "cross_run_memory": false,
+  "automatic_replacement_runs": false,
+  "gates": {
+    "problem_review": false,
+    "materials_frozen": false,
+    "independent_checker_review": false,
+    "common_tools_qualified": false,
+    "all_calls_metered": false,
+    "budget_enforcement": false,
+    "model_identity": false,
+    "arm_versions_frozen": false,
+    "human_run_authorization": false
+  }
+}

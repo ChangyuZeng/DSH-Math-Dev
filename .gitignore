@@ -104,6 +104,16 @@
 !/docs/workflow/current-workflow.html
 !/docs/workflow/candidate.json
 
+# Offline evaluation protocol and helper source; never admit run data.
+!/evaluation/
+/evaluation/*
+!/evaluation/four-harness-v1/
+/evaluation/four-harness-v1/*
+!/evaluation/four-harness-v1/README.md
+!/evaluation/four-harness-v1/readiness.md
+!/evaluation/four-harness-v1/manifest.template.json
+!/evaluation/four-harness-v1/audit.py
+
 # Only tests used by the current npm test entry point.
 # Historical acceptance/profile scripts remain local and unchanged.
 !/tests/
