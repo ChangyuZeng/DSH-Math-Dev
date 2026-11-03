@@ -1,0 +1,523 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "dsh-math · Current Research Workflow",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "viewBox": [1220, 776],
+    "output": "docs/workflow/current-workflow.html",
+    "repository": {
+      "url": "https://github.com/ChangyuZeng/DSH-Math-Dev.git",
+      "revision": "613b6bb61fa7a3b4385fe3e5a14cde0f458dcfc3",
+      "provider": "github",
+      "link_mode": "web"
+    }
+  },
+  "lanes": [
+    {
+      "id": "control",
+      "label": "01 · Human launch"
+    },
+    {
+      "id": "execute",
+      "label": "02 · Model action"
+    },
+    {
+      "id": "persist",
+      "label": "03 · Parent archive"
+    },
+    {
+      "id": "review",
+      "label": "04 · Human review"
+    },
+    {
+      "id": "recovery",
+      "label": "05 · Recovery",
+      "variant": "exception"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "prepare",
+      "lane": "control",
+      "col": 0,
+      "type": "frontend",
+      "label": "Freeze RunSpec",
+      "sublabel": "Problem@rev + limits",
+      "width": 165,
+      "sources": [
+        {
+          "path": "workflow-ui.cjs",
+          "line": 56,
+          "end_line": 65
+        },
+        {
+          "path": "workflow_store.py",
+          "line": 172,
+          "end_line": 200
+        }
+      ]
+    },
+    {
+      "id": "start",
+      "lane": "control",
+      "col": 1,
+      "type": "security",
+      "label": "Manual start",
+      "sublabel": "Enabled host + LLM",
+      "width": 165,
+      "sources": [
+        {
+          "path": "host.mjs",
+          "line": 93,
+          "end_line": 99
+        },
+        {
+          "path": "workflow_store.py",
+          "line": 226,
+          "end_line": 229
+        }
+      ]
+    },
+    {
+      "id": "dispatch",
+      "lane": "control",
+      "col": 2,
+      "type": "frontend",
+      "label": "Choose execution",
+      "sublabel": "One step / serial loop",
+      "width": 165,
+      "sources": [
+        {
+          "path": "workflow-ui.cjs",
+          "line": 115,
+          "end_line": 125
+        },
+        {
+          "path": "host.mjs",
+          "line": 118,
+          "end_line": 134
+        }
+      ]
+    },
+    {
+      "id": "context",
+      "lane": "execute",
+      "col": 0,
+      "type": "database",
+      "label": "Fresh context",
+      "sublabel": "Exact refs + closure",
+      "width": 165,
+      "sources": [
+        {
+          "path": "workflow_context.py",
+          "line": 33,
+          "end_line": 96
+        },
+        {
+          "path": "workflow_context.py",
+          "line": 120,
+          "end_line": 130
+        }
+      ]
+    },
+    {
+      "id": "policy",
+      "lane": "execute",
+      "col": 1,
+      "type": "security",
+      "label": "Exact model",
+      "sublabel": "Provider / model / effort",
+      "width": 165,
+      "sources": [
+        {
+          "path": "workflow_runner.mjs",
+          "line": 38,
+          "end_line": 50
+        }
+      ]
+    },
+    {
+      "id": "reserve",
+      "lane": "execute",
+      "col": 2,
+      "type": "security",
+      "label": "Reserve budget",
+      "sublabel": "Durable single claim",
+      "width": 165,
+      "sources": [
+        {
+          "path": "workflow_store.py",
+          "line": 237,
+          "end_line": 280
+        },
+        {
+          "path": "workflow_runner.mjs",
+          "line": 51,
+          "end_line": 54
+        }
+      ]
+    },
+    {
+      "id": "model",
+      "lane": "execute",
+      "col": 3,
+      "type": "cloud",
+      "label": "Stream model",
+      "sublabel": "One direct request",
+      "width": 165,
+      "sources": [
+        {
+          "path": "workflow_runner.mjs",
+          "line": 55,
+          "end_line": 71
+        }
+      ]
+    },
+    {
+      "id": "usage",
+      "lane": "persist",
+      "col": 3,
+      "type": "database",
+      "label": "Usage + proposal",
+      "sublabel": "Persist before validation",
+      "width": 165,
+      "sources": [
+        {
+          "path": "workflow_runner.mjs",
+          "line": 72,
+          "end_line": 79
+        },
+        {
+          "path": "workflow_store.py",
+          "line": 303,
+          "end_line": 321
+        }
+      ]
+    },
+    {
+      "id": "validate",
+      "lane": "persist",
+      "col": 2,
+      "type": "security",
+      "label": "Parent validation",
+      "sublabel": "Schema / scope / freshness",
+      "width": 165,
+      "sources": [
+        {
+          "path": "workflow_service.py",
+          "line": 96,
+          "end_line": 118
+        },
+        {
+          "path": "workflow_service.py",
+          "line": 132,
+          "end_line": 166
+        }
+      ]
+    },
+    {
+      "id": "commit",
+      "lane": "persist",
+      "col": 1,
+      "type": "database",
+      "label": "Research commit",
+      "sublabel": "Then workflow receipt",
+      "width": 165,
+      "sources": [
+        {
+          "path": "workflow_service.py",
+          "line": 148,
+          "end_line": 173
+        }
+      ]
+    },
+    {
+      "id": "next",
+      "lane": "persist",
+      "col": 0,
+      "type": "backend",
+      "label": "Next action",
+      "sublabel": "Step returns / loop follows",
+      "width": 165,
+      "sources": [
+        {
+          "path": "workflow_runner.mjs",
+          "line": 5,
+          "end_line": 23
+        },
+        {
+          "path": "workflow-ui.cjs",
+          "line": 167,
+          "end_line": 175
+        }
+      ]
+    },
+    {
+      "id": "stop",
+      "lane": "recovery",
+      "col": 0,
+      "type": "security",
+      "label": "Pause / stop",
+      "sublabel": "Budget, no progress, human",
+      "width": 165,
+      "sources": [
+        {
+          "path": "workflow_runner.mjs",
+          "line": 5,
+          "end_line": 23
+        },
+        {
+          "path": "workflow_runner.mjs",
+          "line": 33,
+          "end_line": 37
+        },
+        {
+          "path": "host.mjs",
+          "line": 100,
+          "end_line": 113
+        }
+      ]
+    },
+    {
+      "id": "reconcile",
+      "lane": "recovery",
+      "col": 1,
+      "type": "security",
+      "label": "Reconcile outcome",
+      "sublabel": "Unknown is never replayed",
+      "width": 165,
+      "sources": [
+        {
+          "path": "workflow_store.py",
+          "line": 219,
+          "end_line": 225
+        },
+        {
+          "path": "workflow_service.py",
+          "line": 61,
+          "end_line": 66
+        },
+        {
+          "path": "workflow_runner.mjs",
+          "line": 80,
+          "end_line": 95
+        }
+      ]
+    },
+    {
+      "id": "continue",
+      "lane": "recovery",
+      "col": 2,
+      "type": "frontend",
+      "label": "Prepare continuation",
+      "sublabel": "New run + frozen spec",
+      "width": 165,
+      "sources": [
+        {
+          "path": "workflow_store.py",
+          "line": 172,
+          "end_line": 200
+        },
+        {
+          "path": "workflow-ui.cjs",
+          "line": 182,
+          "end_line": 191
+        }
+      ]
+    },
+    {
+      "id": "candidate",
+      "lane": "review",
+      "col": 1,
+      "type": "database",
+      "label": "Candidate records",
+      "sublabel": "Pending human review",
+      "width": 165,
+      "sources": [
+        {
+          "path": "workflow_store.py",
+          "line": 197,
+          "end_line": 200
+        },
+        {
+          "path": "workflow_context.py",
+          "line": 139,
+          "end_line": 152
+        }
+      ]
+    },
+    {
+      "id": "human",
+      "lane": "review",
+      "col": 2,
+      "type": "external",
+      "label": "Human review",
+      "sublabel": "Exact basis + stored scope",
+      "width": 165,
+      "sources": [
+        {
+          "path": "runtime/p2c/research_store.py",
+          "line": 471,
+          "end_line": 495
+        }
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "id": "prepare-start",
+      "from": "prepare",
+      "to": "start"
+    },
+    {
+      "id": "start-dispatch",
+      "from": "start",
+      "to": "dispatch"
+    },
+    {
+      "id": "dispatch-context",
+      "from": "dispatch",
+      "to": "context",
+      "label": "launch",
+      "role": "main"
+    },
+    {
+      "id": "context-policy",
+      "from": "context",
+      "to": "policy"
+    },
+    {
+      "id": "policy-reserve",
+      "from": "policy",
+      "to": "reserve"
+    },
+    {
+      "id": "reserve-model",
+      "from": "reserve",
+      "to": "model"
+    },
+    {
+      "id": "model-usage",
+      "from": "model",
+      "to": "usage"
+    },
+    {
+      "id": "usage-validate",
+      "from": "usage",
+      "to": "validate"
+    },
+    {
+      "id": "validate-commit",
+      "from": "validate",
+      "to": "commit",
+      "label": "valid"
+    },
+    {
+      "id": "commit-next",
+      "from": "commit",
+      "to": "next"
+    },
+    {
+      "id": "next-context",
+      "from": "next",
+      "to": "context",
+      "label": "loop only",
+      "role": "return",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "next-stop",
+      "from": "next",
+      "to": "stop",
+      "label": "stop condition",
+      "role": "branch",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "stop-reconcile",
+      "from": "stop",
+      "to": "reconcile",
+      "label": "uncertain",
+      "variant": "security",
+      "role": "branch"
+    },
+    {
+      "id": "reconcile-continue",
+      "from": "reconcile",
+      "to": "continue",
+      "label": "new run",
+      "variant": "dashed"
+    },
+    {
+      "id": "commit-candidate",
+      "from": "commit",
+      "to": "candidate",
+      "label": "candidate",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "candidate-human",
+      "from": "candidate",
+      "to": "human",
+      "label": "human entry",
+      "variant": "dashed"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Execution contract",
+      "items": [
+        "Prepare and start never launch a model request; execution requires an explicit step or serial-loop action.",
+        "Serial mode follows committed next_action / next_target; it pauses on stop or two consecutive committed no_progress results.",
+        "One active action per run; no application-level retry or model fallback. Transport internals remain adapter-dependent."
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Recovery and continuation",
+      "items": [
+        "Budget limits, errors and human pause end execution. A pause aborts and waits for the active request outcome.",
+        "Missing or partial usage is not zero. Unknown calls are not replayed. Proposed output can be archived again without a model call.",
+        "Reconciliation of a proposed action uses its exact research receipt. A continuation creates a new prepared run and needs manual start again; a clean paused run can also be continued."
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Scientific boundary",
+      "items": [
+        "The parent accepts only valid Note / Obligation proposals for the frozen Problem, checking fresh premises and exact revisions.",
+        "derive, check, revise, decompose and reconstruct are model actions. No Python, historical checker, paper retrieval or full proof execution occurs here.",
+        "Blind reconstruction hides the target argument and its evidence; failure is inconclusive. Model critique, program pass and human acceptance remain separate.",
+        "Source snapshot: 613b6bb (2026-11-03). This is implementation documentation, not evidence of mathematical performance."
+      ]
+    },
+    {
+      "dot": "slate",
+      "title": "Per-step safeguards",
+      "items": [
+        "Manual start: No model call yet.",
+        "Choose execution: Explicit user action.",
+        "Fresh context: No silent truncation.",
+        "Exact model: Context window checked.",
+        "Reserve budget: Request + token limits.",
+        "Stream model: Tools unavailable.",
+        "Usage + proposal: Missing usage blocks calls.",
+        "Parent validation: Notes + Obligations only.",
+        "Research commit: Model authority only.",
+        "Next action: Fresh context each turn.",
+        "Pause / stop: Stop calls no model.",
+        "Reconcile outcome: Exact receipt recovery.",
+        "Prepare continuation: Parent rev + research head.",
+        "Candidate records: No global proof claim.",
+        "Human review: Dedicated review entry."
+      ]
+    }
+  ]
+}

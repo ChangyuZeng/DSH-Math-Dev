@@ -94,6 +94,15 @@
 /contracts/cards/*
 !/contracts/cards/*.md
 
+# Published workflow documentation only; keep local diagram diagnostics private.
+!/docs/
+/docs/*
+!/docs/workflow/
+/docs/workflow/*
+!/docs/workflow/README.md
+!/docs/workflow/current-workflow.html
+!/docs/workflow/candidate.json
+
 # Only tests used by the current npm test entry point.
 # Historical acceptance/profile scripts remain local and unchanged.
 !/tests/
