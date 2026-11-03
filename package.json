@@ -1,12 +1,20 @@
 {
   "name": "dsh-math",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "description": "Conversational mathematical research records, route history, original materials and human review in DSH",
   "engines": {
     "dsh": "0.2.1-rc.5"
   },
   "license": "UNLICENSED",
   "files": [
+    "workflow_store.py",
+    "workflow_context.py",
+    "workflow_service.py",
+    "workflow_strategy.py",
+    "workflow_runner.mjs",
+    "workflow-ui.cjs",
+    "contracts/workflow-v1.md",
+    "contracts/workflow-evaluation-v1.md",
     "project-fields.json",
     "project-form.cjs",
     "workbench-ui.cjs",

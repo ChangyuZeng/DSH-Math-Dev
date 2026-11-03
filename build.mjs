@@ -5,8 +5,8 @@ import {dirname, join} from 'node:path';
 import {build} from 'esbuild';
 
 const require = createRequire(import.meta.url);
-const sources = ['forms.cjs', 'form-ui.cjs', 'comparison-ui.cjs', 'project-form.cjs', 'materials-ui.cjs', 'workbench-ui.cjs', 'record-ui.cjs', 'process-graph.cjs', 'graph-ui.cjs', 'research-graph.cjs', 'research-graph-ui.cjs', 'research-graph-theme.cjs', 'project-access-ui.cjs', 'library-ui.cjs', 'project-manager-ui.cjs', 'export-ui.cjs', 'client-theme.cjs', 'client-main.cjs'];
-for (const source of [...sources, 'math-preview.cjs', 'host.mjs', 'human-api.mjs', 'chat-tools.mjs']) {
+const sources = ['forms.cjs', 'form-ui.cjs', 'comparison-ui.cjs', 'project-form.cjs', 'materials-ui.cjs', 'workbench-ui.cjs', 'record-ui.cjs', 'process-graph.cjs', 'graph-ui.cjs', 'research-graph.cjs', 'research-graph-ui.cjs', 'research-graph-theme.cjs', 'project-access-ui.cjs', 'library-ui.cjs', 'project-manager-ui.cjs', 'export-ui.cjs', 'workflow-ui.cjs', 'client-theme.cjs', 'client-main.cjs'];
+for (const source of [...sources, 'math-preview.cjs', 'host.mjs', 'human-api.mjs', 'chat-tools.mjs', 'workflow_runner.mjs']) {
   const result = spawnSync(process.execPath, ['--check', source], {stdio: 'inherit'});
   if (result.error) throw result.error;
   if (result.status !== 0) process.exit(result.status || 1);

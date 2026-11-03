@@ -7,7 +7,7 @@ import Forms from '../forms.cjs';
 const source = readFileSync(new URL('../client-main.cjs', import.meta.url), 'utf8');
 const graphSource = readFileSync(new URL('../process-graph.cjs', import.meta.url), 'utf8');
 const graphUISource = readFileSync(new URL('../graph-ui.cjs', import.meta.url), 'utf8');
-const integrationSources = ['research-graph.cjs', 'research-graph-ui.cjs', 'research-graph-theme.cjs', 'project-access-ui.cjs']
+const integrationSources = ['research-graph.cjs', 'research-graph-ui.cjs', 'research-graph-theme.cjs', 'project-access-ui.cjs', 'workflow-ui.cjs']
   .map(file => readFileSync(new URL(`../${file}`, import.meta.url), 'utf8'));
 
 // Hook/element contracts only, not a DOM renderer or visual acceptance evidence.

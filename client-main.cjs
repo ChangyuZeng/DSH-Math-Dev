@@ -10,6 +10,7 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
   const {MaterialsImport, LegacyImport} = globalThis.DshMathWorkbenchUI(React, F, Preview);
   const {LibraryBrowser, LibraryManager} = globalThis.DshMathLibraryUI(React, Preview);
   const {ExportPanel} = globalThis.DshMathExportUI(React);
+  const {WorkflowPanel} = globalThis.DshMathWorkflowUI(React);
   const {ProjectManager} = globalThis.DshMathProjectManagerUI(React);
   // This viewer never instantiates the old autosaving Scratchpad controller.
   function HistoricalDraft({request, sessionId, projectId, writable, onPromote}) {
@@ -440,6 +441,11 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
 
             F.nextActions(view).length > 0 && h('div', {className: 'dm-next-action-list'}, h('h4', null, '下一步'), ...F.nextActions(view).map(item => h('div', {key: F.refKey(item.ref), className: 'dm-next-action'}, h('span', null, item.text), link(item.ref)))),
             h('p', {className: 'dm-local-hint'}, '登记的是研究记录，不是证明。程序检查不替代人工审核。')),
+          goal && view.project.schema_version === 4 && h(WorkflowPanel, {
+            request: workbenchRequest.current, projectId: selected, sessionId,
+            problemRef: {id: goal.id, rev: goal.rev}, writable,
+            onChanged: () => lifetime.current.active && lifetime.current.selected === selected ? run(() => load(), '刷新研究流程记录', true) : undefined,
+          }),
           h(Panel, {title: '最近内容', actions: h(Button, {size: 'small', onClick: () => changeTab('records')}, '查看全部')},
             ...(librarySnapshot?.items || []).slice(0, 5).map(item => h('div', {key: item.key || JSON.stringify(item.entry), className: 'dm-recent-item'},
               h(Button, {variant: 'ghost', onClick: () => { setTab('records'); const object = item.ref && view.objects.find(value => value.id === item.ref.id && value.rev === item.ref.rev); if (object && item.kind !== 'material') inspect(object); }}, item.title || '未命名内容'),

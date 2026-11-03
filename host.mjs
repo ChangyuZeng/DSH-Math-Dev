@@ -5,6 +5,7 @@ import {resolve, dirname, join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {humanApiRejection} from './human-api.mjs';
 import {registerChatTools, CHAT_TOOLS} from './chat-tools.mjs';
+import {executeStep, executeLoop, workflowCapability} from './workflow_runner.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 export const name = 'dsh-math';
@@ -12,7 +13,7 @@ export const inject = ['webServer', 'tools', 'connection'];
 
 export const MODEL_TOOLS = ['research_read', 'note_save', 'obligation_save', 'evidence_register', 'check_witness', 'material_read', 'file_read', 'file_write', 'python_run', 'research_finish'];
 const DESCRIPTIONS = {
-  research_read: 'Read versioned objects. payload JSON: {kind,state,text,object_id,rev}; use text:"" and null for unused filters, or an exact object_id/rev.',
+  research_read: 'Read versioned objects. Required payload fields: {kind,state,text,object_id,rev}; text:"" and null for unused filters. Output is capped at 65536 JSON UTF-8 bytes. For a directory add page:{offset:0,limit:20} with object_id/rev:null; use page.next_offset and health.seq to detect changes. For exact large text add window:{field:"body",offset:0,limit:8000} with object_id and positive rev; window.next_offset counts Unicode characters. page/window are exclusive. Optional max_output_bytes:1024..65536. READ_OUTPUT_LIMIT means retry with a smaller page/window; content is never silently truncated.',
   note_save: 'Save a Note. payload JSON: {operation_id,id,expected_rev,data}. data requires note_type,title,summary,body,statement,assumptions,problem_ref,route_id,uses,candidate_for,evidence,gaps,failure. Use expected_rev 0 for new objects or the current revision when revising.',
   obligation_save: 'Save an open/candidate Obligation with {operation_id,id,expected_rev,data}; preserve scope and link exact evidence revisions. Use expected_rev 0 for new objects or the current revision when revising. Cannot change Problem or write human Review.',
   evidence_register: 'Register Evidence. payload JSON: {operation_id,id,expected_rev,data,attachment_text}. data must include attachments:[] plus evidence_type,problem_ref,source,source_status,support_scope,limits,production,citation; the host archives attachment_text.',
@@ -87,6 +88,52 @@ export function apply(ctx, config = {}) {
     gates.set(binding.runId, {binding, manifestSha: createHash('sha256').update(raw).digest('hex'), sealed: false, active: new Map(), pending: Promise.resolve(), done: null, cleanupMs: manifest.limits.cleanup_seconds * 1000, toolTimeoutMs: manifest.limits.tool_timeout_seconds * 1000});
   }
   let pending = Promise.resolve();
+  const workflowActive = new Map();
+  const workflowCall = (action, args) => spawnPython('workflow_service.py', root, {action, args}, config.python);
+  const capability = () => workflowCapability(config.workflowExecution, ctx.get?.('llm'));
+  async function workflowRequest(request) {
+    const args = request.args;
+    if (!args || typeof args.project_id !== 'string' || typeof args.session_id !== 'string') throw Error('Workflow project/session required');
+    const cap = capability();
+    if (request.action === 'workflow') {
+      if (args.command?.action === 'start' && !cap.enabled) throw Error(cap.reason);
+      if (['pause', 'cancel', 'reconcile'].includes(args.command?.action)) {
+        const current = await workflowCall('workflow-control', {project_id: args.project_id, session_id: args.session_id,
+          command: {action: 'read', run_id: args.command.run_id}});
+        if (current.rev !== args.command.expected_rev) throw Error('Workflow revision changed; refresh before control');
+        const active = workflowActive.get(`${args.project_id}/${args.command.run_id}`);
+        if (active) {
+          active.controller.abort();
+          await active.done;
+          const latest = await workflowCall('workflow-control', {project_id: args.project_id, session_id: args.session_id,
+            command: {action: 'read', run_id: args.command.run_id}});
+          // An interrupted request is already paused pending reconciliation.
+          if (args.command.action === 'pause' && ['paused', 'needs_reconcile'].includes(latest.status)) return {run: latest, capability: cap};
+          args.command.expected_rev = latest.rev;
+        }
+      }
+      const value = await workflowCall('workflow-control', args);
+      return args.command?.action === 'list' ? {runs: value, capability: cap} : {run: value, capability: cap};
+    }
+    if (!cap.enabled) throw Error(cap.reason);
+    const activeKey = `${args.project_id}/${args.run_id}`;
+    if (workflowActive.has(activeKey)) throw Error('Workflow action already active');
+    // Establish session authority through the same shared human-control gate.
+    await workflowCall('workflow-control', {project_id: args.project_id, session_id: args.session_id,
+      command: {action: 'read', run_id: args.run_id}});
+    if (workflowActive.has(activeKey)) throw Error('Workflow action already active');
+    const controller = new AbortController();
+    let settled;
+    const active = {controller, done: new Promise(resolve => { settled = resolve; })};
+    workflowActive.set(activeKey, active);
+    try {
+      const run = await (request.action === 'workflow-run' ? executeLoop : executeStep)({call: workflowCall, llm: ctx.get('llm'), projectId: args.project_id,
+        runId: args.run_id, expectedRev: args.expected_rev, kind: args.kind, targetRef: args.target_ref,
+        dependencyRefs: args.dependency_refs, routeId: args.route_id, signal: controller.signal});
+      return {run, capability: cap};
+    } finally { if (workflowActive.get(activeKey) === active) workflowActive.delete(activeKey); settled(); }
+  }
+  ctx.effect(() => () => { for (const active of workflowActive.values()) active.controller.abort(); }, 'dsh-math: stop workflow calls');
   if (!config.headless) ctx.effect(() => ctx.webServer.register({kind: 'exact', path: '/dsh-math/api', async handler(req, res) {
     const reply = (status, value) => {
       res.writeHead(status, {'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff'});
@@ -102,6 +149,9 @@ export function apply(ctx, config = {}) {
         if (Buffer.byteLength(body) > 1024 * 1024) return reply(413, {error: 'Request exceeds 1 MiB'});
       }
       const request = JSON.parse(body);
+      if (['workflow', 'workflow-step', 'workflow-run'].includes(request.action)) {
+        return reply(200, {ok: true, value: await workflowRequest(request)});
+      }
       const task = pending.then(() => pythonCall(root, request, config.python));
       pending = task.catch(() => {});
       reply(200, {ok: true, value: await task});

@@ -56,6 +56,39 @@ class SelfDirected(unittest.TestCase):
         with self.assertRaises(StoreError):
             load_manifest(self.manifest_path)
 
+    def test_v1_and_v2_model_tools_require_unchanged_manifest_anchor(self):
+        from m_runner import manifest_sha256
+        from model_tools import dispatch
+        for version in ("v1", "v2"):
+            with self.subTest(version=version):
+                m = deepcopy(self.manifest)
+                m.update(protocol_id="DSH-MATH-M-SELF-DIRECTED-" + version,
+                         provider="openai-codex", requested_model_label="gpt6.1-sol-max",
+                         code=[self.descriptor(Path(__file__).resolve())], review_policy="deferred_needs_review",
+                         source_refresh={"accessed_at": "2026-10-27T00:00:00+00:00", "record_sha256": "0" * 64})
+                m["limits"].update(wall_seconds=None, tools=None, cpu_seconds=None)
+                self.manifest_path.write_bytes(canonical(m) + b"\n")
+                anchor = manifest_sha256(self.manifest_path.read_bytes())
+                request = {"project_id": self.project_id, "session_id": m["session_id"], "run_id": m["run_id"],
+                           "tool_call_id": "read-" + version, "name": "research_read",
+                           "arguments": {"kind": None, "state": None, "text": "", "object_id": "P", "rev": 1},
+                           "manifest": str(self.manifest_path), "manifest_sha256": anchor}
+                for invalid in ({key: value for key, value in request.items() if key != "manifest_sha256"},
+                                {**request, "manifest_sha256": "f" * 64}):
+                    with self.assertRaises(StoreError) as caught:
+                        dispatch(self.data, invalid)
+                    self.assertEqual(caught.exception.code, "MANIFEST_CHANGED")
+                # A still-valid manifest changed after host anchoring must also fail.
+                changed = deepcopy(m)
+                changed["stop_rules"].append("tampered but schema-valid fixture rule")
+                self.manifest_path.write_bytes(canonical(changed) + b"\n")
+                with self.assertRaises(StoreError) as caught:
+                    dispatch(self.data, request)
+                self.assertEqual(caught.exception.code, "MANIFEST_CHANGED")
+                self.manifest_path.write_bytes(canonical(m) + b"\n")
+                result = dispatch(self.data, request)
+                self.assertEqual(result["result"]["value"]["object"]["id"], "P")
+
     def test_evidence_schema_error_identifies_required_empty_attachments(self):
         from m_runner import manifest_sha256
         from model_tools import dispatch

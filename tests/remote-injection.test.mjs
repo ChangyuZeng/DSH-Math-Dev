@@ -12,7 +12,9 @@ test('material send bridge declares Remote in a real Cordis scope', async () => 
     DshMathRecordUI: () => ({}), DshMathProjectForm: () => ({}), DshMathWorkbenchUI: () => ({}),
     DshMathGraphUI: () => ({}), DshMathResearchGraphUI: () => ({}), DshMathProjectAccessUI: () => ({}),
     DshMathLibraryUI: () => ({}), DshMathExportUI: () => ({}), DshMathProjectManagerUI: () => ({})};
-  vm.runInNewContext(readFileSync(new URL('../client-main.cjs', import.meta.url), 'utf8'), globals);
+  vm.createContext(globals);
+  vm.runInContext(readFileSync(new URL('../workflow-ui.cjs', import.meta.url), 'utf8'), globals);
+  vm.runInContext(readFileSync(new URL('../client-main.cjs', import.meta.url), 'utf8'), globals);
   const plugin = registration.factory(() => React);
   const root = new Context(), sends = [], descriptors = [];
   root.provide('slots', {inject(_name, callback) { callback(); }, register(descriptor) { descriptors.push(descriptor); }});

@@ -64,6 +64,12 @@
 !/verify_bundle.py
 !/grid75_independent_check.py
 !/audit-reader.mjs
+!/workflow_store.py
+!/workflow_context.py
+!/workflow_service.py
+!/workflow_strategy.py
+!/workflow_runner.mjs
+!/workflow-ui.cjs
 
 !/locale/
 /locale/*
@@ -82,6 +88,8 @@
 /contracts/*
 !/contracts/*.json
 !/contracts/workbench-v1.md
+!/contracts/workflow-v1.md
+!/contracts/workflow-evaluation-v1.md
 !/contracts/cards/
 /contracts/cards/*
 !/contracts/cards/*.md

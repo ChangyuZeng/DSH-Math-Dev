@@ -16,10 +16,80 @@ TOOL_NAMES = ("research_read", "note_save", "obligation_save", "evidence_registe
               "material_read", "file_read", "file_write", "python_run", "research_finish")
 
 
+READ_OUTPUT_BYTES = 65536
+
+
+def _read_integer(value, name, minimum, maximum=None):
+    require(type(value) is int and value >= minimum and (maximum is None or value <= maximum),
+            "INVALID_SCHEMA", f"{name} must be an integer >= {minimum}" +
+            (f" and <= {maximum}" if maximum is not None else ""))
+    return value
+
+
+def _research_read(store, arguments):
+    """Keep legacy reads exact; bounded projections require an explicit opt-in."""
+    base = "kind state text object_id rev".split()
+    optional = {"page", "window", "max_output_bytes"}
+    require(set(base) <= set(arguments) and set(arguments) <= set(base) | optional,
+            "INVALID_SCHEMA", "Expected kind state text object_id rev, optionally page window max_output_bytes")
+    budget = _read_integer(arguments.get("max_output_bytes", READ_OUTPUT_BYTES),
+                           "max_output_bytes", 1024, READ_OUTPUT_BYTES)
+    require(not ("page" in arguments and "window" in arguments),
+            "INVALID_SCHEMA", "page and window are mutually exclusive")
+    page = arguments.get("page")
+    window = arguments.get("window")
+    if "page" in arguments:
+        fields(page, "offset limit")
+        _read_integer(page["offset"], "page.offset", 0)
+        _read_integer(page["limit"], "page.limit", 1, 100)
+        require(arguments["object_id"] is None and arguments["rev"] is None,
+                "INVALID_SCHEMA", "page requires object_id=null and rev=null")
+    if "window" in arguments:
+        fields(window, "field offset limit")
+        require(type(window["field"]) is str and bool(window["field"]),
+                "INVALID_SCHEMA", "window.field must name a top-level string in object.data")
+        _read_integer(window["offset"], "window.offset", 0)
+        _read_integer(window["limit"], "window.limit", 1, 16384)
+        require(arguments["object_id"] is not None, "INVALID_SCHEMA", "window requires object_id and an exact positive rev")
+        _read_integer(arguments["rev"], "rev", 1)
+    result = store.research_read(**{key: arguments[key] for key in base})
+    if page is not None:
+        rows = result.pop("results")
+        start, limit = page["offset"], page["limit"]
+        entries = []
+        for row in rows[start:start + limit]:
+            obj = row["object"]
+            title = obj["data"].get("title", "")
+            entries.append({"id": obj["id"], "rev": obj["rev"], "kind": obj["kind"],
+                            "title": title[:160], "title_truncated": len(title) > 160,
+                            "state": row["assessment"]["state"] if row["assessment"] else None})
+        end = start + len(entries)
+        result.update(entries=entries, page={"offset": start, "limit": limit, "total": len(rows),
+                                            "next_offset": end if end < len(rows) else None})
+    elif window is not None:
+        obj = result.pop("object")
+        result.pop("assessment")
+        value = obj["data"].get(window["field"])
+        require(type(value) is str, "INVALID_SCHEMA", "window.field must name a top-level string in object.data")
+        start, limit = window["offset"], window["limit"]
+        content = value[start:start + limit]
+        end = start + len(content)
+        result.update(reference={"id": obj["id"], "rev": obj["rev"]}, kind=obj["kind"],
+                      window={"field": window["field"], "offset": start, "limit": limit,
+                              "total_chars": len(value), "next_offset": end if end < len(value) else None,
+                              "text": content})
+    size = len(json.dumps(result, ensure_ascii=False).encode("utf-8"))
+    require(size <= budget, "READ_OUTPUT_LIMIT",
+            f"research_read output is {size} bytes; max_output_bytes={budget}. "
+            'For a directory retry with object_id=null, rev=null, page={"offset":0,"limit":10}; '
+            'for exact text use object_id and positive rev with window={"field":"body","offset":0,"limit":1024}. '
+            "Reduce page.limit/window.limit if needed; no partial result was returned.")
+    return result
+
+
 def _execute(projects, store, manifest, name, arguments):
     if name == "research_read":
-        fields(arguments, "kind state text object_id rev")
-        return store.research_read(**arguments)
+        return _research_read(store, arguments)
     if name in ("note_save", "obligation_save"):
         fields(arguments, "operation_id id expected_rev data")
         kind = "Note" if name == "note_save" else "Obligation"
@@ -76,7 +146,7 @@ def dispatch(root, request):
     require(request["name"] in TOOL_NAMES, "FORBIDDEN", "Tool is not on the model allowlist")
     require(type(request["arguments"]) is dict, "INVALID_SCHEMA", "Expected tool arguments object")
     manifest, raw = load_manifest(request["manifest"])
-    if manifest["protocol_id"] == "DSH-MATH-M-SELF-DIRECTED-v1":
+    if manifest["protocol_id"] in ("DSH-MATH-M-SELF-DIRECTED-v1", "DSH-MATH-M-SELF-DIRECTED-v2"):
         from m_runner import manifest_sha256
         require(anchored and request["manifest_sha256"] == manifest_sha256(raw), "MANIFEST_CHANGED", "Host manifest anchor changed")
     expected = {"project_id": manifest["project_id"], "session_id": manifest["session_id"], "run_id": manifest["run_id"]}
