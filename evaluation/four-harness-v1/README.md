@@ -88,4 +88,26 @@ H(U,V)=min_Z max_{1≤k≤15}|2P_k−T|。
 
 [audit.py](audit.py) 是离线辅助工具：核对证书与汇总已提供的结果，不运行模型，不授予审核权限，不证明前沿状态或一般问题。可在仓库根执行 `python3 -B evaluation/four-harness-v1/audit.py check-witness <证书路径>` 或 `python3 -B evaluation/four-harness-v1/audit.py summarize <结果数组路径>`；输入结构见模块文档与 [离线测试](../../tests/test_four_harness_audit.py)。即使摘要中的独立验证字段为 true，仍须外部凭证支撑，JSON 声明不能替代签名/审核。
 
-正式资格缺一不可：题目开放状态和映射确认、审核人落实、四臂同模型、统一工具、全量调用计量、预算可执行、独立检查器复核、跨臂隔离、版本冻结和真实运行授权。当前缺项见 `readiness.md`；未通过前不开放 live runner。
+正式资格缺一不可：题目开放状态和映射确认、审核人落实、四臂同模型、统一工具、全量调用计量、预算可执行、独立检查器复核、跨臂隔离、版本冻结和真实运行授权。当前缺项见 [readiness.md](</Users/zcy/Codes/Math Agent/harness/dsh-math/evaluation/four-harness-v1/readiness.md>)；未通过前不开放 live runner。
+
+## 8. 离线适配与可审计入口（2026-11-04）
+
+已交付共同工具、SQLite 请求账本、能力绑定的本机 Responses/MCP 网关、四臂隔离包装与故障夹具。完整结论见 [qualification.md](</Users/zcy/Codes/Math Agent/harness/dsh-math/evaluation/four-harness-v1/qualification.md>)；逐项改动见 [adapter-diff.md](</Users/zcy/Codes/Math Agent/harness/dsh-math/evaluation/four-harness-v1/adapter-diff.md>)；来源与提示证据见 [source-audit.md](</Users/zcy/Codes/Math Agent/harness/dsh-math/evaluation/four-harness-v1/source-audit.md>)。
+
+以下入口只生成本机假响应；输出目录必须尚不存在。X/R 需要已取得的固定源码、隔离依赖和副本，参数可通过 `--help` 查看；不会自动调用真实提供方或偷偷安装依赖。
+
+```bash
+python3 -B evaluation/four-harness-v1/qualify.py inspect
+python3 -B evaluation/four-harness-v1/qualify.py fixture C --output dist/new-offline-C
+python3 -B evaluation/four-harness-v1/qualify.py fixture X --output dist/new-offline-X
+python3 -B evaluation/four-harness-v1/qualify.py fixture R --output dist/new-offline-R
+python3 -B evaluation/four-harness-v1/qualify.py fixture X --coverage full --output dist/new-offline-X-host
+python3 -B evaluation/four-harness-v1/qualify.py fixture R --coverage full --output dist/new-offline-R-mcp
+python3 -B evaluation/four-harness-v1/qualify.py fixture M --output dist/new-offline-M
+python3 -B evaluation/four-harness-v1/qualify.py freeze-draft --output dist/new-frozen-draft.json
+python3 -B evaluation/four-harness-v1/qualify.py smoke-plan
+```
+
+C 当前预期返回非零和具体平台阻断；X/R 成功只表示报告中指定的部分原生路径通过，整臂资格仍为 false；M 两请求原生 workflow 通过不替代共同计算和全树资源资格。报告包含实际假请求数、回执、哈希、失败原因和通过条件，原始日志留在忽略目录。
+
+[冻结草案](</Users/zcy/Codes/Math Agent/harness/dsh-math/evaluation/four-harness-v1/frozen.draft.json>) 固定正式预算（5 次／臂、7200 秒、120 请求、100 万 tokens 等）及已知来源；未知提供方版本、材料、评审和顺序字段保持未定。`launch --scope smoke|formal` 当前统一返回 LIVE_NOT_AUTHORIZED，配置编辑不能解除。先完成所列工程门槛并取得最多 2 次／臂、总计 8 次非目标 smoke 的明确授权；smoke 通过后再单独确认正式 20 次运行。

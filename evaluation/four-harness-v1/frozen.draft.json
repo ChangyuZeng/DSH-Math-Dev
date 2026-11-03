@@ -1,0 +1,525 @@
+{
+  "format": "dsh-math-four-harness-evaluation-v1",
+  "status": "draft_not_executable",
+  "execution_authorized": false,
+  "protocol_revision": "v1",
+  "problem": {
+    "id": "RING15-D20-1179649",
+    "D": 1048576,
+    "pairs": 15,
+    "target_h": 1179649,
+    "baseline_h": 1179648,
+    "open_status": "pending_refresh_and_expert_review",
+    "materials_sha256": null,
+    "checker_sha256": "e4f721c2d184dc58249063481895d0b1af4d99c6376c42bc32ef8eb4d8baa221",
+    "reviewer_ids": []
+  },
+  "model": {
+    "provider": "openai-codex",
+    "model": "gpt-6-astra",
+    "effort": "max",
+    "resolved_version": null,
+    "qualification": "not_run",
+    "fallback_allowed": false
+  },
+  "arms": [
+    {
+      "id": "C",
+      "name": "Codex plain",
+      "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+      "adapter_sha256": "2b96f740a0d537a72c76fd2ed22cf6127d55571322984c0fd673244ef04fb799",
+      "prompt_sha256": "89d64a44b94a9af22303d515603630554ddedef592b52548582d2808466103dd",
+      "qualification": "offline_evidence_required_live_blocked",
+      "source": {
+        "repository": "https://github.com/openai/codex",
+        "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
+        "tag": "rust-v0.166.0",
+        "tag_object": "593389380740f7b4762771573c447ccfdc59742f",
+        "version": "0.166.0",
+        "dirty": false,
+        "source_verified": true
+      },
+      "prompt_sources_sha256": {
+        "codex-rs/collaboration-mode-templates/templates/default.md": "1042cc643eb0147ca1039b19287c7462ceb297502f7f310d9664ac323a12feca",
+        "codex-rs/collaboration-mode-templates/templates/plan.md": "d6d46c2d460a9d91ada2167605a8dfc56efde6b2ab61e101444c736c6fd6960a",
+        "codex-rs/core/gpt-5.1-codex-max_prompt.md": "1b3dd697043a7f613c691a3721a450251626685b3e97ac3ad3d35ea62758a31e",
+        "codex-rs/core/gpt-5.2-codex_prompt.md": "1b3dd697043a7f613c691a3721a450251626685b3e97ac3ad3d35ea62758a31e",
+        "codex-rs/core/gpt_5_1_prompt.md": "b59d4cf7a17350eee7fe00c897bf7da7454672788317f23f54d2fb3d57af7bca",
+        "codex-rs/core/gpt_5_2_prompt.md": "415333a461404a790c981fb00a7b9dc73b1906d3f87133dc8afe7ed77e92bd67",
+        "codex-rs/core/gpt_5_codex_prompt.md": "42842be69650ae563d212695e8d3f3591534908fd8ca33b63f742daf41f88b65",
+        "codex-rs/core/templates/agents/orchestrator.md": "9268e8ae2b730dfc5cc16970ef303ec80e9859599fc8aa046883788de2a79502",
+        "codex-rs/core/templates/collab/experimental_prompt.md": "6704ebc4ca8914c2ed0ff65706c1f8dd4f681a9ccec4ae7f9008a5f8e1d78cef",
+        "codex-rs/core/templates/review/history_message_completed.md": "ba3815d1787697a682253f1c18d4618210732abb64263d633b903955ca838d53",
+        "codex-rs/core/templates/review/history_message_interrupted.md": "034191c75f15338861ce0be2fcf28855833fc5f601b387cbc3c764032507dc86",
+        "codex-rs/core/templates/search_tool/request_plugin_install_description.md": "e5acd502e83f3a6a9d20c53bcb521633a8df8c654ceb08da63db5aefb35e1f66",
+        "codex-rs/core/templates/search_tool/tool_description.md": "0e4029b9b5d23b400e76a0051b9df878f28153ae2de126a77b90b80b64cd3d6b",
+        "codex-rs/ext/goal/templates/goals/budget_limit.md": "ebac90ff1fc825baf3003875ea8a1e3de495f4a93bbf8fdd066b594595d358aa",
+        "codex-rs/ext/goal/templates/goals/continuation.md": "764b9c26b36013a21b687d74597e303be9bbf13776c359ec1fb185dbc0e7eac7",
+        "codex-rs/ext/goal/templates/goals/objective_updated.md": "a9752da8f38e7a8f11f3cda0d8751894bd0c837cca61d697cdf46b55333b77d6",
+        "codex-rs/ext/memories/templates/memories/read_path.md": "2bc7736029884b714860a6f0d6b2fd26598bba58f2213b787f01fe2a491f4326",
+        "codex-rs/ext/memories/templates/memories/read_path_v2.md": "2f81fa2e89f341a1b7b3cf11ee7b855087c4ab84ddad920980475465ef28ff27",
+        "codex-rs/memories/write/templates/extensions/ad_hoc/instructions.md": "d36a36083d92f9d44efbd95e0e4b6e81d7d149e812f2bca2009b6dd4b8aa93e7",
+        "codex-rs/memories/write/templates/memories/consolidation.md": "1450e24f84c03375aa5114c6c0857f515395129dcc00f65263221d03866852a0",
+        "codex-rs/memories/write/templates/memories/consolidation_v2.md": "7334fdb4aa5d958bcff54568a375d0b0145c19a611a1a22faa6bf251a46a5f0e",
+        "codex-rs/memories/write/templates/memories/stage_one_input.md": "2e54c74909238022305c269c862910bb29509fda8b58ce671ef011f8d6453047",
+        "codex-rs/memories/write/templates/memories/stage_one_input_v2.md": "8fd4bb25fe6bd746b2d46ad841ac3a195d220c3da0cb9230615e2347c6ef853e",
+        "codex-rs/memories/write/templates/memories/stage_one_system.md": "cf795e8a2f5f52d333af2613bf1ff79178112f5fd2161cc181a8ddf52e59da33",
+        "codex-rs/memories/write/templates/memories/stage_one_system_v2.md": "334c0d51a2c63bd317dac074155fb3ecf0a56af8b00657736bab9c74222372b4",
+        "codex-rs/models-manager/models.json": "1384625c0b6b3e67d3c60da29becea2b017f2c283fc1e2d05b8edafb4698eb10",
+        "codex-rs/prompts/templates/compact/prompt.md": "ab0c334d4faca17e3afbb9b16967c1b2fdcc7242a9a0880af57949fa236d6d07",
+        "codex-rs/prompts/templates/compact/summary_prefix.md": "e9b088e794a6bb9082ac053fcc760bd818d7e720ee4bcdc72c6e480de7b7cb0e",
+        "codex-rs/prompts/templates/guardian/classifier_instructions.md": "52485dcc1856e6d33697b0bee0d57b7af5bcc0cd2f64be0dc6b3505d56549aef",
+        "codex-rs/prompts/templates/guardian/node_repl_policy.md": "e5d12bc2404640513aba2df9dcc5689d2f0280191fe3508c55570ea0764d13a0",
+        "codex-rs/prompts/templates/guardian/policy.md": "e6b0cf0a2e1c4cabc0a37ac2a0bc424ddd7c89e85d049e32d281a8db6e8d3ce6",
+        "codex-rs/prompts/templates/guardian/policy_template.md": "37441097e4e825e0b195c32c985817ea07da15bb5c20fa753d87b22e2fe47e73",
+        "codex-rs/prompts/templates/permissions/approval_policy/never.md": "41c7931bac2391a24046362bd07615d5a3e73dca4672b911516fac99646be8c4",
+        "codex-rs/prompts/templates/permissions/approval_policy/on_request.md": "85541a9738741407642b3c39bbe3781fbf8bb42f628d50e562c87738ab192b3a",
+        "codex-rs/prompts/templates/permissions/approval_policy/on_request_rule_request_permission.md": "98e8a78ac869d64fb094fb1a12e20e327e46a159bf74022c588b84326bf6afba",
+        "codex-rs/prompts/templates/permissions/approval_policy/unless_trusted.md": "fadec1a060a758b805f227bc5715c7dd3d7d7e2015bd5020c386eca0f3293d10",
+        "codex-rs/prompts/templates/permissions/approved_prefixes.md": "2d37f635b9800903992a94062804e82ad10b9e7ee5c2d904b38c66c0717a217f",
+        "codex-rs/prompts/templates/permissions/sandbox_mode/danger_full_access.md": "0d887cb1eaba21a6cade67ab958a6ffee00f671c46f8cf29c83706e397942dbf",
+        "codex-rs/prompts/templates/permissions/sandbox_mode/read_only.md": "509b39f88e6a4f5cb36485ea8b340680c03f27175ba20200b823ec07bc79668d",
+        "codex-rs/prompts/templates/permissions/sandbox_mode/workspace_write.md": "763661195d613a48173638af6227d480d70ab0a6898d3a81ff075155e82f7555",
+        "codex-rs/prompts/templates/persistent_mode.md": "03ff9da48abb85425514c42dad1b742312bc7e2d978d2941e9d2fd90560c2a27",
+        "codex-rs/prompts/templates/realtime/backend_prompt.md": "94c279f8b40900e5f2ace13db09bc096ccc99cc72ffb051a126f98df94c6997d",
+        "codex-rs/prompts/templates/realtime/realtime_end.md": "95dbde1501871117f96d45f95cb501abbbc25464eab1ae5ed689e110e1849036",
+        "codex-rs/prompts/templates/realtime/realtime_start.md": "424ebda35f115edff812596b70d7bf56431e7917b7398ccb4abb270b67a50fc2",
+        "codex-rs/prompts/templates/review/rubric.md": "ec60e7f36a1d1c2679ce095c0205ecc56f7dd8fb57707a13ef362072390f219f",
+        "codex-rs/protocol/src/prompts/base_instructions/default.md": "ac8ae107a0d72fe3476b430afb161ea4e67da2e446d778aefc44828160559807"
+      },
+      "prompt_scope": "Native source templates plus exact adaptation; assembled request payloads are hashed per request, not live-qualified",
+      "configuration": "model = \"gpt-6-astra\"\nmodel_provider = \"four_harness\"\nmodel_reasoning_effort = \"max\"\nmodel_context_window = 65536\nmodel_auto_compact_token_limit = 49152\napproval_policy = \"never\"\nsandbox_mode = \"read-only\"\nweb_search = \"disabled\"\ncli_auth_credentials_store = \"ephemeral\"\nmcp_oauth_credentials_store = \"file\"\ncheck_for_update_on_startup = false\nproject_doc_max_bytes = 0\n[analytics]\nenabled = false\n[feedback]\nenabled = false\n[features]\nshell_tool = false\nunified_exec = false\napply_patch_freeform = false\nmulti_agent = false\nmulti_agent_v2 = false\ncollab = false\ncode_mode = false\napps = false\nplugins = false\nweb_search = false\nweb_search_request = false\nstandalone_web_search = false\n[model_providers.four_harness]\nname = \"four-harness mandatory gateway\"\nbase_url = \"http://127.0.0.1:1/C/agent/v1\"\nwire_api = \"responses\"\nenv_key = \"FOUR_HARNESS_TOKEN\"\nrequires_openai_auth = false\nrequest_max_retries = 0\nstream_max_retries = 0\nsupports_websockets = false\n[mcp_servers.common]\ncommand = \"/frozen/python3\"\nargs = [\"-I\", \"/frozen/mcp.py\", \"--url\", \"http://127.0.0.1:1/C/agent/tools\", \"--token-env\", \"FOUR_HARNESS_TOKEN\"]\nenv_vars = [\"FOUR_HARNESS_TOKEN\"]\nrequired = true\nenabled_tools = [\"materials_list\", \"materials_read\", \"workspace_read\", \"workspace_write\", \"compute\", \"check\", \"submit\"]\n",
+      "configuration_sha256": "97b7620b4aca265653ff0d3e55a47fa580ea7285fb60b3296be080e1ce2e3710"
+    },
+    {
+      "id": "X",
+      "name": "Xean-adapted",
+      "commit": "26669ebb071f8fc13e8a51f66a474d7ce9af387a",
+      "adapter_sha256": "8fccbc327f9c3201aebd223d02348c2c7c0414275e5df43c1fec74a2d28d517a",
+      "prompt_sha256": "84801f18b9f37b759d0ebe4a0e3480032964223b5cca9c4f3328faa6b789f138",
+      "qualification": "offline_evidence_required_live_blocked",
+      "source": {
+        "repository": "https://github.com/chaoxu/xean",
+        "commit": "26669ebb071f8fc13e8a51f66a474d7ce9af387a",
+        "version": "4.5.0",
+        "dirty": false,
+        "source_verified": true
+      },
+      "prompt_sources_sha256": {
+        "bun.lock": "c9d0219e9923d2c571722724f7e634e541f5544e766b3b2d20bc27ed01fd030e",
+        "package.json": "f14343aa580dc38ac94cf5ea9cd0f177a795cc74dfe305969d8150e90fe81e76",
+        "patches/@earendil-works%2Fchord@1.5.0.patch": "a3ba757b7ee9e785c18bcd2f6bc924ae829229fc55c197925e056cf41c649d10",
+        "patches/@earendil-works%2Fpi-ai@1.5.0.patch": "1082a9b1bc9d0bb8c337976768d08f05442b55cc5e7cda49745d5311e3b1c748",
+        "patches/@earendil-works%2Fpi-durable@1.5.0.patch": "b89b8e53f96ac5f06155cad4f249f07f09b9d6a484eea2e3b2c9ee79508c3ffe",
+        "src/host.ts": "9c73e8004508263205871746d59de22158de64e64766c2a56e142dd459415aaa",
+        "src/policy/contracts.ts": "6ff82e8cbafb9e226f02302887e2d371df1fbf3025b0d4ff5329906ce4894505",
+        "src/policy/index.ts": "2e596f06b33fdb59609754e8cbf362746b84379c062b932147d3182d8ccf6cc3",
+        "src/policy/prompts.ts": "4d5a92b70347ea213f17080d17941a74b82f58d9e17e898b885239972b734e3b",
+        "src/policy/settings.ts": "ed687731a7d4e6b51fca937cca4dcfb0cf49560b5f76040f0cc821a466d0ee58",
+        "src/policy/source.ts": "d3819491bfb8d3a43c714d512c889db8cda68cc3aeeb61d6f22c24485015e327",
+        "src/policy/support.ts": "336dd2e9c2206cf77efea05d4310af60919f5cc0f804499b7bf9886334c13889",
+        "src/policy/verification.ts": "8598d55186c2508e9fe2832508f79068b5f4a3dcca89fba49c95836acf737ec3",
+        "src/role-runtime.ts": "7a2147acec88f5a760dce6f717daa3eca2819469716336fc79a92c74a1633a1e",
+        "src/source-runtime.ts": "cec4cef5ee04cecf9f596a5b4b653af73790e97c9d5ad8a5d1d2752bbbd8b67c",
+        "src/workflow.ts": "429d5dc5092f7faab1037dc5591debf6c8b80698f8c3ce8f9d414f4381cd87b0"
+      },
+      "prompt_scope": "Native source templates plus exact adaptation; assembled request payloads are hashed per request, not live-qualified",
+      "configuration": {
+        "explorer": {
+          "provider": "four-harness-explorer",
+          "model": "gpt-6-astra",
+          "reasoning": "max"
+        },
+        "coordinator": {
+          "provider": "four-harness-coordinator",
+          "model": "gpt-6-astra",
+          "reasoning": "max"
+        },
+        "correctness": {
+          "provider": "four-harness-verifier",
+          "model": "gpt-6-astra",
+          "reasoning": "max"
+        },
+        "source": {
+          "provider": "four-harness-verifier",
+          "model": "gpt-6-astra",
+          "reasoning": "max"
+        },
+        "requirements": {
+          "provider": "four-harness-verifier",
+          "model": "gpt-6-astra",
+          "reasoning": "max"
+        },
+        "reconstruction": {
+          "provider": "four-harness-verifier",
+          "model": "gpt-6-astra",
+          "reasoning": "max"
+        },
+        "maxExplorerTurns": 10,
+        "window": 100000
+      },
+      "configuration_sha256": "b90dd6afc74951e62417d1168161dd2d1e23f9a90167a0971b47dcd24b4b3088"
+    },
+    {
+      "id": "R",
+      "name": "Rethlas-adapted",
+      "commit": "887cc46427636bbdd235160a112f9a30ae81d040",
+      "adapter_sha256": "02c6961c8178301286d60a1b95461851d20f2648056c9d0a57b7ae99e63520fe",
+      "prompt_sha256": "b224e86f888711268d90b34d36a5026f7e5946fe3f11143909cccb3f6432423f",
+      "qualification": "offline_evidence_required_live_blocked",
+      "source": {
+        "repository": "https://github.com/frenzymath/Rethlas",
+        "commit": "887cc46427636bbdd235160a112f9a30ae81d040",
+        "dirty": false,
+        "source_verified": true
+      },
+      "prompt_sources_sha256": {
+        "agents/generation/.agents/skills/construct-counterexamples/SKILL.md": "d2ee4da4d4b9fcc66133e661f58eee8ab37da4df93d61eafa38abd80b13141d2",
+        "agents/generation/.agents/skills/construct-counterexamples/agents/openai.yaml": "a63b9003b15309f61d2723f0d35c54543c42ed0cf623c96154c61f8fb878f991",
+        "agents/generation/.agents/skills/construct-toy-examples/SKILL.md": "c2dba879437376f078d41b23a521a39362c11eceea63905b74dd3a08d3edaa98",
+        "agents/generation/.agents/skills/construct-toy-examples/agents/openai.yaml": "d58e06f2a5534535b1f2d000aa3f3667e4ecb991e34ac413dfb8f289e34f7507",
+        "agents/generation/.agents/skills/direct-proving/SKILL.md": "32104a79a794f487e364729c44a2bb14c57ebe4ccd65f8e14098c9b475989654",
+        "agents/generation/.agents/skills/direct-proving/agents/openai.yaml": "89a1716339bac287fed695b3f8f0315d2a5ab304abb2a0b0ec56b1783312649a",
+        "agents/generation/.agents/skills/identify-key-failures/SKILL.md": "f6b6503c124100d91462576ca2b381800772f3869b711a711b5df59477b6b432",
+        "agents/generation/.agents/skills/identify-key-failures/agents/openai.yaml": "30942661280bcb547a4ac8f7eed98af01722e86d085e6301139d184745b8929b",
+        "agents/generation/.agents/skills/obtain-immediate-conclusions/SKILL.md": "3c5faa7b9bbd3caf842b11610380d0834542e8f251dfc01f0f515cce789a6b32",
+        "agents/generation/.agents/skills/obtain-immediate-conclusions/agents/openai.yaml": "f0df471853192a295cebc88e5805a2fc1d6b967e2f55cad93a6c78b194d3c623",
+        "agents/generation/.agents/skills/propose-subgoal-decomposition-plans/SKILL.md": "d84a306d32116ffe6dcb539625ff45e8e0c65276cf0dab5dfcfada8b8b907d8c",
+        "agents/generation/.agents/skills/propose-subgoal-decomposition-plans/agents/openai.yaml": "a0400944fed038b18afae60e67a06f68149975305ff82b16df2404a4b68a733c",
+        "agents/generation/.agents/skills/query-memory/SKILL.md": "23ba2224f450b62eeeca63b67be864d90d8e6c2f518be3d7e802a47ad21b9888",
+        "agents/generation/.agents/skills/query-memory/agents/openai.yaml": "9e76ff533ab11f1cce0cf725879d4b33ddbf67cc739ced63c3e44431e8e86a92",
+        "agents/generation/.agents/skills/recursive-proving/SKILL.md": "e56a1601a541167ef08839b7ec012b1e7b61f2e98e3e60165ff72ae2af838157",
+        "agents/generation/.agents/skills/recursive-proving/agents/openai.yaml": "88979d01c6c935c6c51af3a14f10bc56363d99f46b6ac10158bb654053ac1523",
+        "agents/generation/.agents/skills/search-math-results/SKILL.md": "66fc0bf0a2224bc5c857e72bcadaf03066c48c5c4e56d653054e53cfa32d7723",
+        "agents/generation/.agents/skills/search-math-results/agents/openai.yaml": "0b6da7739d16d4c53fb69040e7fa509aeac54e760d50cf8ab57a773e0ddf23ae",
+        "agents/generation/.agents/skills/verify-proof/SKILL.md": "d88ab3283247bac5fd72f81628802c08847089af9e905fb68db9614225db07de",
+        "agents/generation/.agents/skills/verify-proof/agents/openai.yaml": "813b39a3ec19781b33732113794bc283b3a3c1512e14d963701b1b2952a1dd5d",
+        "agents/generation/.codex/agents/subgoal-prover.toml": "93caeadc9fe17b283d1b6fb2d5d9f43b74a7ad7e47306ceafa771a890bac879d",
+        "agents/generation/.codex/config.toml": "336668d6004444d21ff4cbfba3ebdc5a734f75e6574376b27f68b4d82afeab6e",
+        "agents/generation/AGENTS.md": "f2e08f8ccea88c1133028f7a0dbab7f87bd11bc6e5e0c89c9f4a6dece6562697",
+        "agents/generation/mcp/requirements.txt": "ce476cf9ddcbb3155a2b699a06a0f12b5df704c08135758e447c19e5cf2f2695",
+        "agents/verification/.agents/skills/check-referenced-statements/SKILL.md": "2ff55a3db595fd8a88ce0526f7375b8ea6775a0847aacbd34329194dc1b0d97e",
+        "agents/verification/.agents/skills/check-referenced-statements/agents/openai.yaml": "edb05e1ae1249572f4af17d7cc0989eb3a2cb150fde1edaff2e6477514b47f04",
+        "agents/verification/.agents/skills/synthesize-verification-report/SKILL.md": "db04ac457b53426f5544a3b6fb3343320008463b7cb45a25573bc319c4512ec0",
+        "agents/verification/.agents/skills/synthesize-verification-report/agents/openai.yaml": "af931895ded627c9c45e28530462015e133269448971f942961fbdcd3702ed81",
+        "agents/verification/.agents/skills/verify-sequential-statements/SKILL.md": "aa134aedc8d91f4af246520982327eec5b83c69e1a65940ccbc16033df470d1d",
+        "agents/verification/.agents/skills/verify-sequential-statements/agents/openai.yaml": "45209a0bc0fddf9d4d9f429c1faa4c5497a711b7a868dd150f4b5ae97da166af",
+        "agents/verification/.codex/config.toml": "680d885d973b1b97d5de4be41b84c1a795510b9ea3fdbaaafdda3023f953f44e",
+        "agents/verification/AGENTS.md": "29a43aac1035fa4a0d9c002f7e6f2732604740a0e5661540df72cab9f64ee63c",
+        "agents/verification/api/requirements.txt": "982a17f044aff2b2bb5e22bafccf207e44311fd519ae3ec3efbca331ff60c64b",
+        "agents/verification/mcp/requirements.txt": "0f5d25cedb0aa001cc43000b56b393a493dc7a2083d949a5faa128384c99fcf7",
+        "agents/verification/requirements.txt": "8e7287d5c9e950c856a12171156d271d5f24c96df21b00824ff16e3f9f405e70"
+      },
+      "prompt_scope": "Native source templates plus exact adaptation; assembled request payloads are hashed per request, not live-qualified",
+      "configuration": "model = \"gpt-6-astra\"\nmodel_provider = \"four_harness_generator\"\nmodel_reasoning_effort = \"max\"\nmodel_context_window = 65536\nmodel_auto_compact_token_limit = 49152\napproval_policy = \"never\"\nsandbox_mode = \"read-only\"\nweb_search = \"disabled\"\ncli_auth_credentials_store = \"ephemeral\"\nmcp_oauth_credentials_store = \"file\"\ncheck_for_update_on_startup = false\n[analytics]\nenabled = false\n[feedback]\nenabled = false\n[features]\nshell_tool = false\nunified_exec = false\napply_patch_freeform = false\nmulti_agent = true\napps = false\nplugins = false\n[model_providers.four_harness_generator]\nname = \"four-harness R generator\"\nbase_url = \"http://127.0.0.1:1/R/generator/v1\"\nwire_api = \"responses\"\nenv_key = \"FOUR_HARNESS_GENERATOR_TOKEN\"\nrequires_openai_auth = false\nrequest_max_retries = 0\nstream_max_retries = 0\nsupports_websockets = false\n[model_providers.four_harness_strategy]\nname = \"four-harness R strategy\"\nbase_url = \"http://127.0.0.1:1/R/strategy/v1\"\nwire_api = \"responses\"\nenv_key = \"FOUR_HARNESS_STRATEGY_TOKEN\"\nrequires_openai_auth = false\nrequest_max_retries = 0\nstream_max_retries = 0\nsupports_websockets = false\n[model_providers.four_harness_verifier]\nname = \"four-harness R verifier\"\nbase_url = \"http://127.0.0.1:1/R/verifier/v1\"\nwire_api = \"responses\"\nenv_key = \"FOUR_HARNESS_VERIFIER_TOKEN\"\nrequires_openai_auth = false\nrequest_max_retries = 0\nstream_max_retries = 0\nsupports_websockets = false\nenv_http_headers = { \"X-Four-Parent-Request-Id\" = \"FOUR_HARNESS_PARENT_REQUEST_ID\" }\n[model_providers.four_harness_repair]\nname = \"four-harness R repair\"\nbase_url = \"http://127.0.0.1:1/R/repair/v1\"\nwire_api = \"responses\"\nenv_key = \"FOUR_HARNESS_REPAIR_TOKEN\"\nrequires_openai_auth = false\nrequest_max_retries = 0\nstream_max_retries = 0\nsupports_websockets = false\n[model_providers.four_harness_compaction]\nname = \"four-harness R compaction\"\nbase_url = \"http://127.0.0.1:1/R/compaction/v1\"\nwire_api = \"responses\"\nenv_key = \"FOUR_HARNESS_COMPACTION_TOKEN\"\nrequires_openai_auth = false\nrequest_max_retries = 0\nstream_max_retries = 0\nsupports_websockets = false\n",
+      "configuration_sha256": "540a32774f757c16ae2c53634ae5ffcef8361e06b7eea612540e3fa841b487ad"
+    },
+    {
+      "id": "M",
+      "name": "dsh-math-adapted",
+      "commit": "ffc582c52585d958bcb3198259ea27c69ee6f8bb",
+      "adapter_sha256": "3a5f4791b72eb9b7a8cbef799d33c3ca7dd0249c148ae559b35e28b13237ff6e",
+      "prompt_sha256": "1645f8b4e4596cfaca86fae337fb1aeff92867222ad8b88bc8354e2850923c32",
+      "qualification": "offline_evidence_required_live_blocked",
+      "source": {
+        "repository": "https://github.com/ChangyuZeng/DSH-Math-Dev",
+        "base_commit": "ffc582c52585d958bcb3198259ea27c69ee6f8bb",
+        "version": "0.11.0",
+        "source_hashes": {
+          "workflow_runner.mjs": "9dc11c4f63c7bff9c9ece539331bf10f9007eb5f27f694e005caae7c76399410",
+          "workflow_store.py": "abc254d9e742c0767354df1b82b33f66a6d4d6a49b69f112b0e5940157160585",
+          "workflow_service.py": "bd9cc8d72be1715828983c0ac41a52ed08707cd5c53729cd07956c3f1cd7b3dd",
+          "workflow_context.py": "d83c496f8a7b30172761ce5dd54be37dc62fb92259f48d602a241f63c2263dff"
+        }
+      },
+      "prompt_sources_sha256": {
+        "workflow_runner.mjs": "9dc11c4f63c7bff9c9ece539331bf10f9007eb5f27f694e005caae7c76399410",
+        "workflow_context.py": "d83c496f8a7b30172761ce5dd54be37dc62fb92259f48d602a241f63c2263dff",
+        "workflow_service.py": "bd9cc8d72be1715828983c0ac41a52ed08707cd5c53729cd07956c3f1cd7b3dd",
+        "workflow_store.py": "abc254d9e742c0767354df1b82b33f66a6d4d6a49b69f112b0e5940157160585"
+      },
+      "prompt_scope": "Native source templates plus exact adaptation; assembled request payloads are hashed per request, not live-qualified",
+      "configuration": {
+        "model_policy": {
+          "provider": "openai-codex",
+          "model": "gpt-6-astra",
+          "effort": "max"
+        },
+        "budget": {
+          "wall_seconds": 7200,
+          "model_requests": 120,
+          "total_tokens": 1000000,
+          "max_output_tokens": 16384,
+          "context_tokens": 65536,
+          "tool_calls": 500,
+          "cpu_cores": 2,
+          "cpu_seconds": 14400,
+          "memory_bytes": 4294967296,
+          "artifact_bytes": 1073741824,
+          "tool_timeout_seconds": 60
+        },
+        "workflow_base": "ffc582c52585d958bcb3198259ea27c69ee6f8bb"
+      },
+      "configuration_sha256": "304e85f0b9b256bb4de8ec12b7b993109ccfaef636dcf9be50cb4d7a330210d3"
+    }
+  ],
+  "repeats_per_arm": 5,
+  "order_seed": null,
+  "execution_order": [],
+  "per_run_budget": {
+    "wall_seconds": 7200,
+    "model_requests": 120,
+    "total_tokens": 1000000,
+    "max_output_tokens": 16384,
+    "context_tokens": 65536,
+    "tool_calls": 500,
+    "cpu_cores": 2,
+    "cpu_seconds": 14400,
+    "memory_bytes": 4294967296,
+    "artifact_bytes": 1073741824,
+    "tool_timeout_seconds": 60
+  },
+  "live_smoke": {
+    "format": "four-harness-smoke-proposal-v1",
+    "authorized": false,
+    "executable": false,
+    "target_problem_allowed": false,
+    "model": {
+      "provider": "openai-codex",
+      "model": "gpt-6-astra",
+      "effort": "max"
+    },
+    "fallback_allowed": false,
+    "prompt": "Non-target qualification only. Read the common material, compute 2 + 3 using the common compute tool, and report 5. Do not search or solve Ring15.",
+    "per_run_budget": {
+      "wall_seconds": 180,
+      "model_requests": 2,
+      "total_tokens": 32768,
+      "max_output_tokens": 2048,
+      "context_tokens": 65536,
+      "tool_calls": 8,
+      "cpu_cores": 2,
+      "cpu_seconds": 120,
+      "memory_bytes": 4294967296,
+      "artifact_bytes": 16777216,
+      "tool_timeout_seconds": 10
+    },
+    "max_requests_total": 8,
+    "max_tokens_total": 131072,
+    "arms": [
+      {
+        "id": "C",
+        "max_requests": 2,
+        "entry": "qualify.py launch --scope smoke --arm C --manifest <approved-frozen-manifest>"
+      },
+      {
+        "id": "X",
+        "max_requests": 2,
+        "entry": "qualify.py launch --scope smoke --arm X --manifest <approved-frozen-manifest>"
+      },
+      {
+        "id": "R",
+        "max_requests": 2,
+        "entry": "qualify.py launch --scope smoke --arm R --manifest <approved-frozen-manifest>"
+      },
+      {
+        "id": "M",
+        "max_requests": 2,
+        "entry": "qualify.py launch --scope smoke --arm M --manifest <approved-frozen-manifest>"
+      }
+    ],
+    "acceptance": [
+      "exact provider/model/effort and raw usage for every physical role request",
+      "one common compute or material interaction reaches a native continuation",
+      "two-request run and eight-request campaign ceiling, no retry/replacement",
+      "incomplete native multi-role chain is reported, not replaced with a new loop"
+    ],
+    "limits": [
+      "Two requests cannot prove full Xean/Rethlas multi-role or long-context behavior",
+      "Resolver, provider output semantics, hard resource containment and all-arm native fixtures remain prerequisite gates"
+    ],
+    "authorization": "Requires a new explicit human authorization after the concrete manifest and failed gates are reviewed"
+  },
+  "network_during_research": false,
+  "cross_run_memory": false,
+  "automatic_replacement_runs": false,
+  "gates": {
+    "problem_review": false,
+    "materials_frozen": false,
+    "independent_checker_review": false,
+    "common_tools_qualified": false,
+    "all_calls_metered": false,
+    "budget_enforcement": false,
+    "model_identity": false,
+    "arm_versions_frozen": false,
+    "human_run_authorization": false
+  },
+  "adapter_sources_sha256": {
+    "ledger.py": "75370728d05b0c8f1a50a65fd9c808f69ba5d644733be14b5d7c5abbf406baff",
+    "gateway.py": "bee96c279b0b87c626505170685942b719fc35671a25a9934360c4ad78035675",
+    "mcp.py": "cdeed74ec3d4c42eb0ec5fe7e5c9a657c961f56756c2c724a70d3a343dfe0df4",
+    "native.py": "c0a08a7713eabd51fd27d0d354cfd4691b4aa7b09858a9a441f525d7fab8289e",
+    "tools.py": "83f226d37eb8b54fe7821051c41b17dca001c9eb48d7bd3f32ba12c358b5b0ca",
+    "compute_child.py": "2507a66436c024aa2cecae9b265553720e129e3026f8ca4156d549c8e47f2533",
+    "m_adapter.mjs": "1e18aa104ab4ffb02458169fa287804e982fd8937c5b75d8fc655a832f2f0426",
+    "m_service.py": "461d4a6bd159c6b3c059523aeb09674c3868204f0d4227ad78f22842ba701c45",
+    "qualify.py": "9205227766bfa338d2c5b64f99eb50658fa90824355dbdf930a3a33467112fdc",
+    "x_full.py": "2216e5b296ee26e0fc28fcf80382dfed5233e30b45546904007276fb92ba949d",
+    "m_bridge.mjs": "da82c8fdbdc55a8c5ff2290cb41c9227b2277041ee68f36d1ac95c5433ae499e",
+    "patches/rethlas-fixture-child.py": "a9f2bbd4c91245904aec29fe2a063f032eff365a72a843ed4fe9ea0f2492a8ee",
+    "patches/rethlas-fixture.md": "9cdf6cfd19b16643e95d77723f818e2e5f9162a546ccbaa613cd227631654119",
+    "patches/rethlas-mcp-fixture-child.py": "ee3007b1415ada50f1b5f20215d0af50fcfce52bad6201854d2474c1e0fa560e",
+    "patches/rethlas-mcp-fixture.py": "85632360d5a108dc89b9363ee3c4fc94385b2a48b2267c47ef4b82cdd4d12ff4",
+    "patches/rethlas-mcp-requirements.txt": "8e48e9b01ae17535d0f1cb71d2b870580474b1f76cd9c6efcc05328a487d5d96",
+    "patches/rethlas-mcp.py": "38665e2cd1419d038bd57b2b92216e67480ecbfac973f573e3e1e3c19253890c",
+    "patches/rethlas-verifier-fixture.py": "f9a6afe8f645af8ddbe32224d81a9ef790d3682cf56c879657f099b61f472a49",
+    "patches/rethlas.json": "b7a7e5df65f1478c5d61c540f6d27b6c3883fdb13d37bb02387ac3edab6dead8",
+    "patches/xean-fixture.ts": "5538ecf4bebba4d4b23f2535f35ed41ed24f17879cc3bcee6b6bd9d8ee09463c",
+    "patches/xean-host-fixture.ts": "9c67c92e3ca8ee2d672828e52ec3cbf34c120b085f0103583044b0ccb656ebea",
+    "patches/xean-native.ts": "d877ab5a4faee789e119155b044e1973b4aa2842ba8732d0aa678a1585c84483",
+    "patches/xean.json": "54338f95b006feb15dc5fcae8a3bf893143d529ce036a1262449f01463a12d1c"
+  },
+  "tool_schema_sha256": "f490def33a107603b9de0be1984289d447d183656c39505152fb950ce086e256",
+  "runtime": {
+    "platform": "Darwin",
+    "platform_version": "27.2.0",
+    "machine": "arm64",
+    "binaries": {
+      "node": {
+        "expected_version": "24.21.0",
+        "observed_version": "v24.21.0",
+        "version_matches": true,
+        "sha256": "69e76cb4e09d4d25408fb4dbd2bc5ca8a4b1c7d8659d5aca76276c82931240de",
+        "qualified": false
+      },
+      "python": {
+        "expected_version": "3.14.3",
+        "observed_version": "Python 3.14.3",
+        "version_matches": true,
+        "sha256": "cbf84109626aa1013bbe408fbb9590bd0f1c1548f038b2221c6b8b87de26ca43",
+        "qualified": false
+      },
+      "codex": {
+        "expected_version": "0.166.0",
+        "observed_version": "codex-cli 0.166.0",
+        "version_matches": true,
+        "sha256": "39acf979729dd290f9a24ee38b2914e036c91b65952872e28ae2a6b88a7db7c1",
+        "qualified": false
+      },
+      "bun": {
+        "expected_version": "1.4.2",
+        "observed_version": "1.4.2",
+        "version_matches": true,
+        "sha256": "35d20dd0263e5c950194434b925454fdfa9ba6e4467da960410fa05b08a7a5b5",
+        "qualified": false
+      }
+    },
+    "rethlas_fixture_dependencies": {
+      "annotated-doc": "0.0.4",
+      "annotated-types": "0.7.0",
+      "anyio": "4.11.0",
+      "fastapi": "0.121.1",
+      "idna": "3.11",
+      "pydantic": "2.12.4",
+      "pydantic_core": "2.41.5",
+      "sniffio": "1.3.1",
+      "starlette": "0.49.3",
+      "typing-inspection": "0.4.2",
+      "typing_extensions": "4.15.0"
+    },
+    "rethlas_mcp_dependencies": {
+      "versions": {
+        "watchfiles": "1.3.0",
+        "requests": "2.32.5",
+        "uncalled-for": "0.4.1",
+        "exceptiongroup": "1.3.1",
+        "starlette": "0.49.3",
+        "jaraco-classes": "3.4.0",
+        "click": "8.5.0",
+        "packaging": "26.3",
+        "uvicorn": "0.41.0",
+        "jaraco-context": "6.1.2",
+        "platformdirs": "4.14.3",
+        "websockets": "17.4",
+        "pygments": "2.21.0",
+        "jsonschema-specifications": "2025.9.1",
+        "fastapi": "0.121.1",
+        "pydantic": "2.12.5",
+        "joserfc": "1.8.0",
+        "rich": "15.0.0",
+        "rich-rst": "2.2.0",
+        "certifi": "2026.10.23",
+        "jsonschema": "4.26.0",
+        "pyjwt": "2.15.1",
+        "docstring-parser": "0.18.0",
+        "aiofile": "3.12.3",
+        "email-validator": "2.3.0",
+        "jaraco-functools": "4.6.0",
+        "httpcore": "1.0.9",
+        "cryptography": "50.0.2",
+        "mcp": "1.26.0",
+        "py-key-value-aio": "0.4.6",
+        "pycparser": "3.12",
+        "pydantic-settings": "2.16.2",
+        "opentelemetry-api": "1.45.2",
+        "fastmcp": "3.1.0",
+        "urllib3": "2.8.0",
+        "h11": "0.16.0",
+        "mdurl": "0.1.2",
+        "pyyaml": "6.0.3",
+        "dnspython": "2.9.1",
+        "jsonref": "1.1.0",
+        "jsonschema-path": "0.5.0",
+        "cachetools": "7.2.8",
+        "pydantic-core": "2.41.5",
+        "python-dotenv": "1.2.4",
+        "sse-starlette": "3.6.0",
+        "cffi": "2.1.1",
+        "cyclopts": "5.3.3",
+        "annotated-types": "0.8.0",
+        "referencing": "0.37.0",
+        "markdown-it-py": "4.2.0",
+        "pyperclip": "1.11.0",
+        "annotated-doc": "0.0.5",
+        "typing-inspection": "0.4.4",
+        "rpds-py": "2026.9.1",
+        "openapi-pydantic": "0.6.0",
+        "anyio": "4.16.0",
+        "attrs": "26.1.0",
+        "more-itertools": "11.2.1",
+        "python-multipart": "0.0.33",
+        "httpx": "0.28.1",
+        "typing-extensions": "4.16.0",
+        "caio": "0.12.10",
+        "pathable": "0.6.0",
+        "charset-normalizer": "3.5.2",
+        "keyring": "25.7.0",
+        "httpx-sse": "0.4.3",
+        "authlib": "1.9.3",
+        "beartype": "0.23.1",
+        "idna": "3.20"
+      },
+      "requirements_sha256": "8e48e9b01ae17535d0f1cb71d2b870580474b1f76cd9c6efcc05328a487d5d96",
+      "file_tree_sha256": "e19ada3268cfa16002bb52741f407cd43e8c34c35c635c283428f6ea627d0e7f",
+      "file_count": 3652
+    },
+    "xean_installed_dependencies": {
+      "file_count": 18622,
+      "file_tree_sha256": "ae11cd3003e4de80d3c9c08a84aa6e75ebf1ac30fb3ccc6bd2685f657d4e8a8e",
+      "symlinks_sha256": "c8e4bffd4a5c65f2493e9f34cd85be3ff360e817983ca6328af06b29ef0fa9bf"
+    },
+    "xean_pi": {
+      "version": "1.5.0",
+      "source_commit": "f9a26365568127461c47a07a37dcb42c140a3ac5"
+    },
+    "python_libraries": "stdlib-only for shared compute; no site packages",
+    "qualified": false
+  },
+  "pending_gates": [
+    "live provider identity, pricing and request/output semantics",
+    "hard aggregate CPU/core/memory/artifact watchdog for complete harness process trees",
+    "all native role/descendant and compaction paths reach the shared ledger",
+    "published material freeze, frontier refresh and independent reviewers",
+    "explicit separate smoke and formal human approvals"
+  ]
+}

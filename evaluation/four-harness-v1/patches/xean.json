@@ -1,0 +1,17 @@
+{
+  "arm": "X",
+  "commit": "26669ebb071f8fc13e8a51f66a474d7ce9af387a",
+  "edits": [
+    {"path":"src/host.ts","before":"retry: { enabled: true, maxRetries: 8 },","after":"retry: { enabled: false, maxRetries: 0 },"},
+    {"path":"src/host.ts","before":"restartLimit: Infinity,","after":"restartLimit: 0,"},
+    {"path":"src/role-runtime.ts","before":"  maxRecoveries: 8,","after":"  maxRecoveries: 0,"},
+    {"path":"src/role-runtime.ts","before":"  defineTool,\n","after":""},
+    {"path":"src/role-runtime.ts","before":"import { Notebook, project, readNotebook } from \"./state.ts\";","after":"import { Notebook, project, readNotebook } from \"./state.ts\";\nimport { meteredTool as defineTool, commonTools, pinnedPayload } from \"./four-harness-native.ts\";"},
+    {"path":"src/role-runtime.ts","before":"    tools: [...tools, reader],","after":"    tools: [...tools, reader, ...commonTools],"},
+    {"path":"src/role-runtime.ts","before":"            tools: [tool, ...(call.role === \"explorer\" ? [reader] : [])],","after":"            tools: [tool, ...(call.role === \"explorer\" ? [reader] : []), ...commonTools],"},
+    {"path":"src/role-runtime.ts","before":"          return { payload: request };","after":"          return { payload: pinnedPayload(request) };"},
+    {"path":"src/role-runtime.ts","before":"                ...options,\n","after":"                ...options,\n                headers: { ...options?.headers, \"X-Four-Thread-Id\": String(api.conversationId) },\n"}
+  ],
+  "copies": {"xean-native.ts":"src/four-harness-native.ts", "xean-fixture.ts":"four-harness-fixture.ts"},
+  "preserved": ["src/workflow.ts", "src/policy/prompts.ts", "src/policy/contracts.ts", "src/state.ts", "src/report.ts", "src/source-runtime.ts"]
+}

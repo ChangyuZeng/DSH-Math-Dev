@@ -113,6 +113,35 @@
 !/evaluation/four-harness-v1/readiness.md
 !/evaluation/four-harness-v1/manifest.template.json
 !/evaluation/four-harness-v1/audit.py
+!/evaluation/four-harness-v1/ledger.py
+!/evaluation/four-harness-v1/gateway.py
+!/evaluation/four-harness-v1/mcp.py
+!/evaluation/four-harness-v1/tools.py
+!/evaluation/four-harness-v1/compute_child.py
+!/evaluation/four-harness-v1/native.py
+!/evaluation/four-harness-v1/x_full.py
+!/evaluation/four-harness-v1/m_adapter.mjs
+!/evaluation/four-harness-v1/m_service.py
+!/evaluation/four-harness-v1/m_bridge.mjs
+!/evaluation/four-harness-v1/qualify.py
+!/evaluation/four-harness-v1/source-audit.md
+!/evaluation/four-harness-v1/qualification.md
+!/evaluation/four-harness-v1/adapter-diff.md
+!/evaluation/four-harness-v1/frozen.draft.json
+!/evaluation/four-harness-v1/patches/
+/evaluation/four-harness-v1/patches/*
+!/evaluation/four-harness-v1/patches/xean.json
+!/evaluation/four-harness-v1/patches/xean-native.ts
+!/evaluation/four-harness-v1/patches/xean-fixture.ts
+!/evaluation/four-harness-v1/patches/xean-host-fixture.ts
+!/evaluation/four-harness-v1/patches/rethlas.json
+!/evaluation/four-harness-v1/patches/rethlas-fixture.md
+!/evaluation/four-harness-v1/patches/rethlas-fixture-child.py
+!/evaluation/four-harness-v1/patches/rethlas-verifier-fixture.py
+!/evaluation/four-harness-v1/patches/rethlas-mcp.py
+!/evaluation/four-harness-v1/patches/rethlas-mcp-fixture.py
+!/evaluation/four-harness-v1/patches/rethlas-mcp-fixture-child.py
+!/evaluation/four-harness-v1/patches/rethlas-mcp-requirements.txt
 
 # Only tests used by the current npm test entry point.
 # Historical acceptance/profile scripts remain local and unchanged.
