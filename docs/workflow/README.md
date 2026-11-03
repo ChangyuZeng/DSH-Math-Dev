@@ -2,7 +2,7 @@
 
 本图描述当前实现，源码基线为 `613b6bb61fa7a3b4385fe3e5a14cde0f458dcfc3`，核对日期 2026-11-03。流程以**固定模型、有限预算、精确版本上下文、可恢复的候选成果归档**为中心。它不是未来功能路线图，也不表示已经证明数学能力提升。
 
-GitHub 可直接渲染下方 Mermaid 图。[交互流程图 HTML](current-workflow.html) 下载后可在浏览器打开；GitHub 文件页面不会直接运行 HTML。[可编辑图规格](candidate.json)供后续维护。
+GitHub 可直接渲染下方 Mermaid 图。[交互流程图 HTML](current-workflow.html) 下载后可在浏览器打开；GitHub 文件页面不会直接运行 HTML。[可编辑图规格](candidate.json)供后续维护。[Math agent 参考来源与设计取舍](harness-influences.md)说明各机制的来源、目的和实现边界。
 
 ## 1. 主流程
 
