@@ -228,6 +228,91 @@ test('download stops after session/project disposal before requesting another ch
   assert.equal(f.calls.length, 1);
 });
 
+function componentHarness(initialProps) {
+  const slots = []; let index = 0, effects = [], props = initialProps;
+  const React = {
+    createElement(type, props, ...children) { return {type, props: props || {}, children: children.flat(Infinity).filter(v => v != null && v !== false)}; },
+    useState(initial) { const i = index++; if (!slots[i]) slots[i] = {value: typeof initial === 'function' ? initial() : initial}; return [slots[i].value, value => { slots[i].value = typeof value === 'function' ? value(slots[i].value) : value; }]; },
+    useRef(initial) { const i = index++; return slots[i] ||= {current: initial}; },
+    useEffect(effect, deps) { const i = index++, previous = slots[i]; if (!previous || deps.some((v, j) => !Object.is(v, previous.deps[j]))) { slots[i] = {deps, cleanup: previous?.cleanup}; effects.push(() => { previous?.cleanup?.(); slots[i].cleanup = effect(); }); } },
+  };
+  const {MaterialsImport} = factory(React);
+  return {
+    render(patch = {}) { props = {...props, ...patch}; index = 0; effects = []; const tree = MaterialsImport(props); for (const effect of effects) effect(); return tree; },
+    unmount() { for (const slot of slots) slot?.cleanup?.(); },
+  };
+}
+function uiNodes(tree, predicate) { if (!tree || typeof tree !== 'object') return []; return [...(predicate(tree) ? [tree] : []), ...tree.children.flatMap(child => uiNodes(child, predicate))]; }
+function uiText(tree, collapsed = false) { if (tree == null) return ''; if (typeof tree !== 'object') return String(tree); return (collapsed && tree.type === 'details' ? tree.children.filter(c => c?.type === 'summary') : tree.children).map(child => uiText(child, collapsed)).join(' '); }
+function uiButton(tree, caption) { const value = uiNodes(tree, n => n.type === 'button' && uiText(n) === caption)[0]; assert.ok(value, `Missing ${caption}`); return value; }
+async function importedComponent(extra = {}) {
+  const f = fixture(); await f.control.select([file()], 'P'); await f.control.confirm('P', true); f.control.dispose();
+  const h = componentHarness({request: f.config.request, sessionId: f.config.sessionId, projectId: 'P', triggerToken: 1, ...extra});
+  h.render(); h.render(); return {h, f, tree: () => h.render()};
+}
+
+test('import trigger opens without DOM lookup, results hide technical keys, browse returns receipt and closes', async () => {
+  const browsed = [], {h, f, tree} = await importedComponent({onBrowse: value => browsed.push(value)});
+  try {
+    assert.match(uiButton(tree(), '导入研究材料').props.className, /dm-primary/);
+    assert.equal(uiNodes(tree(), n => n.type === 'dialog').length, 1);
+    assert.doesNotMatch(uiText(tree(), true), /E@1|SHA-256|归档完成 · P/);
+    assert.match(uiText(tree(), true), /synthetic.txt：已归档 · 版本1/);
+    uiButton(tree(), '查看知识库').props.onClick();
+    assert.deepEqual(browsed, [f.control.get().result]); assert.equal(uiNodes(tree(), n => n.type === 'dialog').length, 0);
+    h.render({triggerToken: 2}); assert.equal(uiNodes(tree(), n => n.type === 'dialog').length, 1);
+  } finally { h.unmount(); }
+});
+
+test('import previews use human size and Chinese extraction states with unmodified text in details', async () => {
+  const f = fixture({intercept(action) { if (action === 'material-preview') return {preview_hash: 'hash-hidden', files: [
+    {file_id: '1', name: 'paper.pdf', bytes: 1536, status: 'extracted', sha256: 'hash-hidden', text: 'source E@1 remains literal'},
+    {file_id: '2', name: 'scan.pdf', bytes: 1048576, status: 'archive_only'},
+    {file_id: '3', name: 'partial.docx', bytes: 100, status: 'extracted', truncated: true},
+    {file_id: '4', name: 'broken.pdf', bytes: 0, status: 'failed'},
+  ]}; }});
+  await f.control.select([file()], 'P'); f.control.dispose();
+  const h = componentHarness({request: f.config.request, sessionId: f.config.sessionId, projectId: 'P', triggerToken: 1}); h.render();
+  try {
+    const tree = h.render(), visible = uiText(tree, true);
+    assert.match(visible, /paper.pdf · 1.5 KiB · 已提取/); assert.match(visible, /scan.pdf · 1 MiB · 仅保存原件/);
+    assert.match(visible, /partial.docx · 100 B · 部分提取/); assert.match(visible, /提取失败/);
+    assert.doesNotMatch(visible, /hash-hidden|SHA-256|source E@1/); assert.match(uiText(tree), /source E@1 remains literal/);
+  } finally { h.unmount(); }
+});
+
+test('organize retries freeze complete prompt and request identity, require accepted receipt and block duplicate click', async () => {
+  const calls = []; let resolve;
+  const {h, tree} = await importedComponent({onOrganize: (prompt, id) => { calls.push({prompt, id}); return calls.length === 1 ? new Promise(r => { resolve = r; }) : Promise.resolve({accepted: true}); }});
+  try {
+    uiButton(tree(), '整理为研究笔记').props.onClick(); const preview = tree();
+    assert.match(uiText(preview, true), /整理 1 份材料/); assert.doesNotMatch(uiText(preview, true), /E@1|SHA-256/);
+    assert.match(uiText(preview), /E@1/); assert.match(uiText(preview), /math_material_read/);
+    const send = uiButton(preview, '发送整理任务').props.onClick;
+    const pending = send(); await send(); assert.equal(calls.length, 1);
+    resolve({accepted: false}); await pending; assert.match(uiText(tree()), /尚未收到接收回执/);
+    uiButton(tree(), '整理为研究笔记').props.onClick();
+    await uiButton(tree(), '发送整理任务').props.onClick(); assert.deepEqual(calls[0], calls[1]);
+    assert.match(uiText(tree()), /聊天已接收/); assert.equal(uiButton(tree(), '聊天已接收').props.disabled, true);
+  } finally { h.unmount(); }
+});
+
+for (const switchProps of [{projectId: 'Q'}, {sessionId: 'new-session-guard'}]) test(`organize ignores stale accepted receipt and click after ${Object.keys(switchProps)[0]} switch`, async () => {
+  let resolve; const calls = [];
+  const {h, tree} = await importedComponent({onOrganize: (prompt, id) => { calls.push({prompt, id}); return new Promise(r => { resolve = r; }); }});
+  try {
+    uiButton(tree(), '整理为研究笔记').props.onClick(); const stale = uiButton(tree(), '发送整理任务').props.onClick;
+    const pending = stale(); h.render(switchProps); h.render(); resolve({accepted: true}); await pending;
+    await stale(); assert.equal(calls.length, 1); assert.doesNotMatch(uiText(tree()), /聊天已接收/);
+  } finally { h.unmount(); }
+});
+
+test('organize ignores receipt after unmount', async () => {
+  let resolve; const {h, tree} = await importedComponent({onOrganize: () => new Promise(r => { resolve = r; })});
+  uiButton(tree(), '整理为研究笔记').props.onClick(); const pending = uiButton(tree(), '发送整理任务').props.onClick();
+  h.unmount(); resolve({accepted: true}); await pending;
+});
+
 test('organize prompt uses exact material refs and keeps imported content as untrusted data', () => {
   const prompt = organizePrompt('P', {materials: [{name: 'synthetic.txt', ref: {id: 'E', rev: 3}, sha256: 'abc'}, {name: 'failed.txt'}]});
   assert.match(prompt, /E@3/); assert.match(prompt, /SHA-256 abc/);

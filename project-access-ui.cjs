@@ -35,8 +35,8 @@
           project && !current && h('button', {type: 'button', className: 'dm-button dm-small', disabled: disabled || !!attempt, onClick: () => submit('project-associate', {project_id: project.id})}, '在当前会话继续此项目'),
           current && h('button', {type: 'button', className: 'dm-button dm-small dm-ghost', disabled: disabled || !!attempt, onClick: () => submit('project-disassociate', {project_id: project.id})}, '取消当前会话关联')),
         h('label', {className: 'dm-record-text'}, h('input', {type: 'checkbox', checked: context?.auto_record !== false, disabled: disabled || !!attempt, onChange: event => submit('project-preferences', {auto_record: event.target.checked})}), ' 自动记录数学研究阶段成果'),
-        h('p', {className: 'dm-local-hint'}, '选定项目后，普通聊天中的数学研究默认保存可读论证、依据与未决问题。简单讲解不自动记录；关闭后仍可明确要求保存。'),
-        project?.mode === 'legacy_readonly_copy' && h('p', {className: 'dm-local-hint'}, '旧研究库副本仍为只读，关联后可查阅，不能续写。'),
+        h('p', {className: 'dm-local-hint'}, '保存研究论证、依据与未决问题，均待人工审核。简单讲解不记录；关闭后仍可手动要求保存。'),
+        project?.mode === 'legacy_readonly_copy' && h('p', {className: 'dm-local-hint'}, '旧研究库副本只读，可查阅，不能续写。'),
         pending && h('p', {role: 'status', className: 'dm-operation-status'}, '正在保存会话设置…'),
         error && h('p', {role: 'alert', className: 'dm-error'}, error),
         attempt && !pending && h('div', {className: 'dm-actions'}, h('p', {className: 'dm-local-hint'}, '设置结果未确认，请重试原请求。'), h('button', {type: 'button', className: 'dm-button dm-small', disabled, onClick: () => submit(attempt.action)}, '重试保存会话设置')));

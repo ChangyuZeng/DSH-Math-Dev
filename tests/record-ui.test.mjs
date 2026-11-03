@@ -51,6 +51,40 @@ test('500 history records default to newest per ID, incremental 60, searchable b
   assert.equal(UI.filterRecords(view, {query: 'only-body-token-99'}).rows[0].object.rev, 5);
 });
 
+function collapsedText(tree) {
+  if (tree == null) return '';
+  if (typeof tree !== 'object') return String(tree);
+  if (tree.type === 'details') return tree.children.filter(c => c?.type === 'summary').map(collapsedText).join(' ');
+  if (tree.type === 'safe-preview') return tree.props.text;
+  if (typeof tree.type === 'function') return collapsedText(tree.type(tree.props));
+  return (tree.children || []).map(collapsedText).join(' ');
+}
+
+test('reader folds technical references and attachments, compact cards keep literal full source without duplicate controls', () => {
+  const h = harness(), record = evidence(); record.data.limits = ['source N@1 and SHA256 abc stay literal'];
+  const view = viewOf([problem(), record]);
+  const normal = h.render('RecordReader', {object: record, view, inspect: () => {}});
+  const visible = collapsedText(normal);
+  assert.match(visible, /参考材料 · 版本1/); assert.match(visible, /source N@1 and SHA256 abc stay literal/);
+  assert.doesNotMatch(visible, /E@1|PRIVATE-FILENAME|ATTACHMENT-SECRET|a{64}|复制 ID/);
+  assert.ok(nodes(normal, n => n.type === 'pre').some(n => strings(n).includes('ATTACHMENT-SECRET')));
+  const compact = h.render('RecordReader', {object: record, view, compact: true});
+  assert.equal(nodes(compact, n => n.props.className === 'dm-record-heading').length, 0);
+  assert.equal(nodes(compact, n => n.type === 'code' || n.props.className === 'dm-record-raw').length, 0);
+  assert.doesNotMatch(collapsedText(compact), /本项目未找到/); assert.match(collapsedText(compact), /合成研究目标 · 研究问题 · 版本1/);
+  const body = nodes(compact, n => typeof n.type === 'function' && n.props.label === '局限与未核实项')[0];
+  assert.deepEqual(body.props.value, ['source N@1 and SHA256 abc stay literal']);
+});
+
+test('readable reference buttons inspect original exact version rather than latest', () => {
+  const old = note('A', 1), latest = note('A', 2), b = note('B', 1, {uses: [ref(old)]}), seen = [];
+  const h = harness(), tree = h.render('RecordReader', {object: b, view: viewOf([old, latest, b]), inspect: o => seen.push(o)});
+  const reference = nodes(tree, n => typeof n.type === 'function' && n.type.name === 'Ref' && n.props.value.id === 'A')[0];
+  const rendered = h.render(reference.type, reference.props);
+  button(rendered, '合成标题 · 笔记 · 版本1').props.onClick(); assert.equal(seen[0], old);
+  assert.doesNotMatch(strings(rendered), /A@1|版本2/);
+});
+
 test('registered group/assessment stays exact; historical revisions never inherit current acceptance', () => {
   const old = note('N', 1), latest = note('N', 2), foreign = note('Other', 1);
   const view = viewOf([old, latest, foreign], {accepted: [{object: latest, assessment: {ref: ref(latest), state: 'accepted', reasons: ['scope-specific']}}], notes: [{object: foreign, assessment: {ref: ref(latest), state: 'accepted'}}]});
@@ -75,7 +109,7 @@ test('references and backlinks never replace missing or historical revisions and
   const refs = nodes(tree, n => typeof n.type === 'function' && n.type.name === 'Ref').map(n => n.type(n.props));
   const first = refs.find(n => nodes(n, m => m.type === 'button').length);
   nodes(first, n => n.type === 'button')[0].props.onClick(); assert.equal(inspectCalls[0], old);
-  assert.equal(refs.filter(n => strings(n).includes('A@99')).length, 1);
+  assert.equal(refs.filter(n => strings(n).includes('版本99')).length, 1);
   assert.equal(refs.filter(n => strings(n).includes('无效引用')).length, 1);
 });
 
@@ -88,7 +122,7 @@ test('RecordBrowser retains selected old object after history filter and snapsho
   assert.equal(calls[0], old);
   nodes(tree, n => n.type === 'select').at(-1).props.onChange({target: {value: 'latest'}});
   view = viewOf([old, latest, note('N', 3)]); tree = h.render('RecordBrowser', props());
-  assert.match(strings(tree), /保留选中：N@1/); button(tree, '重新打开选中版本').props.onClick(); assert.equal(calls.at(-1), old);
+  assert.match(strings(tree), /保留选中：合成标题 · 版本1/); button(tree, '重新打开选中版本').props.onClick(); assert.equal(calls.at(-1), old);
   view = viewOf([latest]); tree = h.render('RecordBrowser', props()); assert.match(strings(tree), /未替换为新版/);
 });
 
@@ -204,9 +238,9 @@ test('review context resolves explicit target Problem but never guesses unrelate
 
 test('ContextPack initial full object never upgrades when selected prop or view newest version changes', () => {
   const p = problem(), old = note('N', 1), newer = note('N', 2), h = harness(); let view = viewOf([p, old, newer]);
-  let tree = h.render('ContextPack', {view, selected: old}); assert.match(strings(tree), /初始记录：N@1/);
+  let tree = h.render('ContextPack', {view, selected: old}); assert.match(strings(tree), /初始记录：合成标题 · 版本1/);
   view = viewOf([p, old, newer, note('N', 3)]); tree = h.render('ContextPack', {view, selected: newer});
-  assert.match(strings(tree), /初始记录：N@1/);
+  assert.match(strings(tree), /初始记录：合成标题 · 版本1/);
   const preview = nodes(tree, n => n.props['aria-label'] === '完整上下文包预览')[0]; assert.match(strings(preview), /exact body N@1/); assert.doesNotMatch(strings(preview), /exact body N@2/);
 });
 
@@ -261,18 +295,19 @@ test('imported material uses literal original filename in labels and full filena
 test('Chinese kind/state labels preserve original enums and unknowns without inferred assessments', () => {
   assert.deepEqual(['Problem', 'Note', 'Obligation', 'Evidence', 'Review'].map(UI.kindLabel), ['研究问题', '笔记', '待证事项', '参考材料', '审核记录']);
   assert.equal(UI.kindLabel('FutureKind'), 'FutureKind'); assert.equal(UI.kindLabel('__proto__'), '__proto__');
-  assert.equal(UI.stateLabel('accepted'), '已登记接受（accepted）'); assert.equal(UI.stateLabel('future_state'), 'future_state');
+  assert.equal(UI.stateLabel('accepted'), '已登记接受'); assert.equal(UI.stateLabel('future_state'), 'future_state');
   const object = note(), assessment = {ref: ref(object), state: 'accepted', reasons: [], review_id: 'R'}, view = viewOf([object, evidence()], {accepted: [{object, assessment}]});
   const h = harness(), tree = h.render('RecordBrowser', {view});
   const options = nodes(tree, n => n.type === 'option');
   assert.equal(strings(options.find(n => n.props.value === 'Note')), '笔记');
   const stateOptions = nodes(nodes(tree, n => n.type === 'select')[2], n => n.type === 'option');
-  assert.equal(strings(stateOptions.find(n => n.props.value === 'accepted')), '已登记接受（accepted）');
+  assert.equal(strings(stateOptions.find(n => n.props.value === 'accepted')), '已登记接受');
   const metas = nodes(tree, n => n.props.className === 'dm-record-meta').map(strings);
-  assert.ok(metas.some(s => s.includes('笔记 · N@1') && s.includes('accepted')));
-  assert.ok(metas.some(s => s.includes('参考材料 · E@1') && s.includes('无此版本审核评估')));
+  assert.ok(metas.some(s => s.includes('笔记 · 版本1') && s.includes('已登记接受')));
+  assert.ok(metas.some(s => s.includes('参考材料 · 版本1') && s.includes('暂无审核评估')));
+  assert.ok(metas.every(s => !/N@1|E@1|accepted/.test(s)));
   const reader = harness().render('RecordReader', {object, view});
-  const registered = nodes(reader, n => n.type?.name === 'Registered')[0]; assert.match(strings(registered.type(registered.props)), /已登记接受（accepted）/);
+  const registered = nodes(reader, n => n.type?.name === 'Registered')[0]; assert.match(strings(registered.type(registered.props)), /已登记接受/);
 });
 
 test('Reader focuses then scrolls nearest while pinned reader performs neither action', () => {
@@ -303,7 +338,7 @@ test('real backend ResearchView.assess returns exact ref consumed by Registered,
   const view = viewOf([problemObject, object], {notes: [{object, assessment}]}), row = UI.recordRows(view).find(r => r.object === object);
   assert.equal(row.assessment, assessment); assert.equal(row.status, 'unreviewed');
   const tree = harness().render('RecordReader', {object, view}), registered = nodes(tree, n => n.type?.name === 'Registered')[0];
-  assert.match(strings(registered.type(registered.props)), /未审核（unreviewed）/);
+  assert.match(strings(registered.type(registered.props)), /审核状态：未审核/);
   assert.doesNotMatch(strings(registered.type(registered.props)), /无可用的已登记审核评估/);
 });
 

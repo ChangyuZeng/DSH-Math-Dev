@@ -20,22 +20,23 @@
 .dm-rg-branch path { stroke: var(--dm-muted); stroke-width: 1.75; vector-effect: non-scaling-stroke; }
 .dm-rg-relation path { stroke: var(--dm-accent); stroke-width: 1.5; stroke-dasharray: 5 5; opacity: .85; vector-effect: non-scaling-stroke; }
 .dm-rg-relation text { fill: var(--dm-accent); font: 10px sans-serif; paint-order: stroke; stroke: var(--dm-bg); stroke-width: 4px; }
-.dm-rg-object { overflow: visible; }
-.dm-rg-card { position: relative; box-sizing: border-box; height: 192px; border: 1px solid var(--dm-border); border-radius: 10px; background: var(--dm-panel); color: var(--dm-text); overflow: hidden; box-shadow: 0 3px 10px color-mix(in srgb, var(--dm-text) 4%, transparent); }
+.dm-rg-object { overflow: hidden; }
+.dm-rg-card { position: relative; box-sizing: border-box; min-height: 166px; border: 1px solid var(--dm-border); border-radius: 10px; background: var(--dm-panel); color: var(--dm-text); overflow: hidden; box-shadow: 0 3px 10px color-mix(in srgb, var(--dm-text) 4%, transparent); }
 .dm-rg-card[data-selected="true"] { border-color: var(--dm-accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--dm-accent) 18%, transparent); }
 .dm-rg-card[data-kind="Problem"] { border-top: 3px solid var(--dm-accent); }
 .dm-rg-card[data-kind="route"] { background: var(--dm-soft); }
-.dm-rg-card[data-status="abandoned"] { border-style: dashed; }
-.dm-rg-card-main { box-sizing: border-box; display: flex; flex-direction: column; gap: 6px; width: 100%; height: 100%; border: 0; border-radius: 9px; padding: 12px 14px 30px; text-align: left; color: inherit; background: transparent; cursor: pointer; font: inherit; overflow: hidden; }
+.dm-rg-card-main { box-sizing: border-box; display: flex; flex-direction: column; gap: 6px; width: 100%; height: 128px; border: 0; border-radius: 9px; padding: 12px 14px 8px; text-align: left; color: inherit; background: transparent; cursor: pointer; font: inherit; overflow: hidden; }
 .dm-rg-card-main:focus-visible { outline: 2px solid var(--dm-accent); outline-offset: -3px; }
 .dm-rg-kicker { display: block; color: var(--dm-muted); font-size: 10px; }
 .dm-rg-title { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; }
-.dm-rg-ref { color: var(--dm-muted); font: 10px ui-monospace, monospace; }
 .dm-rg-summary { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; color: var(--dm-muted); font-size: 11px; line-height: 1.55; overflow-wrap: anywhere; }
-.dm-rg-status { margin-top: auto; color: var(--dm-muted); font-size: 10px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; max-width: 100%; }
-.dm-rg-collapse { position: absolute; right: 10px; bottom: 6px; border: 0; background: transparent; color: var(--dm-muted); padding: 3px 5px; cursor: pointer; font: 10px sans-serif; }
+.dm-rg-card-actions { display: flex; align-items: center; justify-content: space-between; min-height: 34px; padding: 0 8px; gap: 4px; }
+.dm-rg-collapse { border: 0; background: transparent; color: var(--dm-muted); padding: 5px; cursor: pointer; font: 11px sans-serif; }
 .dm-rg-collapse:hover { color: var(--dm-accent); }
-.dm-rg-detail { margin-top: 16px; min-width: 0; }
+.dm-rg-card-detail { box-sizing: border-box; min-width: 0; max-height: 320px; overflow: auto; overscroll-behavior: contain; touch-action: pan-y; user-select: text; cursor: auto; padding: 10px; border-top: 1px solid var(--dm-border); font-size: 12px; overflow-wrap: anywhere; }
+.dm-rg-card-detail:focus-visible { outline: 2px solid var(--dm-accent); outline-offset: -2px; }
+.dm-rg-card-detail .dm-record-reader { min-width: 0; }
+.dm-rg-card-detail .dm-rg-toolbar { gap: 4px; }
 @media (max-width: 640px) { .dm-rg-viewport { height: 480px; } .dm-rg-toolbar { gap: 5px; } .dm-rg-toolbar > strong { flex-basis: 100%; } }
 `);
 })(css => { if (typeof module !== 'undefined' && module.exports) module.exports = css; else globalThis.DshMathResearchGraphTheme = css; });

@@ -16,6 +16,12 @@
 !/workbench-ui.cjs
 !/materials-ui.cjs
 !/material_store.py
+!/library_store.py
+!/library-ui.cjs
+!/project-manager-ui.cjs
+!/selection_export.py
+!/verify_selection.py
+!/export-ui.cjs
 !/material_extract.mjs
 !/chat_research.py
 !/project_access.py

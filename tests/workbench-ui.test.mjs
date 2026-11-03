@@ -414,7 +414,7 @@ test('both conflict components show readable versions with and without compariso
     server.replace({...completeFields(), title: 'remote title'}); findButton(tree, '读取会话草稿').props.onClick(); await settle(); tree = render();
     if (withComparison) {
       const compared = nodes(tree).find(node => typeof node.type === 'function' && node.props.localVersion);
-      assert.equal(compared.props.local.title, 'my title'); assert.equal(compared.props.remote.title, 'remote title'); assert.match(compared.props.remoteVersion, /v2/);
+      assert.equal(compared.props.local.title, 'my title'); assert.equal(compared.props.remote.title, 'remote title'); assert.match(compared.props.remoteVersion, /版本2/);
     } else assert.ok(nodes(tree).some(node => node.type === 'pre' && node.children.includes('remote title')));
     findButton(tree, '保留我的修改，稍后重新保存').props.onClick(); assert.equal(writes(server).length, 0); mock.unmount();
     const smock = hooks(), sserver = scratchServer(pad(1)), {Scratchpad} = Workbench(smock.React, F);

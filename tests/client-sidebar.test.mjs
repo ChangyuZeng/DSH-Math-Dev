@@ -86,8 +86,11 @@ function loadPlugin({react = hooks(), globals = {}} = {}) {
     DshMathFormUI: () => ({}),
     DshMathPreview: () => ({Preview: function Preview() {}}),
     DshMathProjectForm: () => ({ProjectForm: function ProjectForm() {}}),
-    DshMathWorkbenchUI: () => ({Scratchpad: function Scratchpad() {}, LegacyImport: function LegacyImport() {}}),
+    DshMathWorkbenchUI: () => ({Scratchpad: function Scratchpad() {}, MaterialsImport: function MaterialsImport() {}, LegacyImport: function LegacyImport() {}}),
     DshMathRecordUI: () => ({RecordReader: function RecordReader() {}, RecordBrowser: function RecordBrowser() {}, ReviewSummary: function ReviewSummary() {}, ExportReceipt: function ExportReceipt() {}, ContextPack: function ContextPack() {}}),
+    DshMathLibraryUI: () => ({LibraryBrowser: function LibraryBrowser() {}, LibraryManager: function LibraryManager() {}}),
+    DshMathExportUI: () => ({ExportPanel: function ExportPanel() {}}),
+    DshMathProjectManagerUI: () => ({ProjectManager: function ProjectManager() {}}),
     DshMathTheme: '.dsh-math-view{}',
     document: undefined,
     ...globals,
@@ -206,19 +209,31 @@ function visibleNodes(tree) {
 const component = (tree, name) => nodes(tree).find(node => node.type?.name === name);
 const visibleComponent = (tree, name) => visibleNodes(tree).find(node => node.type?.name === name);
 const panel = (tree, id) => nodes(tree).find(node => node.props.role === 'tabpanel' && node.props.id.endsWith(`-${id}-panel`));
-const readActions = ['list', 'overview', 'project-draft-read', 'project-context'];
+const readActions = ['list', 'overview', 'project-draft-read', 'project-context', 'library-list'];
 const contextRead = sessionId => ({action: 'project-context', args: {session_id: sessionId, query: '', offset: 0, limit: 50}});
 function button(tree, label) {
   const found = visibleNodes(tree).find(node => (node.children.includes(label) || node.props['aria-label'] === label) && typeof node.props.onClick === 'function');
   assert.ok(found, `Missing button: ${label}`);
   return found;
 }
-const byTitle = (tree, title) => visibleNodes(tree).find(node => node.props.title === title);
+const byTitle = (tree, title) => visibleNodes(tree).find(node => node.props.title === title || (node.props.className === 'dm-record-detail' && nodes(node).some(child => child.type?.name === 'RecordReader' && `${child.props.object?.id}@${child.props.object?.rev}` === title)));
 const byClass = (tree, className) => visibleNodes(tree).find(node => node.props.className?.split(' ').includes(className));
 const welcome = tree => nodes(tree).find(node => node.props['aria-label'] === '研究起点');
 const picker = tree => nodes(tree).find(node => node.props['aria-label'] === '选择研究项目');
 const alerts = tree => nodes(tree).filter(node => node.props.role === 'alert');
 const dialog = tree => nodes(tree).find(node => node.props.role === 'dialog');
+function createRecord(t, kind = 'Note') {
+  button(t.render(), '新建记录').props.onClick();
+  const choice = nodes(t.render()).find(node => node.props.label === '内容类型');
+  assert.ok(choice, 'Unified record creation must expose an explicit kind choice');
+  choice.props.change(kind); button(t.render(), '继续').props.onClick();
+}
+function inspectRecord(t, id, rev) {
+  button(t.render(), '知识库').props.onClick();
+  const browser = visibleComponent(t.render(), 'LibraryBrowser') || visibleComponent(t.render(), 'RecordBrowser');
+  const object = browser.props.view.objects.find(object => object.id === id && object.rev === rev);
+  assert.ok(object, `Missing synthetic record ${id}@${rev}`); browser.props.inspect(object);
+}
 const settle = () => new Promise(resolve => setImmediate(resolve));
 function deferred() {
   let resolve, reject;
@@ -294,6 +309,7 @@ function viewTest({effects = false, handle, globals = {}} = {}) {
         session_id: body.args.session_id, rev: 0, current_project_id: null, auto_record: false,
         projects, offset: 0, next_offset: null, total: projects.length,
       }})};
+      if (body.action === 'library-list') return {json: async () => ({ok: true, value: {items: overview(body.args.project_id).objects.map(object => ({key: `${object.id}@${object.rev}`, title: object.data.title || object.data.statement, ref: {id: object.id, rev: object.rev}, kind: object.kind, bytes: 100})), total: 3}})};
       assert.ok(['list', 'overview'].includes(body.action), `Unexpected write API: ${body.action}`);
       return {json: async () => ({ok: true, value: body.action === 'list' ? projects : overview(body.args.project_id)})};
     },
@@ -539,171 +555,94 @@ test('an empty workspace has one primary create action and a secondary import mo
   assert.deepEqual(t.requests.map(request => request.action), ['list', 'project-draft-read', 'project-context', 'project-context'], 'Opening and cancelling forms must not create research data');
 });
 
-test('overview leads with the goal and actions, while records keeps every group', async () => {
+test('workbench import action advances dialog token and browse callback selects the project library without writes',async()=>{
+ const t=viewTest();await t.choose('a');const initial=component(t.render(),'MaterialsImport');assert.equal(initial.props.triggerToken,null);
+ button(t.render(),'导入研究材料').props.onClick();const opened=component(t.render(),'MaterialsImport');assert.equal(opened.props.triggerToken,1);assert.equal(opened.props.projectId,'a');
+ opened.props.onBrowse();assert.equal(button(t.render(),'知识库').props['data-active'],true);assert.equal(visibleComponent(t.render(),'LibraryBrowser').props.projectId,'a');
+ button(t.render(),'工作台').props.onClick();button(t.render(),'导入研究材料').props.onClick();assert.equal(component(t.render(),'MaterialsImport').props.triggerToken,2);
+ assert.ok(t.requests.every(request=>readActions.includes(request.action)));
+});
+
+test('project manager is opened explicitly with current session and shared request API',async()=>{
+ const t=viewTest();await t.choose('a');assert.equal(component(t.render(),'ProjectManager'),undefined);
+ button(t.render(),'管理项目与回收站').props.onClick();const manager=component(t.render(),'ProjectManager');
+ assert.equal(manager.props.sessionId,'test-session');assert.equal(typeof manager.props.request,'function');assert.equal(typeof manager.props.onChange,'function');
+ assert.ok(t.requests.every(request=>readActions.includes(request.action)));
+});
+
+test('workbench leads with readable goal and unified actions, library receives complete groups', async () => {
   const snapshot = overview('a'), goalObject = snapshot.groups.targets[0].object;
   goalObject.data.statement = '合成目标第一行\n合成目标第二行';
-  const t = viewTest({handle: body => body.action === 'overview' ? snapshot : undefined});
-  await t.choose('a');
-  const tree = t.render(), flat = nodes(tree), goal = byClass(tree, 'dm-goal');
-  const groupTitles = ['当前目标', '已接受 / 已关闭', '候选结论', '待证事项', '失败路线', '笔记'];
-  assert.ok(goal);
-  assert.equal(welcome(tree), undefined);
-  assert.equal(button(nodes(tree).find(node => node.type === 'header'), '新建项目').props.variant, 'ghost');
-  assert.equal(byClass(goal, 'dm-goal-title').children[0], goalObject.data.title);
+  const t = viewTest({handle: body => body.action === 'overview' ? snapshot : undefined}); await t.choose('a');
+  const tree = t.render(), goal = byClass(tree, 'dm-goal'); assert.ok(goal); assert.equal(welcome(tree), undefined);
   assert.equal(component(byClass(goal, 'dm-goal-statement'), 'Preview').props.text, goalObject.data.statement);
-  assert.equal(nodes(tree).filter(node => node.children.includes('P-a@1') && node.props.onClick).length, 1, 'Do not duplicate the target in the digest');
-  assert.deepEqual(flat.filter(node => groupTitles.includes(node.props.title)).map(node => node.props.title), ['待证事项', '笔记']);
-  const firstGroup = byTitle(tree, '待证事项');
-  assert.ok(flat.indexOf(goal) < flat.indexOf(firstGroup));
-  for (const label of ['写笔记', '添加待证事项', '添加参考材料']) assert.ok(flat.indexOf(button(goal, label)) < flat.indexOf(firstGroup));
+  assert.equal(nodes(goal).filter(node=>node.props.className==='dm-ref'&&node.props.onClick).length,0,'Goal content does not duplicate a technical record link');
+  assert.equal(nodes(tree).some(node => node.children.includes('P-a@1')), false);
+  for (const caption of ['导入研究材料', '新建记录', '打开知识库', '查看研究过程', '导出内容']) assert.ok(button(tree, caption));
   assert.ok(nodes(goal).some(node => node.children.includes('登记的是研究记录，不是证明。程序检查不替代人工审核。')));
-  const details = byClass(tree, 'dm-project-details');
-  assert.equal(details.type, 'details');
-  assert.ok(details.props.open === undefined || details.props.open === false);
-  assert.ok(flat.indexOf(details) > flat.indexOf(byTitle(tree, '笔记')));
-  assert.ok(nodes(details).some(node => node.children.includes('开放性与数学结论不由软件自动判定；当前状态由版本化记录推导。')));
-
-  button(tree, '记录与审核').props.onClick();
-  const records = t.render();
-  assert.equal(button(records, '记录与审核').props['data-active'], true);
-  assert.equal(panel(records, 'overview').props.hidden, true);
-  const browser = visibleComponent(records, 'RecordBrowser');
-  assert.equal(browser.props.view, snapshot, 'Complete groups and exact objects reach the read-only browser');
-  assert.deepEqual(Object.keys(browser.props.view.groups), ['targets', 'accepted', 'candidates', 'obligations', 'failed_routes', 'notes']);
-  assert.equal(typeof browser.props.inspect, 'function');
-  browser.props.inspect(goalObject);
-  assert.equal(visibleComponent(t.render(), 'RecordReader').props.object, goalObject);
+  button(tree, '知识库').props.onClick(); const browser = visibleComponent(t.render(), 'LibraryBrowser');
+  assert.equal(browser.props.view, snapshot); assert.deepEqual(Object.keys(browser.props.view.groups), ['targets','accepted','candidates','obligations','failed_routes','notes']);
+  browser.props.inspect(goalObject); assert.equal(visibleComponent(t.render(), 'RecordReader').props.object, goalObject);
   assert.ok(t.requests.every(request => readActions.includes(request.action)));
 });
 
-test('overview truncation still reaches all records by title and exact historical reference', async () => {
-  const snapshot = overview('a'), problem = {id: 'P-a', rev: 1};
-  const notes = [
-    ...[1, 2, 3].map(index => ({id: `N-digest-${index}`, rev: 1, kind: 'Note', data: {title: `合成记录 ${index}`, problem_ref: problem}})),
-    ...[1, 2].map(rev => ({id: 'N-history', rev, kind: 'Note', data: {title: '同名历史记录', statement: `合成版本 ${rev}`, problem_ref: problem}})),
-  ];
-  snapshot.groups.notes = notes.map(object => ({object}));
-  snapshot.groups.accepted = [{object: snapshot.objects.find(object => object.id === 'N-a'), assessment: {state: 'closed', reasons: ['仅合成局部检查']}}];
-  snapshot.objects.push(...notes);
-  const t = viewTest({handle: body => body.action === 'overview' ? snapshot : undefined});
-  await t.choose('a');
-  const digest = t.render(), notePanel = byTitle(digest, '笔记');
-  const rows = panel => nodes(panel).filter(node => node.props.className === 'dm-record');
-  assert.equal(rows(notePanel).length, 3);
-  assert.deepEqual(rows(notePanel).map(node => node.key), notes.slice(0, 3).map(object => `${object.id}@${object.rev}`));
-  assert.equal(nodes(notePanel).some(node => node.children.includes('N-history@1') || node.children.includes('N-history@2')), false);
-  const disclaimer = '按记录状态归类。程序检查通过仅限对应检查范围，不代表全局证明或 R1/R2 已通过。';
-  assert.ok(nodes(byTitle(digest, '已接受 / 已关闭')).some(node => node.children.includes(disclaimer)));
-  assert.equal(byTitle(digest, '已接受事实'), undefined);
-  button(notePanel, '查看全部 5 条').props.onClick();
-  const records = t.render(), browser = visibleComponent(records, 'RecordBrowser');
-  assert.equal(button(records, '记录与审核').props['data-active'], true);
-  assert.equal(picker(records).props.value, 'a');
-  assert.equal(panel(records, 'overview').props.hidden, true);
-  assert.deepEqual(browser.props.view.groups.notes.map(row => row.object), notes, 'Browser receives every historical revision, not the truncated digest');
-  assert.equal(visibleNodes(records).some(node => node.children.includes('查看全部 5 条')), false);
-  const before = t.requests.length;
-  for (const object of notes) {
-    const key = `${object.id}@${object.rev}`;
-    browser.props.inspect(object);
-    const detail = byTitle(t.render(), key), reader = visibleComponent(detail, 'RecordReader');
-    assert.ok(reader, 'The browser callback opens the selected exact revision');
-    assert.equal(reader.props.object, object);
-    reader.props.onClose();
-    assert.equal(byTitle(t.render(), key), undefined);
-  }
-  // Digest title and exact-reference controls still share that same navigation contract.
-  button(t.render(), '研究概览').props.onClick();
-  const row = rows(byTitle(t.render(), '笔记'))[0];
-  for (const opener of [byClass(row, 'dm-record-title'), button(row, `${notes[0].id}@${notes[0].rev}`)]) {
-    assert.equal(opener.type, 'button'); opener.props.onClick();
-    const reader = visibleComponent(t.render(), 'RecordReader'); assert.equal(reader.props.object, notes[0]); reader.props.onClose();
-  }
-  assert.equal(t.requests.length, before, 'Opening already-loaded records is local, not a write or a new research request');
+test('recent content is bounded while library retains every exact historical revision', async () => {
+  const snapshot = overview('a'), problem = {id:'P-a', rev:1};
+  const notes = [1,2,3,4,5,6].map(rev => ({id:'N-history',rev,kind:'Note',data:{title:'同名历史记录',statement:`合成版本 ${rev}`,problem_ref:problem}}));
+  snapshot.objects.push(...notes); snapshot.groups.notes = notes.map(object => ({object}));
+  const items = notes.map(object => ({key:`${object.id}@${object.rev}`,title:object.data.title,ref:{id:object.id,rev:object.rev},kind:'note',bytes:37,created_at:'2026-11-03T07:00:00Z'}));
+  const t=viewTest({handle:body => body.action==='overview'?snapshot:body.action==='library-list'?{items,total:items.length}:undefined}); await t.choose('a');
+  assert.equal(nodes(byTitle(t.render(),'最近内容')).filter(node=>node.props.className==='dm-recent-item').length,5);
+  assert.ok(nodes(byTitle(t.render(),'最近内容')).some(node=>node.children.some(child=>typeof child==='string' && child.endsWith(' · 37 B'))),'Small files retain their byte size instead of rounding to zero KB');
+  button(byTitle(t.render(),'最近内容').props.actions,'查看全部').props.onClick(); const browser=visibleComponent(t.render(),'LibraryBrowser');
+  assert.deepEqual(browser.props.view.groups.notes.map(row=>row.object),notes); const before=t.requests.length;
+  for(const object of notes){ browser.props.inspect(object); const reader=visibleComponent(t.render(),'RecordReader'); assert.equal(reader.props.object,object); reader.props.onClose(); }
+  assert.equal(t.requests.length,before,'Exact version navigation is local');
 });
 
-test('overview and records render primary writing and collapsed native secondary actions without a component wrapper', async () => {
-  const t = viewTest(); await t.choose('a');
-  for (const [tab, surface] of [['研究概览', 'overview'], ['记录与审核', 'records']]) {
-    button(t.render(), tab).props.onClick();
-    const tree = panel(t.render(), surface), actions = byClass(tree, 'dm-record-actions');
-    assert.equal(actions.type, 'div', 'Actions render directly even with opaque function children');
-    const primary = button(actions, '写笔记'), more = byClass(actions, 'dm-record-more');
-    assert.equal(primary.props.variant, 'primary');
-    assert.equal(nodes(more).includes(primary), false);
-    assert.equal(more.type, 'details');
-    assert.ok(more.props.open === undefined || more.props.open === false, 'Native disclosure starts collapsed');
-    assert.ok(nodes(more).some(node => node.type === 'summary' && node.children.includes('更多记录')));
-    for (const label of ['添加待证事项', '添加参考材料']) {
-      assert.ok(nodes(more).includes(button(actions, label)), 'Secondary action must remain within the disclosure');
-      assert.notEqual(button(actions, label).props.variant, 'primary');
-    }
-    assert.equal(nodes(actions).filter(node => node.props.variant === 'primary').length, 1);
-    for (const old of ['登记笔记', '登记义务', '登记证据']) assert.equal(nodes(actions).some(node => node.children.includes(old)), false);
-  }
+test('workbench and library share one primary record creation action', async () => {
+ const t=viewTest(); await t.choose('a');
+ for(const [tab,surface] of [['工作台','overview'],['知识库','records']]){
+  button(t.render(),tab).props.onClick(); const actions=byClass(panel(t.render(),surface),'dm-record-actions');
+  assert.equal(actions.type,'div');assert.equal(button(actions,'新建记录').props.variant,'primary');
+  assert.equal(nodes(actions).filter(node=>typeof node.props.onClick==='function').length,1);
+  button(actions,'新建记录').props.onClick(); assert.equal(nodes(t.render()).find(node=>node.props.label==='内容类型').props.value,'Note');
+  button(t.render(),'取消').props.onClick(); assert.equal(editNode(t),undefined);
+ }
 });
 
-test('record choices close native details and keep original kinds on both action surfaces', async () => {
-  for (const tab of ['研究概览', '记录与审核']) for (const [label, kind] of [['写笔记', 'Note'], ['添加待证事项', 'Obligation'], ['添加参考材料', 'Evidence']]) {
-    const t = viewTest(); await t.choose('a'); button(t.render(), tab).props.onClick();
-    const surface = panel(t.render(), tab === '研究概览' ? 'overview' : 'records');
-    const removed = [];
-    button(surface, label).props.onClick({currentTarget: {closest(selector) {
-      assert.equal(selector, 'details');
-      return kind === 'Note' ? null : {removeAttribute(name) {
-        assert.equal(editNode(t), undefined, 'Disclosure closes before starting the original edit action');
-        removed.push(name);
-      }};
-    }}});
-    assert.deepEqual(removed, kind === 'Note' ? [] : ['open']);
-    const tree = t.render(), flat = nodes(tree), editor = flat.find(node => node.type === t.Editor);
-    assert.equal(button(tree, '记录与审核').props['data-active'], true);
-    assert.equal(editor.props.initial.kind, kind);
-    assert.equal(editor.props.initial.data.problem_ref.id, 'P-a');
-    assert.ok(flat.indexOf(byTitle(tree, '编辑研究记录')) < flat.indexOf(visibleComponent(tree, 'RecordBrowser')));
-    assert.ok(t.requests.every(request => readActions.includes(request.action)));
-  }
+test('unified record choice preserves each original kind and exact target without writes',async()=>{
+ for(const tab of ['工作台','知识库'])for(const kind of ['Note','Obligation','Evidence']){
+  const t=viewTest();await t.choose('a');button(t.render(),tab).props.onClick();createRecord(t,kind);
+  const editor=editNode(t); assert.equal(editor.props.initial.kind,kind);assert.equal(editor.props.initial.data.problem_ref.id,'P-a');
+  assert.equal(button(t.render(),'知识库').props['data-active'],true);assert.ok(t.requests.every(request=>readActions.includes(request.action)));
+ }
 });
 
-test('secondary choice closes disclosure without bypassing the dirty replacement guard', async () => {
-  for (const label of ['添加待证事项', '添加参考材料']) {
-    const t = viewTest(); await t.choose('a'); button(t.render(), '写笔记').props.onClick();
-    const draft = changeFormalDraft(t); let closed = false;
-    button(panel(t.render(), 'records'), label).props.onClick({currentTarget: {closest: () => ({removeAttribute(name) { assert.equal(name, 'open'); closed = true; }})}});
-    await settle();
-    assert.equal(closed, true); assert.equal(editNode(t).props.initial, draft);
-    assert.ok(unsaved(t)); unsaved(t).props.finish('cancel'); await settle();
-    assert.equal(editNode(t).props.initial, draft); assert.equal(writeRequests(t).length, 0);
-  }
+test('new record chooser cannot bypass the dirty replacement guard',async()=>{
+ const t=viewTest();await t.choose('a');createRecord(t);const draft=changeFormalDraft(t);
+ button(t.render(),'新建记录').props.onClick();await settle();assert.ok(unsaved(t));assert.equal(editNode(t).props.initial,draft);
+ unsaved(t).props.finish('cancel');await settle();assert.equal(editNode(t).props.initial,draft);assert.equal(writeRequests(t).length,0);
 });
 
-test('busy refresh disables all record choices on both surfaces and prevents replacement', async () => {
-  const t = viewTest(); await t.choose('a'); const gate = deferred();
-  t.controls.handle = body => body.action === 'overview' ? gate.promise : undefined;
-  const refresh = button(t.render(), '刷新').props.onClick(); await settle();
-  for (const surface of ['overview', 'records']) for (const label of ['写笔记', '添加待证事项', '添加参考材料']) {
-    const choice = nodes(panel(t.render(), surface)).find(node => node.children.includes(label) && typeof node.props.onClick === 'function');
-    assert.ok(choice);
-    assert.equal(choice.props.disabled, true);
-    choice.props.onClick(); assert.equal(editNode(t), undefined);
-  }
-  gate.resolve(overview('a')); await refresh;
-  assert.equal(button(panel(t.render(), 'overview'), '写笔记').props.disabled, false);
-  assert.ok(t.requests.every(request => readActions.includes(request.action)));
+test('busy refresh disables unified creation on both surfaces and prevents replacement',async()=>{
+ const t=viewTest();await t.choose('a');const gate=deferred();t.controls.handle=body=>body.action==='overview'?gate.promise:undefined;
+ const refresh=button(t.render(),'刷新').props.onClick();await settle();
+ for(const surface of ['overview','records']){const choice=nodes(panel(t.render(),surface)).find(node=>node.children.includes('新建记录'));assert.equal(choice.props.disabled,true);choice.props.onClick();assert.equal(editNode(t),undefined);}
+ gate.resolve(overview('a'));await refresh;assert.equal(button(panel(t.render(),'overview'),'新建记录').props.disabled,false);
 });
 
 test('refresh retains a draft and sources but project change clears transient state', async () => {
   const t = viewTest(); await t.choose('a');
-  button(t.render(), 'O-a@1').props.onClick();
+  inspectRecord(t, 'O-a', 1);
   nodes(t.render()).find(node => node.type === t.Refs).props.change([{id: 'N-a', rev: 1}]);
-  button(t.render(), '写笔记').props.onClick();
+  createRecord(t, 'Note');
   const draft = nodes(t.render()).find(node => node.type === t.Editor).props.initial;
-  button(t.render(), '回放与导出').props.onClick();
-  button(t.render(), '添加回放来源').props.onClick();
-  nodes(t.render()).find(node => node.props.label === '来源 1 完整路径').props.change('/test/a.jsonl');
+  button(t.render(), '导出').props.onClick();
+  assert.equal(visibleComponent(t.render(),'ExportPanel').props.projectId,'a');
   await button(t.render(), '刷新').props.onClick();
-  assert.equal(nodes(t.render()).find(node => node.props.label === '来源 1 完整路径').props.value, '/test/a.jsonl');
-  button(t.render(), '记录与审核').props.onClick();
+  assert.equal(visibleComponent(t.render(),'ExportPanel').props.projectId,'a');
+  button(t.render(), '知识库').props.onClick();
   assert.equal(nodes(t.render()).find(node => node.type === t.Editor).props.initial, draft);
   const nextList = deferred(); t.controls.handle = body => body.action === 'list' ? nextList.promise : undefined;
   const pending = t.choose('b'); await settle();
@@ -713,42 +652,41 @@ test('refresh retains a draft and sources but project change clears transient st
   nextList.resolve(projects); await pending;
   assert.equal(picker(t.render()).props.value, 'b');
   assert.equal(nodes(t.render()).some(node => node.type === t.Editor), false);
-  const browserB = visibleComponent(t.render(), 'RecordBrowser');
+  const browserB = visibleComponent(t.render(), 'LibraryBrowser');
   browserB.props.inspect(browserB.props.view.objects.find(object => object.id === 'O-b' && object.rev === 1));
   assert.equal(nodes(t.render()).find(node => node.type === t.Refs).props.value.length, 0);
-  button(t.render(), '回放与导出').props.onClick();
+  button(t.render(), '导出').props.onClick();
   assert.equal(nodes(t.render()).some(node => node.props.label === '来源 1 完整路径'), false);
 });
 
 test('selecting no project clears its view, draft, candidate and replay sources', async () => {
   const t = viewTest(); await t.choose('a');
-  button(t.render(), 'O-a@1').props.onClick();
+  inspectRecord(t, 'O-a', 1);
   nodes(t.render()).find(node => node.type === t.Refs).props.change([{id: 'N-a', rev: 1}]);
-  button(t.render(), '写笔记').props.onClick();
-  button(t.render(), '回放与导出').props.onClick();
-  button(t.render(), '添加回放来源').props.onClick();
-  nodes(t.render()).find(node => node.props.label === '来源 1 完整路径').props.change('/test/a.jsonl');
+  createRecord(t, 'Note');
+  button(t.render(), '导出').props.onClick();
+  assert.equal(visibleComponent(t.render(),'ExportPanel').props.projectId,'a');
   const before = t.requests.length;
   await t.choose('');
   assert.deepEqual(t.requests.slice(before), [{action: 'list', args: {}}, contextRead('test-session')]);
   assert.equal(picker(t.render()).props.value, '');
   assert.equal(t.render().props['aria-busy'], false);
   assert.ok(welcome(t.render()));
-  assert.equal(byTitle(t.render(), '联合只读回放与导出'), undefined);
+  assert.equal(byTitle(t.render(), '联合只读导出'), undefined);
   assert.equal(byTitle(t.render(), '当前目标'), undefined);
   assert.equal(byClass(t.render(), 'dm-goal'), undefined);
   await t.choose('a');
   assert.equal(nodes(t.render()).some(node => node.props.label === '来源 1 完整路径'), false);
-  button(t.render(), '记录与审核').props.onClick();
+  button(t.render(), '知识库').props.onClick();
   assert.equal(nodes(t.render()).some(node => node.type === t.Editor), false);
   assert.equal(byTitle(t.render(), 'O-a@1'), undefined);
-  const browser = visibleComponent(t.render(), 'RecordBrowser');
+  const browser = visibleComponent(t.render(), 'LibraryBrowser');
   browser.props.inspect(browser.props.view.objects.find(object => object.id === 'O-a' && object.rev === 1));
   assert.equal(nodes(t.render()).find(node => node.type === t.Refs).props.value.length, 0);
 });
 
 test('failed project load keeps the current draft and reports the error', async () => {
-  const t = viewTest(); await t.choose('a'); button(t.render(), '写笔记').props.onClick();
+  const t = viewTest(); await t.choose('a'); createRecord(t, 'Note');
   const draft = nodes(t.render()).find(node => node.type === t.Editor).props.initial;
   t.controls.failure = 'UNUSABLE'; await t.choose('b');
   const tree = t.render();
@@ -765,12 +703,12 @@ test('session key remounts isolate all local state and initialize the matching p
   assert.equal(t.wrap(undefined).key, '');
   t.render('session-a'); await settle();
   assert.equal(picker(t.render()).props.value, 'a');
-  assert.deepEqual(t.requests.map(request => request.action), ['list', 'project-draft-read', 'project-context', 'overview', 'project-context']);
-  button(t.render(), '写笔记').props.onClick();
+  assert.deepEqual(t.requests.map(request => request.action), ['list', 'project-draft-read', 'project-context', 'overview', 'project-context', 'library-list']);
+  createRecord(t, 'Note');
   button(t.render(), '新建项目').props.onClick();
   assert.equal(nodes(t.render()).find(node => node.type?.name === 'ProjectForm').key, 'session-a');
-  button(t.render(), '回放与导出').props.onClick();
-  button(t.render(), '添加回放来源').props.onClick();
+  button(t.render(), '导出').props.onClick();
+  assert.equal(visibleComponent(t.render(),'ExportPanel').props.projectId,'a');
   const empty = t.render('session-b');
   assert.equal(picker(empty), undefined, 'New scope must not expose the previous project choices');
   assert.ok(welcome(empty));
@@ -779,17 +717,17 @@ test('session key remounts isolate all local state and initialize the matching p
   assert.equal(byClass(empty, 'dm-goal'), undefined);
   await settle();
   assert.equal(picker(t.render()).props.value, 'b');
-  assert.equal(button(t.render(), '研究概览').props['data-active'], true);
-  assert.deepEqual(t.requests.map(request => request.action), ['list', 'project-draft-read', 'project-context', 'overview', 'project-context', 'list', 'project-draft-read', 'project-context', 'overview', 'project-context']);
+  assert.equal(button(t.render(), '工作台').props['data-active'], true);
+  assert.deepEqual(t.requests.map(request => request.action), ['list', 'project-draft-read', 'project-context', 'overview', 'project-context', 'library-list', 'list', 'project-draft-read', 'project-context', 'overview', 'project-context', 'library-list']);
   assert.deepEqual(t.requests.filter(request => request.action === 'overview').map(request => request.args.project_id), ['a', 'b']);
-  button(t.render(), '记录与审核').props.onClick();
+  button(t.render(), '知识库').props.onClick();
   assert.equal(nodes(t.render()).some(node => node.type === t.Editor), false);
-  button(t.render(), '回放与导出').props.onClick();
+  button(t.render(), '导出').props.onClick();
   assert.equal(nodes(t.render()).some(node => node.props.label === '来源 1 完整路径'), false);
   button(t.render(), '新建项目').props.onClick();
   assert.equal(nodes(t.render()).find(node => node.type?.name === 'ProjectForm').key, 'session-b');
   assert.equal(nodes(t.render()).find(node => node.type?.name === 'ProjectForm').props.sessionId, 'session-b');
-  assert.equal(t.requests.length, 10, 'Rerenders must not restart initialization');
+  assert.equal(t.requests.length, 12, 'Rerenders must not restart initialization');
   assert.deepEqual(t.requests.filter(body => body.action === 'project-draft-read').map(body => body.args.session_id), ['session-a', 'session-b']);
 });
 
@@ -797,7 +735,7 @@ test('switching to a session without a project clears the previous scope', async
   const t = viewTest({effects: true});
   t.render('session-a'); await settle();
   assert.equal(picker(t.render()).props.value, 'a');
-  button(t.render(), '写笔记').props.onClick();
+  createRecord(t, 'Note');
   const before = t.requests.length;
   t.render('session-without-project'); await settle();
   const tree = t.render();
@@ -821,14 +759,14 @@ test('a late successful or failed A response cannot contaminate a completed B se
     assert.equal(t.requests.at(-1).args.project_id, 'b');
     b.resolve(overview('b')); await settle();
     assert.equal(picker(t.render()).props.value, 'b');
-    button(t.render(), '写笔记').props.onClick();
+    createRecord(t, 'Note');
     const draft = nodes(t.render()).find(node => node.type === t.Editor).props.initial;
     const refreshing = deferred();
     t.controls.handle = body => body.action === 'list' ? refreshing.promise : undefined;
     const refresh = button(t.render(), '刷新').props.onClick();
     assert.equal(t.render().props['aria-busy'], true);
     const beforeLate = t.requests.length;
-    assert.equal(beforeLate, 11, 'Two initializations and one explicit refresh include only their scoped draft and context reads');
+    assert.equal(beforeLate, 12, 'Two initializations and one explicit refresh include only their scoped draft and context reads');
     if (outcome === 'resolve') a.resolve(overview('a'));
     else a.reject(Error('late A failure'));
     await settle();
@@ -863,12 +801,12 @@ test('effect cleanup/setup keeps a newer operation busy when an older finally fi
   newList.resolve(projects); await settle();
   assert.equal(picker(t.render()).props.value, 'a');
   assert.equal(t.render().props['aria-busy'], false);
-  assert.deepEqual(t.requests.map(request => request.action), ['list', 'project-draft-read', 'list', 'project-draft-read', 'project-context', 'overview', 'project-context']);
+  assert.deepEqual(t.requests.map(request => request.action), ['list', 'project-draft-read', 'list', 'project-draft-read', 'project-context', 'overview', 'project-context', 'library-list']);
 });
 
 test('double save callbacks dispatch only one mocked commit before the disabled render', async () => {
   const pending = deferred(), t = viewTest({handle: body => body.action === 'commit' ? pending.promise : undefined});
-  await t.choose('a'); button(t.render(), '写笔记').props.onClick();
+  await t.choose('a'); createRecord(t, 'Note');
   const editor = nodes(t.render()).find(node => node.type === t.Editor);
   const request = {operation_id: 'synthetic-only', changes: []};
   const first = editor.props.save(request), second = editor.props.save(request);
@@ -885,13 +823,13 @@ test('double save callbacks dispatch only one mocked commit before the disabled 
   pending.resolve({}); await first;
   assert.equal(t.render().props['aria-busy'], false);
   assert.equal(nodes(t.render()).some(node => node.type === t.Editor), false);
-  assert.deepEqual(t.requests.map(body => body.action), ['project-draft-read', 'list', 'project-context', 'list', 'overview', 'project-context', 'commit', 'list', 'overview', 'project-context']);
+  assert.deepEqual(t.requests.map(body => body.action), ['project-draft-read', 'list', 'project-context', 'list', 'overview', 'project-context', 'library-list', 'commit', 'list', 'overview', 'project-context', 'library-list']);
 });
 
 test('an unmounted save completion cannot dispatch a refresh in the new session', async () => {
   const pending = deferred(), t = viewTest({effects: true, handle: body => body.action === 'commit' ? pending.promise : undefined});
   t.render('session-a'); await settle();
-  button(t.render(), '写笔记').props.onClick();
+  createRecord(t, 'Note');
   const save = nodes(t.render()).find(node => node.type === t.Editor).props.save;
   const operation = save({operation_id: 'synthetic-only', changes: []});
   t.render('session-b'); await settle();
@@ -907,55 +845,19 @@ test('an unmounted save completion cannot dispatch a refresh in the new session'
   assert.equal(t.requests.length, before, 'A stale callback must not dispatch after unmount');
 });
 
-test('process entry reads only project replay and selected sources require an explicit load', async () => {
-  const t = processTest(); await t.choose('a');
-  const before = t.requests.length;
-  button(t.render(), '回放与导出').props.onClick();
-  button(t.render(), '添加回放来源').props.onClick();
-  nodes(t.render()).find(node => node.props.label === '来源 1 格式').props.change('ledger-py-v1');
-  nodes(t.render()).find(node => node.props.label === '来源 1 完整路径').props.change('/synthetic/first.jsonl');
-  assert.equal(t.requests.length, before, 'Selecting a source must not read it');
-  const enter = button(t.render(), '研究过程').props.onClick;
-  const first = enter(), duplicate = enter();
-  assert.deepEqual(t.requests.slice(before), [{action: 'replay', args: {project_id: 'a', sources: []}}]);
-  await Promise.all([first, duplicate]);
-  const initial = processNode(t.render()), initialLifetime = processLifetime(t.render()), frozen = JSON.stringify(initial.props.graph);
-  assert.ok(initialLifetime, 'Both graph components require a keyed snapshot lifetime');
-  const research = component(initialLifetime, 'ResearchGraph');
-  assert.equal(research.props.graph.format, 'dsh-math-research-graph-v1');
-  assert.equal(research.props.graph.project_id, 'a');
-  assert.equal(research.props.view, t.fixtures.a.view);
-  assert.equal(nodes(initialLifetime).filter(node => node.type === 'details').some(node => processNode(node)?.props.graph === initial.props.graph), true, 'Operations history remains within its native disclosure');
-  assert.equal(initial.props.graph.format, 'dsh-math-process-graph-v1');
-  assert.equal(initial.props.graph.counts.records, 3, 'Load the real projection, not a fake Graph factory');
-  assert.deepEqual(Array.from(initial.props.graph.sources, source => source.path), ['research/events.jsonl']);
-  assert.equal(alerts(t.render()).length, 0);
-
-  button(t.render(), '选择工具账本').props.onClick();
-  assert.equal(button(t.render(), '回放与导出').props['data-active'], true);
-  nodes(t.render()).find(node => node.props.label === '来源 1 完整路径').props.change('/synthetic/second.jsonl');
-  await button(t.render(), '研究过程').props.onClick();
-  assert.equal(t.requests.length, before + 1, 'Returning to a frozen graph must not reload sources');
-  assert.equal(processNode(t.render()).props.graph, initial.props.graph);
-  assert.equal(processLifetime(t.render()).key, initialLifetime.key);
-  assert.equal(JSON.stringify(initial.props.graph), frozen);
-  const add = button(t.render(), '加入所选来源（1）');
-  assert.equal(add.props.disabled, false);
-  await add.props.onClick();
-  assert.deepEqual(t.requests.at(-1), {action: 'replay', args: {project_id: 'a', sources: [{adapter: 'ledger-py-v1', path: '/synthetic/second.jsonl'}]}});
-  const loaded = processNode(t.render());
-  assert.deepEqual(Array.from(loaded.props.graph.sources, source => source.path), ['research/events.jsonl', '/synthetic/second.jsonl']);
-  assert.notEqual(processLifetime(t.render()).key, initialLifetime.key, 'A changed source snapshot must own a fresh graph UI lifetime');
-  button(t.render(), '选择工具账本').props.onClick();
-  button(t.render(), '移除来源').props.onClick();
-  await button(t.render(), '研究过程').props.onClick();
-  assert.equal(processNode(t.render()).props.graph, loaded.props.graph, 'Removing a selection does not mutate an already-read snapshot');
-  assert.equal(button(t.render(), '加入所选来源（0）').props.disabled, true);
-  assert.equal(t.requests.length, before + 2);
-  await button(t.render(), '刷新过程').props.onClick();
-  assert.deepEqual(t.requests.at(-1), {action: 'replay', args: {project_id: 'a', sources: []}});
-  assert.deepEqual(Array.from(processNode(t.render()).props.graph.sources, source => source.path), ['research/events.jsonl']);
-  assert.ok(t.requests.every(request => [...readActions, 'replay'].includes(request.action)), 'No model, mutation, audit export, or source discovery request');
+test('process entry explicitly reads project history and returning reuses the frozen snapshot',async()=>{
+ const t=processTest();await t.choose('a');const before=t.requests.length;
+ assert.equal(processNode(t.render()),undefined);
+ const enter=button(t.render(),'研究过程').props.onClick;const first=enter(),duplicate=enter();
+ await Promise.all([first,duplicate]);
+ assert.deepEqual(t.requests.slice(before),[{action:'replay',args:{project_id:'a',sources:[]}}]);
+ const initial=processNode(t.render()),lifetime=processLifetime(t.render());assert.ok(lifetime);
+ assert.equal(component(lifetime,'ResearchGraph').props.graph.format,'dsh-math-research-graph-v1');
+ assert.equal(initial.props.graph.counts.records,3);assert.deepEqual(Array.from(initial.props.graph.sources,source=>source.path),['research/events.jsonl']);
+ button(t.render(),'导出').props.onClick();assert.ok(visibleComponent(t.render(),'ExportPanel'));
+ await button(t.render(),'研究过程').props.onClick();assert.equal(processNode(t.render()).props.graph,initial.props.graph);assert.equal(processLifetime(t.render()).key,lifetime.key);
+ await button(t.render(),'刷新过程').props.onClick();assert.equal(t.requests.filter(body=>body.action==='replay').length,2);
+ assert.ok(t.requests.every(request=>[...readActions,'replay'].includes(request.action)));
 });
 
 test('a stale process head reports an error without replacing a frozen snapshot', async testContext => {
@@ -983,7 +885,7 @@ test('refresh, project changes and no-project selection clear the process snapsh
   const previous = processNode(t.render()).props.graph, before = t.requests.length;
   await button(t.render(), '刷新').props.onClick();
   assert.equal(processNode(t.render()), undefined);
-  assert.deepEqual(t.requests.slice(before).map(request => request.action), ['project-draft-read', 'list', 'overview', 'project-context']);
+  assert.deepEqual(t.requests.slice(before).map(request => request.action), ['project-draft-read', 'list', 'overview', 'project-context', 'library-list']);
   assert.equal(button(t.render(), '研究过程').props['data-active'], true);
   await button(t.render(), '查看研究过程').props.onClick();
   assert.notEqual(processNode(t.render()).props.graph, previous);
@@ -1008,7 +910,7 @@ test('process references open the exact historical revision in the records tab',
   assert.equal(button(t.render(), '研究过程').props['data-active'], true, 'Never substitute the latest revision for a missing exact ref');
   for (const rev of [1, 2]) {
     graph.props.inspect({id: 'N-a', rev});
-    assert.equal(button(t.render(), '记录与审核').props['data-active'], true);
+    assert.equal(button(t.render(), '知识库').props['data-active'], true);
     const detail = byTitle(t.render(), `N-a@${rev}`);
     assert.ok(detail);
     assert.equal(visibleComponent(detail, 'RecordReader').props.object, t.fixtures.a.view.objects.find(object => object.id === 'N-a' && object.rev === rev));
@@ -1056,11 +958,10 @@ test('closed records are not labelled accepted mathematical facts', async () => 
   const fixture = overview('a');
   fixture.groups.accepted = [{object: fixture.objects[2], assessment: {state: 'closed', reasons: ['synthetic local check only']}}];
   const t = viewTest({handle: body => body.action === 'overview' ? fixture : undefined}); await t.choose('a');
-  const accepted = byTitle(t.render(), '已接受 / 已关闭'); assert.ok(accepted);
-  assert.ok(nodes(accepted).some(node => node.children.some(text => typeof text === 'string' && text.includes('不代表全局证明或 R1/R2 已通过'))));
+  assert.ok(nodes(byClass(t.render(),'dm-goal')).some(node=>node.children.includes('登记的是研究记录，不是证明。程序检查不替代人工审核。')));
   assert.equal(byTitle(t.render(), '已接受事实'), undefined);
-  button(t.render(), '记录与审核').props.onClick();
-  assert.equal(visibleComponent(t.render(), 'RecordBrowser').props.view.groups.accepted, fixture.groups.accepted, 'Reader receives the actual scoped assessment, not a manufactured mathematical verdict');
+  button(t.render(), '知识库').props.onClick();
+  assert.equal(visibleComponent(t.render(), 'LibraryBrowser').props.view.groups.accepted, fixture.groups.accepted, 'Reader receives the actual scoped assessment, not a manufactured mathematical verdict');
 });
 
 test('fallback modal still opens and closes without Better Sidebar', () => {
@@ -1121,7 +1022,7 @@ test('form presentation preserves historical exact references and blocks busy sa
   react.reset();
   const refs = Refs({label: '前提', objects, kinds: ['Note'], problem, value: [{id: 'N', rev: 1}], change: () => {}});
   assert.equal(refs.props.className, 'dm-fieldset');
-  assert.ok(nodes(refs).some(node => node.type === 'span' && node.children[0].includes('N@1')));
+  assert.ok(nodes(refs).some(node => node.type === 'span' && node.children[0].includes('历史引用 · 版本1')));
   const draft = Forms.draft('Note', problem, () => 'stable-id');
   Object.assign(draft.data, {title: '合成笔记', summary: '仅测试', body: '合成正文', statement: '合成主张'});
   const fresh = hooks(), ui = context.DshMathFormUI(fresh, Forms);
@@ -1140,14 +1041,10 @@ test('form presentation preserves historical exact references and blocks busy sa
 });
 
 test('short Field and Text use inputs but preserve legacy LF and CR values in textareas', async () => {
-  const t = viewTest(); await t.choose('a'); button(t.render(), '回放与导出').props.onClick();
-  button(t.render(), '添加回放来源').props.onClick();
-  const fields = [nodes(t.render()).find(node => node.props.label === '来源 1 完整路径')];
-  assert.ok(fields.every(field => field && field.props.multiline === false));
   const context = {};
   vm.runInNewContext(readFileSync(new URL('../form-ui.cjs', import.meta.url), 'utf8'), context);
   const {Text} = context.DshMathFormUI(hooks(), Forms);
-  const components = [...fields.map(field => ({render: field.type, props: field.props})), {render: Text, props: {label: '短字段', multi: false}}];
+  const components = [{render: Text, props: {label: '短字段', multi: false}}];
   for (const component of components) for (const value of ['', '  单行 Ω  ', '第一行\n第二行\n', '第一行\r\n第二行', '第一行\r第二行']) {
     let changed;
     const tree = component.render({...component.props, value, change: next => { changed = next; }});
@@ -1158,15 +1055,7 @@ test('short Field and Text use inputs but preserve legacy LF and CR values in te
     control.props.onChange({target: {value}});
     assert.equal(changed, value, 'Change handlers must not trim, split or flatten historical text');
   }
-  // Exercise the real parent callbacks too, without submitting to any API.
   const historical = '  标题第一行\n标题第二行\n';
-  fields[0].props.change(historical);
-  const field = nodes(t.render()).find(node => node.props.label === '来源 1 完整路径');
-  assert.equal(field.props.value, historical);
-  const fieldControl = field.type(field.props).children[1];
-  assert.equal(fieldControl.type, 'textarea');
-  fieldControl.props.onChange({target: {value: historical + '末行'}});
-  assert.equal(nodes(t.render()).find(node => node.props.label === '来源 1 完整路径').props.value, historical + '末行');
   const react = hooks(), ui = context.DshMathFormUI(react, Forms);
   const initial = Forms.draft('Note', {id: 'P-synthetic', rev: 1}, () => 'text-fixture');
   Object.assign(initial.data, {title: historical, summary: '合成摘要', body: '合成正文', statement: '合成主张'});
@@ -1189,7 +1078,7 @@ test('archived material reader downloads exact Evidence through checked helper a
   const t = viewTest({effects: true, handle: body => body.action === 'overview' ? fixture : undefined, globals: {document,
     URL: {createObjectURL: () => 'blob:original-fixture', revokeObjectURL: url => revoked.push(url)},
     DshMathMaterialsUI: {downloadOriginal: async args => { calls.push(args); assert.equal(args.isCurrent(), true); return {blob: new Blob(['exact bytes']), name: 'source.pdf'}; }}}});
-  await t.choose('a'); const browser = component(t.render(), 'RecordBrowser'); browser.props.inspect(evidence);
+  await t.choose('a'); const browser = component(t.render(), 'LibraryBrowser'); browser.props.inspect(evidence);
   await button(t.render(), '下载归档原件').props.onClick();
   assert.equal(calls.length, 1); assert.deepEqual(plain(calls[0].ref), {id: evidence.id, rev: 2}); assert.equal(calls[0].projectId, 'a'); assert.equal(calls[0].sessionId, 'test-session');
   assert.deepEqual(clicked, [{href: 'blob:original-fixture', download: 'source.pdf'}]);
@@ -1233,8 +1122,8 @@ test('four tabs omit writable scratchpad and next actions preserve exact refs', 
   assert.equal(nodes(t.render()).filter(node => node.props.className === 'dm-tab').length, 4);
   assert.equal(nodes(t.render()).some(node => node.props.role === 'tab' && node.children.includes('草稿本')), false);
   const digest = byClass(t.render(), 'dm-next-action-list'); assert.ok(digest); assert.ok(nodes(digest).some(node => node.children.includes('先检查合成条件\n再登记结果')));
-  button(digest, 'O-a@1').props.onClick(); assert.equal(visibleComponent(byTitle(t.render(), 'O-a@1'), 'RecordReader').props.object.kind, 'Obligation');
-  button(t.render(), '研究概览').props.onClick();
+  inspectRecord(t, 'O-a', 1); assert.equal(visibleComponent(byTitle(t.render(), 'O-a@1'), 'RecordReader').props.object.kind, 'Obligation');
+  button(t.render(), '工作台').props.onClick();
   assert.ok(nodes(t.render()).some(node => node.type?.name === 'HistoricalDraft'));
 });
 
@@ -1246,10 +1135,10 @@ test('legacy readonly view suppresses every research mutation but retains explic
     assert.equal(byClass(panel(t.render(), surface), 'dm-record-more'), undefined);
     for (const text of ['写笔记', '添加待证事项', '添加参考材料', '更多记录']) assert.equal(nodes(panel(t.render(), surface)).some(node => node.children.includes(text)), false);
   }
-  button(t.render(), 'O-a@1').props.onClick();
+  inspectRecord(t, 'O-a', 1);
   for (const text of ['笔记', '待证事项', '参考材料', '修订此记录', '人工审核预览', '本人提交审核记录']) assert.equal(nodes(t.render()).some(node => node.children.includes(text) && typeof node.props.onClick === 'function'), false);
-  assert.equal(t.requests.some(body => body.action === 'export'), false); button(t.render(), '回放与导出').props.onClick();
-  assert.equal(t.requests.some(body => body.action === 'export'), false); await button(t.render(), '生成本地审核包').props.onClick();
+  assert.equal(t.requests.some(body => body.action === 'export'), false); button(t.render(), '导出').props.onClick();
+  assert.equal(t.requests.some(body => body.action === 'export'), false); await button(t.render(), '生成完整审核包').props.onClick();
   assert.equal(visibleComponent(t.render(), 'ExportReceipt').props.receipt.path, '/synthetic/derived-audit');
   assert.deepEqual(t.requests.filter(body => !readActions.includes(body.action)).map(body => body.action), ['export']);
 });
@@ -1307,7 +1196,7 @@ function changeFormalDraft(t, body = '  exact local\r\n$math$ 😀\n') {
 const reviewFixture = () => ({eligible_for_pass: true, required_scope: 'local_claim', basis_hash: 'synthetic-basis',
   basis: {target: {id: 'O-a', rev: 1}, candidate: {id: 'N-a', rev: 1}}, reasons: []});
 async function openReview(t) {
-  await t.choose('a'); button(t.render(), 'O-a@1').props.onClick();
+  await t.choose('a'); inspectRecord(t, 'O-a', 1);
   nodes(t.render()).find(node => node.type === t.Refs).props.change([{id: 'N-a', rev: 1}]);
   await button(t.render(), '人工审核预览').props.onClick();
   const tree = t.render();
@@ -1316,21 +1205,21 @@ async function openReview(t) {
 }
 
 test('dirty formal editor stays mounted across every tab with stable key and no leave dialog or implicit write', async () => {
-  const t = processTest(); await t.choose('a'); button(t.render(), '写笔记').props.onClick();
+  const t = processTest(); await t.choose('a'); createRecord(t, 'Note');
   const original = editNode(t); assert.equal(original.props.initialDirty, false, 'A blank document does not inherit a dirty flag');
   const edited = changeFormalDraft(t);
-  for (const tab of ['研究概览', '研究过程', '回放与导出', '记录与审核']) {
+  for (const tab of ['工作台', '研究过程', '导出', '知识库']) {
     await button(t.render(), tab).props.onClick(); const tree = t.render(), editor = editNode(t, tree);
     assert.equal(editor.type, original.type); assert.equal(editor.key, original.key); assert.equal(editor.props.initial, edited);
     assert.equal(editor.props.initialDirty, true); assert.equal(unsaved(t), undefined);
-    assert.equal(panel(tree, 'records').props.hidden, tab !== '记录与审核');
+    assert.equal(panel(tree, 'records').props.hidden, tab !== '知识库');
   }
   assert.deepEqual(t.requests.filter(body => ![...readActions, 'replay'].includes(body.action)), []);
   assert.equal(t.requests.filter(body => body.action === 'replay').length, 1, 'Only explicit process viewing requests replay');
 });
 
 test('project switching protects dirty documents with cancel, keep and discard; current project owns the saved bytes', async () => {
-  const t = viewTest(); await t.choose('a'); button(t.render(), '写笔记').props.onClick();
+  const t = viewTest(); await t.choose('a'); createRecord(t, 'Note');
   const edited = changeFormalDraft(t), key = editNode(t).key;
   let navigation = t.choose('b'); await settle();
   assert.equal(picker(t.render()).props.value, 'a'); assert.equal(unsaved(t).props.decision.keep, true);
@@ -1347,7 +1236,7 @@ test('project switching protects dirty documents with cancel, keep and discard; 
 test('editor busy/unknown callbacks gate departure and original requests survive keep without allowing replacement', async () => {
   let lose = true;
   const t = viewTest({handle: body => body.action === 'commit' ? (lose ? (lose = false, Promise.reject(Error('unknown transport receipt'))) : {}) : undefined});
-  await t.choose('a'); button(t.render(), '写笔记').props.onClick(); changeFormalDraft(t);
+  await t.choose('a'); createRecord(t, 'Note'); changeFormalDraft(t);
   let editor = editNode(t); editor.props.onBusyChange(true);
   const before = t.requests.length; await t.choose('b'); assert.equal(picker(t.render()).props.value, 'a'); assert.equal(unsaved(t), undefined); assert.equal(t.requests.length, before);
   editor.props.onBusyChange(false);
@@ -1367,7 +1256,7 @@ test('editor busy/unknown callbacks gate departure and original requests survive
 
 test('cross-session remount retains only the matching session/project document and ignores stale child callbacks', async () => {
   const t = viewTest({effects: true}); t.render('session-a'); await settle();
-  button(t.render(), '写笔记').props.onClick(); const edited = changeFormalDraft(t, 'session A exact\r\n');
+  createRecord(t, 'Note'); const edited = changeFormalDraft(t, 'session A exact\r\n');
   const stale = editNode(t); stale.props.onAttemptChange(Forms.request(edited));
   const empty = t.render('session-b'); assert.equal(editNode(t, empty), undefined); await settle();
   assert.equal(picker(t.render()).props.value, 'b'); assert.equal(editNode(t), undefined);
@@ -1387,7 +1276,7 @@ test('beforeunload observes a blank editor busy callback even without a retained
     removeEventListener: (name, callback) => listeners.get(name)?.delete(callback)}});
   testContext.after(() => { t.react.unmount(); t.ctx.dispose(); });
   const unload = () => { const event = {prevented: false, preventDefault() { this.prevented = true; }}; for (const callback of listeners.get('beforeunload') || []) callback(event); return event; };
-  t.render('session-a'); await settle(); button(t.render(), '写笔记').props.onClick();
+  t.render('session-a'); await settle(); createRecord(t, 'Note');
   const editor = editNode(t); assert.equal(editor.props.initialDirty, false); assert.equal(unload().prevented, false);
   editor.props.onBusyChange(true); const event = unload(); assert.equal(event.prevented, true); assert.equal(event.returnValue, '');
   assert.equal(editor.props.initialDirty, false, 'Busy protection must not manufacture a dirty edit or commit');
@@ -1398,13 +1287,13 @@ test('beforeunload observes a blank editor busy callback even without a retained
 
 test('sidebar and conversation buffers remain separate and a clean surface cannot delete the other retained draft', async () => {
   const t = viewTest({effects: true}); t.render('session-a'); await settle();
-  button(t.render(), '写笔记').props.onClick(); const sidebarDraft = changeFormalDraft(t, 'sidebar-only exact\r\n');
+  createRecord(t, 'Note'); const sidebarDraft = changeFormalDraft(t, 'sidebar-only exact\r\n');
   t.switchSurface(false); t.render('session-a'); await settle();
   assert.equal(editNode(t), undefined, 'Conversation starts with no sidebar draft');
-  button(t.render(), '写笔记').props.onClick(); assert.equal(editNode(t).props.initialDirty, false);
+  createRecord(t, 'Note'); assert.equal(editNode(t).props.initialDirty, false);
   t.switchSurface(true); t.render('session-a'); await settle();
   assert.equal(editNode(t).props.initialDirty, true); assert.deepEqual(plain(editNode(t).props.initial), plain(sidebarDraft), 'Clean conversation teardown cannot remove sidebar content');
-  t.switchSurface(false); t.render('session-a'); await settle(); button(t.render(), '写笔记').props.onClick();
+  t.switchSurface(false); t.render('session-a'); await settle(); createRecord(t, 'Note');
   const conversationDraft = changeFormalDraft(t, 'conversation-only exact\n');
   t.switchSurface(true); t.render('session-a'); await settle();
   assert.equal(editNode(t).props.initial.data.body, sidebarDraft.data.body); assert.equal(editNode(t).props.initialDirty, true);
@@ -1418,7 +1307,7 @@ test('review findings survive tab changes and refresh but require an explicit fr
   let previews = 0;
   const t = viewTest({handle: body => body.action === 'review-preview' ? {...reviewFixture(), basis_hash: `basis-${++previews}`} : body.action === 'review' ? {} : undefined});
   await openReview(t); const before = t.requests.length;
-  button(t.render(), '研究概览').props.onClick(); assert.equal(unsaved(t), undefined); button(t.render(), '记录与审核').props.onClick();
+  button(t.render(), '工作台').props.onClick(); assert.equal(unsaved(t), undefined); button(t.render(), '知识库').props.onClick();
   assert.equal(t.requests.length, before); assert.equal(nodes(t.render()).find(node => node.props.label === '本人审核发现（每行一项）').props.value, '  finding one\n精确发现 Ω\n');
   await button(t.render(), '刷新').props.onClick();
   assert.equal(button(t.render(), '本人提交审核记录').props.disabled, true);
@@ -1528,8 +1417,8 @@ test('tab ARIA relationships, roving focus and keyboard navigation keep one visi
 });
 
 test('reader pin, exact historical context package and closing callbacks stay local and scoped to the selected project', async () => {
-  const t = processTest({history: true}); await t.choose('a'); button(t.render(), '记录与审核').props.onClick();
-  const browser = visibleComponent(t.render(), 'RecordBrowser'), object = browser.props.view.objects.find(item => item.id === 'N-a' && item.rev === 1);
+  const t = processTest({history: true}); await t.choose('a'); button(t.render(), '知识库').props.onClick();
+  const browser = visibleComponent(t.render(), 'LibraryBrowser'), object = browser.props.view.objects.find(item => item.id === 'N-a' && item.rev === 1);
   const before = t.requests.length; browser.props.inspect(object);
   let reader = visibleComponent(t.render(), 'RecordReader'); assert.equal(reader.props.object, object); assert.equal(reader.props.view, browser.props.view);
   reader.props.onPin(object); assert.equal(component(byClass(t.render(), 'dm-pinned-record'), 'RecordReader').props.object, object);
@@ -1553,10 +1442,10 @@ test('closing detail restores focus only after records DOM commit, with search f
     const fallback = {focus: options => focuses.push({target: 'search', options})};
     const document = {activeElement: origin, createElement: () => ({remove() {}}), head: {appendChild() {}}};
     const t = viewTest({effects: true, globals: {document}});
-    t.render('session-a'); await settle(); button(t.render(), '记录与审核').props.onClick();
+    t.render('session-a'); await settle(); button(t.render(), '知识库').props.onClick();
     const tree = t.render(), root = {scrollTop: 137, querySelector: selector => { queries.push(selector); return fallback; }};
     tree.props.ref.current = root;
-    const browser = visibleComponent(tree, 'RecordBrowser'); browser.props.inspect(browser.props.view.objects.find(object => object.id === 'N-a'));
+    const browser = visibleComponent(tree, 'LibraryBrowser'); browser.props.inspect(browser.props.view.objects.find(object => object.id === 'N-a'));
     const reader = visibleComponent(t.render(), 'RecordReader');
     listVisible = false; root.scrollTop = 12;
     reader.props.onClose();
@@ -1579,15 +1468,15 @@ test('detail focus restoration waits until records is visible and cannot run aft
   let focused = 0; const origin = {isConnected: true, getClientRects: () => [{}], focus: () => { focused++; }};
   const document = {activeElement: origin, createElement: () => ({remove() {}}), head: {appendChild() {}}};
   const t = viewTest({effects: true, globals: {document}}); t.render('session-a'); await settle();
-  button(t.render(), '记录与审核').props.onClick(); let tree = t.render();
+  button(t.render(), '知识库').props.onClick(); let tree = t.render();
   const root = {scrollTop: 55, querySelector: () => null}; tree.props.ref.current = root;
-  let browser = visibleComponent(tree, 'RecordBrowser'); browser.props.inspect(browser.props.view.objects[2]);
+  let browser = visibleComponent(tree, 'LibraryBrowser'); browser.props.inspect(browser.props.view.objects[2]);
   visibleComponent(t.render(), 'RecordReader').props.onClose();
   // Switch away before committing the close; a hidden records panel must not receive focus.
-  button(tree, '研究概览').props.onClick(); t.render(); assert.equal(focused, 0);
-  button(t.render(), '记录与审核').props.onClick(); tree = t.render(undefined, {flushEffects: false}); assert.equal(focused, 0);
+  button(tree, '工作台').props.onClick(); t.render(); assert.equal(focused, 0);
+  button(t.render(), '知识库').props.onClick(); tree = t.render(undefined, {flushEffects: false}); assert.equal(focused, 0);
   t.react.flushEffects(); assert.equal(focused, 1);
-  browser = visibleComponent(tree, 'RecordBrowser'); browser.props.inspect(browser.props.view.objects[2]);
+  browser = visibleComponent(tree, 'LibraryBrowser'); browser.props.inspect(browser.props.view.objects[2]);
   visibleComponent(t.render(), 'RecordReader').props.onClose(); t.react.unmount(); await settle();
   assert.equal(focused, 1, 'An uncommitted close does not focus after unmount'); assert.equal(t.react.writesAfterUnmount.length, 0);
   assert.equal(writeRequests(t).length, 0); t.ctx.dispose();

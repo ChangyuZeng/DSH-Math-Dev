@@ -405,7 +405,10 @@ class Materials:
             text = value['text']
             require(offset <= len(text), 'INVALID_SCHEMA', 'Read offset exceeds extracted text')
             end = min(offset + limit, len(text))
+            from library_store import Library
+            library = Library(self.root).metadata(project_id, {'kind': 'object', 'id': ref['id']})
             return {'ref': ref, 'name': value['name'], 'sha256': value['original_sha256'], 'status': value['status'],
+                    'library': library,
                     'text': text[offset:end], 'offset': offset, 'next_offset': end if end < len(text) else None,
                     'total_chars': len(text), 'truncated': value['truncated'], 'warnings': value['warnings']}
 

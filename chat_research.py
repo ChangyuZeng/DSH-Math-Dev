@@ -36,17 +36,23 @@ class ChatResearch:
             exact_ref(ref)
         with self._open(project_id) as (_, store):
             records = store.records if hasattr(store, "records") else store["state"]["objects"]
+            from library_store import Library, default_metadata
+            library = Library(self.projects.root).snapshot(project_id)
             if ref is None:
                 # Directory text is paginated too: even many titles cannot overflow context.
                 value = [{"ref": {"id": versions[-1]["id"], "rev": versions[-1]["rev"]},
                           "kind": versions[-1]["kind"],
                           "title": versions[-1]["data"].get("title", "")[:200]}
-                         for _, versions in sorted(records.items()) if versions[-1]["kind"] in READ_KINDS]
+                         for _, versions in sorted(records.items()) if versions[-1]["kind"] in READ_KINDS
+                         and not library["entries"].get("object:" + versions[-1]["id"], default_metadata())["removed"]]
             else:
                 versions = records.get(ref["id"], [])
                 require(ref["rev"] <= len(versions), "NOT_FOUND", "Exact research revision not found")
                 value = deepcopy(versions[ref["rev"] - 1])
                 require(value["kind"] in READ_KINDS, "REFERENCE_KIND", "Read a Problem, Note, Obligation or Evidence reference")
+                metadata = library["entries"].get("object:" + ref["id"], default_metadata())
+                if metadata["removed"]:
+                    value["library"] = {**metadata, "notice": "Removed from the active library; this exact historical revision remains readable."}
             text = json.dumps(value, ensure_ascii=False, indent=2)
             end = min(offset + limit, len(text))
             return {"ref": ref, "format": "json", "text": text[offset:end], "offset": offset,

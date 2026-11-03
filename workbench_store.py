@@ -282,13 +282,22 @@ class Workbench:
                 draft = next((state["drafts"][draft_id] for draft_id in state["pending"]
                               if state["drafts"][draft_id]["session_id"] == session_id), None)
                 if draft is None:
+                    from library_store import Library
+                    library = Library(self.root)
                     draft = next((value for value in reversed(state["drafts"].values())
-                                  if value["session_id"] == session_id and value["status"] == "draft"), None)
+                                  if value["session_id"] == session_id and value["status"] == "draft"
+                                  and not library.metadata(None, {"kind": "draft", "id": value["id"]}, session_id)["removed"]), None)
             pending = None
             if draft is not None and draft["id"] in state["pending"]:
                 intent = state["operations"][state["pending"][draft["id"]]]["request"]
                 pending = {"operation_id": intent["operation_id"], "expected_rev": intent["arguments"]["expected_rev"]}
-            return draft_result(draft, pending)
+            result = draft_result(draft, pending)
+            if draft is not None and draft_id is not None:
+                from library_store import Library
+                metadata = Library(self.root).metadata(None, {"kind": "draft", "id": draft["id"]}, session_id)
+                if metadata["removed"]:
+                    result["library"] = metadata
+            return result
 
     def draft_save(self, session_id, expected_rev, operation_id, patch, draft_id=None):
         integer(expected_rev)
@@ -328,6 +337,9 @@ class Workbench:
                 return deepcopy(previous["result"])
             if previous:
                 request = previous["request"]
+            from library_store import Library
+            require(not Library(self.root).metadata(None, {"kind": "draft", "id": draft_id}, session_id)["removed"],
+                    "REMOVED", "Restore the preparation draft before confirming it")
             draft = self._draft(state, session_id, draft_id)
             require(draft_id not in state["pending"] or state["pending"][draft_id] == self._key(request),
                     "FINALIZE_PENDING", "Another exact operation owns this pending finalization")
@@ -364,7 +376,13 @@ class Workbench:
             integer(rev, 1)
         with self._project(project_id, session_id):
             with self._locked() as state:
-                return self._pad_result(state["pads"].get(project_id, []), rev)
+                result = self._pad_result(state["pads"].get(project_id, []), rev)
+                if result["scratchpad"] is not None:
+                    from library_store import Library
+                    metadata = Library(self.root).metadata(project_id, {"kind": "scratchpad", "id": "main"})
+                    if metadata["removed"]:
+                        result["library"] = metadata
+                return result
 
     def _pad_write(self, action, session_id, project_id, expected_rev, operation_id, content):
         integer(expected_rev)

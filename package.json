@@ -1,6 +1,6 @@
 {
   "name": "dsh-math",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "description": "Conversational mathematical research records, route history, original materials and human review in DSH",
   "engines": {
     "dsh": "0.2.1-rc.5"
@@ -12,6 +12,12 @@
     "workbench-ui.cjs",
     "materials-ui.cjs",
     "material_store.py",
+    "library_store.py",
+    "library-ui.cjs",
+    "project-manager-ui.cjs",
+    "export-ui.cjs",
+    "selection_export.py",
+    "verify_selection.py",
     "material_extract.mjs",
     "chat_research.py",
     "project_access.py",
@@ -86,7 +92,8 @@
       "inject": [
         "@deepseek-ai/dsh-client-ui-conversation",
         "@deepseek-ai/dsh-client-ui-session",
-        "@deepseek-ai/dsh-client-ui-workspace"
+        "@deepseek-ai/dsh-client-ui-workspace",
+        "@deepseek-ai/dsh-api-remotes"
       ],
       "platform": "web"
     }

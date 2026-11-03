@@ -8,6 +8,9 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
   const {RecordReader, RecordBrowser, ReviewSummary, ExportReceipt, ContextPack} = globalThis.DshMathRecordUI(React, F, Preview);
   const {ProjectForm} = globalThis.DshMathProjectForm(React, F, Preview);
   const {MaterialsImport, LegacyImport} = globalThis.DshMathWorkbenchUI(React, F, Preview);
+  const {LibraryBrowser, LibraryManager} = globalThis.DshMathLibraryUI(React, Preview);
+  const {ExportPanel} = globalThis.DshMathExportUI(React);
+  const {ProjectManager} = globalThis.DshMathProjectManagerUI(React);
   // This viewer never instantiates the old autosaving Scratchpad controller.
   function HistoricalDraft({request, sessionId, projectId, writable, onPromote}) {
     const [value, setValue] = useState(null), [error, setError] = useState(''), [opened, setOpened] = useState(false);
@@ -76,18 +79,8 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
   function Button({children, onClick, disabled, variant = '', size = '', icon = false, title, type = 'button'}) {
     return h('button', {type, onClick, disabled, title, className: `dm-button ${variant ? `dm-${variant}` : ''} ${size ? `dm-${size}` : ''}`}, icon && h(MathIcon), children);
   }
-  function recordActions({busy, edit}) {
-    const choose = (kind, event) => {
-      event?.currentTarget?.closest('details')?.removeAttribute('open');
-      edit(kind);
-    };
-    return h('div', {className: 'dm-actions dm-record-actions'},
-      h(Button, {variant: 'primary', disabled: busy, onClick: event => choose('Note', event)}, '写笔记'),
-      h('details', {className: 'dm-record-more'},
-        h('summary', null, '更多记录'),
-        h('div', {className: 'dm-actions dm-record-secondary'},
-          h(Button, {disabled: busy, onClick: event => choose('Obligation', event)}, '添加待证事项'),
-          h(Button, {disabled: busy, onClick: event => choose('Evidence', event)}, '添加参考材料'))));
+  function recordActions({busy, create}) {
+    return h('div', {className: 'dm-actions dm-record-actions'}, h(Button, {variant: 'primary', disabled: busy, onClick: create}, '新建记录'));
   }
   function Field({label, value, change, multiline = true, wide = false}) {
     const multi = multiline || /[\r\n]/.test(value || ''); // Preserve legacy multiline values verbatim.
@@ -109,6 +102,9 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
     const [sources, setSources] = useState([]), [candidate, setCandidate] = useState([]), [replay, setReplay] = useState(null), [preview, setPreview] = useState(null), [verdict, setVerdict] = useState(''), [findings, setFindings] = useState(''), [receipt, setReceipt] = useState(null);
     const [process, setProcess] = useState(null), [operation, setOperation] = useState('');
     const [access, setAccess] = useState(null);
+    const [newRecord, setNewRecord] = useState(false), [newKind, setNewKind] = useState('Note');
+    const [importToken, setImportToken] = useState(0), [libraryToken, setLibraryToken] = useState(0), [librarySnapshot, setLibrarySnapshot] = useState(null);
+    const [projectManagement, setProjectManagement] = useState(false);
     const [downloadNotice, setDownloadNotice] = useState(''); const downloadUrls = useRef([]);
     const [draftSummary, setDraftSummary] = useState(null), [draftError, setDraftError] = useState('');
     const [decision, setDecision] = useState(null), [localNotice, setLocalNotice] = useState('');
@@ -205,8 +201,9 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
       const list = knownList || await api('list');
       const nextView = id ? await api('overview', {project_id: id}) : null;
       const context = sessionId ? await api('project-context', {session_id: sessionId, query: '', offset: 0, limit: 50}) : null;
+      const library = id && nextView?.project?.schema_version === 4 ? await api('library-list', {session_id: sessionId, project_id: id, offset: 0, limit: 100, include_removed: false}) : null;
       if (!state.active || loading !== state.loading) return;
-      setProjects(list); setView(nextView); setSelected(id); setAccess(context);
+      setProjects(list); setView(nextView); setSelected(id); setAccess(context); setLibrarySnapshot(library); setLibraryToken(value => value + 1); setNewRecord(false);
       setPromotionLink(pendingPromotionLinks.get(promotionKey(sessionId, id)) || null);
       setAttachment(null); setReplay(null); setReceipt(null); setProcess(null); setContextObject(null); setDownloadNotice('');
       // Switching scopes restores only that session/project's in-window document.
@@ -248,7 +245,10 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
     const lines = value => value.split('\n').filter(v => v.trim());
     const writable = F.writable(view);
     const ref = obj => ({id: obj.id, rev: obj.rev});
-    const link = value => h('button', {className: 'dm-ref', type: 'button', onClick: () => inspect(view.objects.find(o => o.id === value.id && o.rev === value.rev))}, `${value.id}@${value.rev}`);
+    const labelObject = object => globalThis.DshMathRecordUI.title?.(object) || object?.data?.title || object?.data?.statement || '记录';
+    const link = value => { const object = view.objects.find(o => o.id === value.id && o.rev === value.rev); return h('button', {className: 'dm-ref', type: 'button', onClick: () => inspect(object)}, `${labelObject(object)} · 版本 ${value.rev}`); };
+    const openCreate = () => replaceLocal(() => { setNewRecord(true); setTab('records'); });
+    const openImport = () => setImportToken(value => value + 1);
     function edit(kind, object, scratchpad) {
       if (!lifetime.current.active || !writable || busy || promotionLink) return;
       return replaceLocal(() => {
@@ -350,7 +350,7 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
       const verified = Graph.build(view, result); // Reject a changed research head rather than mix snapshots.
       setProcess({operations: verified, research: Research.build(view, verified)});
     });
-    const tabs = [['overview', '工作台', '研究概览'], ['records', '研究记录', '记录与审核'], ['process', '研究过程', '研究过程'], ['replay', '导出', '回放与导出']];
+    const tabs = [['overview', '工作台', '工作台'], ['records', '知识库', '知识库'], ['process', '研究过程', '研究过程'], ['replay', '导出', '导出']];
     const changeTab = id => {
       setTab(id);
       if (id === 'process' && !process && !busy) return readProcess([]);
@@ -384,7 +384,7 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
           onClose && h(Button, {variant: 'ghost', size: 'small', title: '关闭数学工作台', onClick: () => leave(onClose), disabled: busy}, '关闭'))),
       projects.length > 0 && h('div', {className: 'dm-project-picker'},
         h('select', {className: 'dm-input', value: selected, disabled: busy, onChange: e => { const id = e.target.value; return leave(() => run(() => load(id))); }, 'aria-label': '选择研究项目'},
-          h('option', {value: ''}, '选择研究项目'), ...projects.map(p => h('option', {key: p.id, value: p.id}, `${p.title} · ${p.id.slice(0, 8)}${p.mode === 'legacy_readonly_copy' ? ' · 只读' : ''}${p.session_id === sessionId ? ' · 当前会话' : ''}`))),
+          h('option', {value: ''}, '选择研究项目'), ...projects.map(p => h('option', {key: p.id, value: p.id}, `${p.title}${p.mode === 'legacy_readonly_copy' ? ' · 只读' : ''}${p.session_id === sessionId ? ' · 当前会话' : ''}`))),
         h('span', {className: 'dm-panel-meta'}, `${projects.length} 个项目`)),
       sessionId && h(ProjectAccess, {request: workbenchRequest.current, sessionId, project: view?.project || null, context: access, onChange: result => setAccess(previous => ({...previous, ...result})), busy}),
       !view && !creating && h('section', {className: 'dm-welcome', 'aria-label': '研究起点'},
@@ -397,6 +397,9 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
         h('ol', {className: 'dm-start-steps'},
           ...[['明确目标', '写下陈述与约定'], ['积累证据', '保留尝试与来源'], ['人工审核', '核对范围与结论']].map(([title, detail], index) => h('li', {key: title}, h('span', {className: 'dm-step-number'}, index + 1), h('div', null, h('strong', null, title), h('span', null, detail))))),
         h('p', {className: 'dm-local-hint'}, '新建与浏览不调用模型，也不会自动开始研究。')), 
+      h('details', {className: 'dm-details'}, h('summary', null, '项目管理'), h(Button, {onClick: () => setProjectManagement(value => !value)}, '管理项目与回收站')),
+      !view && sessionId && h('details', {className: 'dm-details'}, h('summary', null, '会话草稿与回收站'), h(LibraryBrowser, {request: workbenchRequest.current, sessionId, projectId: null, view: null, writable: true, refreshToken: libraryToken, onChange: () => { readDraftSummary(); setLibraryToken(value => value + 1); }})),
+      projectManagement && h(ProjectManager, {request: workbenchRequest.current, sessionId, onChange: () => run(async () => { const list = await api('list'); await load(list.some(item => item.id === selected) ? selected : '', list); })}),
       error && h('p', {className: 'dm-error', role: 'alert'}, error),
       busy && h('p', {className: 'dm-operation-status', role: 'status'}, `正在${operation || '处理本地操作'}，请稍候…`),
       localNotice && h('p', {className: 'dm-local-hint', role: 'status'}, localNotice),
@@ -415,34 +418,44 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
         h('section', panelProps('process'),
           h('div', {className: 'dm-actions dm-graph-tools'},
             h(Button, {size: 'small', variant: 'primary', disabled: busy, onClick: () => readProcess([])}, process ? '刷新过程' : '查看研究过程')),
-          h('details', {className: 'dm-details'}, h('summary', null, '更多来源'),
-            h('p', {className: 'dm-record-text'}, '只加入你明确选择的来源，不自动扫描其他会话。'),
-            h('div', {className: 'dm-actions'},
-              h(Button, {size: 'small', disabled: busy || !sources.length, onClick: () => readProcess(sources)}, `加入所选来源（${sources.length}）`),
-              h(Button, {size: 'small', variant: 'ghost', onClick: () => setTab('replay')}, '选择工具账本'))),
+
           process ? h(React.Fragment, {key: pretty([process.operations.research_head, process.operations.sources])},
             h(ResearchGraph, {graph: process.research, view, inspect: value => inspect(view.objects.find(object => object.id === value.id && object.rev === value.rev))}),
             h('details', {className: 'dm-details'}, h('summary', null, '操作来源与版本历史'), h(ProcessGraph, {graph: process.operations,
               inspect: value => inspect(view.objects.find(object => object.id === value.id && object.rev === value.rev))}))) :
             h('p', {className: 'dm-empty'}, busy ? '正在读取已记录过程…' : '点击“查看研究过程”，查看问题、研究路线与笔记之间的联系。')),
         h('section', panelProps('overview'),
+          h('section', {className: 'dm-workbench-actions', 'aria-label': '常用功能'},
+            h(Button, {variant: 'primary', disabled: busy || !writable, onClick: openImport}, '导入研究材料'),
+            writable && recordActions({busy, create: openCreate}),
+            h(Button, {onClick: () => changeTab('records')}, '打开知识库'),
+            h(Button, {onClick: () => changeTab('process')}, '查看研究过程'),
+            h(Button, {onClick: () => changeTab('replay')}, '导出内容'),
+            h(Button, {onClick: () => setCreating(true), disabled: busy}, creationLabel)),
           goal && h('section', {className: 'dm-goal'},
-            h('div', {className: 'dm-section-label'}, '当前目标', h('span', {className: 'dm-panel-meta'}, `seq ${view.snapshot.state.seq}`)),
+            h('div', {className: 'dm-section-label'}, '当前目标'),
             h('h3', {className: 'dm-goal-title'}, goal.data.title || view.project.title),
             h('div', {className: 'dm-goal-statement'}, h(Preview, {text: goal.data.statement || ''})),
-            h('div', {className: 'dm-record-meta'}, link(ref(goal))),
-            writable && recordActions({busy, edit}),
+
+
             F.nextActions(view).length > 0 && h('div', {className: 'dm-next-action-list'}, h('h4', null, '下一步'), ...F.nextActions(view).map(item => h('div', {key: F.refKey(item.ref), className: 'dm-next-action'}, h('span', null, item.text), link(item.ref)))),
             h('p', {className: 'dm-local-hint'}, '登记的是研究记录，不是证明。程序检查不替代人工审核。')),
-          groupPanels(3),
-          h(HistoricalDraft, {key: `${sessionId}:${selected}`, request: workbenchRequest.current, sessionId, projectId: selected, writable,
-            onPromote: (kind, pad) => edit(kind, null, pad)}),
-          h('details', {className: 'dm-details dm-project-details'}, h('summary', null, '项目与关联会话'),
-            h('p', {className: 'dm-record-text'}, `campaign ${view.project.campaign_id}`),
-            h('p', {className: 'dm-record-text'}, '开放性与数学结论不由软件自动判定；当前状态由版本化记录推导。'),
-            navigateSession && h(Button, {onClick: () => leave(() => navigateSession(view.project.session_id))}, '进入关联普通会话'))),
+          h(Panel, {title: '最近内容', actions: h(Button, {size: 'small', onClick: () => changeTab('records')}, '查看全部')},
+            ...(librarySnapshot?.items || []).slice(0, 5).map(item => h('div', {key: item.key || JSON.stringify(item.entry), className: 'dm-recent-item'},
+              h(Button, {variant: 'ghost', onClick: () => { setTab('records'); const object = item.ref && view.objects.find(value => value.id === item.ref.id && value.rev === item.ref.rev); if (object && item.kind !== 'material') inspect(object); }}, item.title || '未命名内容'),
+              h('span', {className: 'dm-panel-meta'}, [item.created_at ? new Date(item.created_at).toLocaleString() : '时间未知', Number.isFinite(item.bytes) ? item.bytes < 1024 ? `${item.bytes} B` : `${(item.bytes / 1024).toFixed(1)} KB` : ''].filter(Boolean).join(' · ')))),
+            !librarySnapshot?.items?.length && h('p', {className: 'dm-empty'}, '导入文件或新建记录，开始积累研究资料。')),
+          h('details', {className: 'dm-details dm-project-details'}, h('summary', null, '更多功能'),
+            h('div', {className: 'dm-actions'},
+              h(Button, {onClick: () => leave(() => setImporting(true))}, '导入旧研究库'),
+              h(Button, {onClick: () => setProjectManagement(value => !value)}, '管理项目与回收站'),
+              navigateSession && h(Button, {onClick: () => leave(() => navigateSession(view.project.session_id))}, '进入关联会话')),
+            h(HistoricalDraft, {key: `${sessionId}:${selected}`, request: workbenchRequest.current, sessionId, projectId: selected, writable, onPromote: (kind, pad) => edit(kind, null, pad)}))),
         h('section', {...panelProps('records'), className: 'dm-records'},
-          h(Panel, {title: '研究记录'}, writable && recordActions({busy, edit})),
+          h(Panel, {title: '知识库'}, writable && recordActions({busy, create: openCreate})),
+          newRecord && writable && h(Panel, {title: '新建记录'},
+            h(Select, {label: '内容类型', value: newKind, items: [['Note', '笔记'], ['Obligation', '待证事项'], ['Evidence', '参考资料']], change: setNewKind}),
+            h('div', {className: 'dm-actions'}, h(Button, {variant: 'primary', onClick: () => { setNewRecord(false); edit(newKind); }}, '继续'), h(Button, {onClick: () => setNewRecord(false)}, '取消'))),
           editor && writable && h(Panel, {title: '编辑研究记录'}, editor.promotion && h('p', {className: 'dm-record-text'}, `整理自草稿本 v${editor.promotion.scratchpad_rev}；请补全正式字段。保存后登记精确来源链接，原草稿保留。`),
             h(Editor, {key: editor.operation_id, initial: editor, initialDirty: local.current.dirty, initialAttempt: local.current.attempt, objects: view.objects, busy, inspect,
               onDraftChange: (next, meta) => { if (lifetime.current.active && local.current.draft?.operation_id === next.operation_id) changeEditor(next, meta); },
@@ -450,8 +463,9 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
               onAttemptChange: value => { if (lifetime.current.active && local.current.draft?.operation_id === editor.operation_id) { local.current.attempt = value; remember(); } },
               cancel: () => replaceLocal(clearEditor), save: saveRecord})),
           h('div', {className: 'dm-record-layout', 'data-detail': !!focus},
-            h('div', {className: 'dm-record-list'}, h(RecordBrowser, {key: selected, view, inspect})),
-            focus && h('section', {className: 'dm-record-detail', title: `${focus.id}@${focus.rev}`},
+            h('div', {className: 'dm-record-list'}, view.project.schema_version === 4 ? h(LibraryBrowser, {key: `${sessionId}:${selected}`, request: workbenchRequest.current, sessionId, projectId: selected, view, writable, refreshToken: libraryToken, inspect, onEdit: object => edit(object.kind, object), onChange: () => run(() => load()), onImport: openImport,
+              organizeMaterials: (prompt, requestId) => organizeMaterials(sessionId, prompt, requestId)}) : h(RecordBrowser, {key: selected, view, inspect})),
+            focus && h('section', {className: 'dm-record-detail', title: labelObject(focus)},
               h(RecordReader, {object: focus, view, inspect, onClose: closeDetail, onPin: object => setPinned(pinned && F.refKey(pinned) === F.refKey(object) ? null : object), pinned: !!pinned && F.refKey(pinned) === F.refKey(focus)},
                 h('div', {className: 'dm-actions'},
                   ['Note', 'Obligation', 'Evidence'].includes(focus.kind) && writable && h(Button, {disabled: busy, onClick: () => edit(focus.kind, focus)}, '修订此记录'),
@@ -474,29 +488,20 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
                 local.current.review?.attempt && h('p', {className: 'dm-local-hint'}, '提交结果未确认；只重试相同请求，不会另建审核记录。')))),
           pinned && h('aside', {className: 'dm-pinned-record', 'aria-label': '固定参考'}, h('div', {className: 'dm-reader-actions'}, h('h3', {className: 'dm-panel-title'}, '固定参考 · 保持精确版本'), h(Button, {variant: 'ghost', size: 'small', onClick: () => setPinned(null)}, '取消固定参考')), h(RecordReader, {object: pinned, view, inspect, autoFocus: false, pinned: true})),
           contextObject && h(ContextPack, {key: `${selected}:${F.refKey(contextObject)}`, view, selected: contextObject, onClose: () => setContextObject(null)})),
-        h('section', panelProps('replay'), h(Panel, {title: '联合只读回放与导出', meta: '零模型操作'},
-          h('p', {className: 'dm-record-text'}, '仅合并明确选择的文件。未采集用量保留 unknown；不恢复推理、不解包归档。'),
-          ...sources.map((s, i) => h('div', {className: 'dm-record', key: i},
-            h(Select, {label: `来源 ${i + 1} 格式`, value: s.adapter, items: [['native-v4', '原生会话 v4'], ['audit-js-v1', '传输 / DSH 审计 v1'], ['ledger-py-v1', '工具账本 v1']], change: v => setSources(sources.map((x, j) => j === i ? {...x, adapter: v} : x))}),
-            h(Field, {label: `来源 ${i + 1} 完整路径`, value: s.path, multiline: false, change: v => setSources(sources.map((x, j) => j === i ? {...x, path: v} : x))}),
-            h(Button, {size: 'small', onClick: () => setSources(sources.filter((_, j) => j !== i))}, '移除来源'))),
-          h('section', {className: 'dm-export-scope', 'aria-label': '本次导出范围'}, h('h4', null, '本次导出范围'),
-            h('p', null, `${view.project.title || selected} · seq ${view.snapshot.state.seq} · ${sources.length} 个明确选择的额外来源`),
-            h('p', {className: 'dm-record-text'}, '包含该研究快照及其归档材料；不含工作台草稿本，不自动收集其他会话或运行。包内可能含原文与本地路径，分享前请检查。')),
-          h('div', {className: 'dm-actions'},
-            h(Button, {onClick: () => setSources([...sources, {adapter: 'native-v4', path: ''}])}, '添加回放来源'),
-            h(Button, {disabled: busy, onClick: () => run(async () => setReplay(await api('replay', {project_id: selected, sources})), '回放所选来源')}, '回放所选来源'),
-            h(Button, {variant: 'primary', disabled: busy, onClick: () => { setReceipt(null); return run(async () => setReceipt(await api('export', {project_id: selected, sources, expected_seq: view.snapshot.state.seq})), '生成本地审核包'); }}, '生成本地审核包')),
-          replay && h('section', {className: 'dm-replay-result'}, h('p', {role: 'status'}, `已读取 ${replay.events?.length ?? '未知'} 条回放事件；仅限明确选择的来源。`), h('details', {className: 'dm-details'}, h('summary', null, '回放原始记录'), h('pre', {className: 'dm-code'}, pretty(replay)))),
-          receipt && h(ExportReceipt, {receipt})))),
+        h('section', panelProps('replay'),
+          view.project.schema_version === 4 && h(ExportPanel, {key: `${selected}:${libraryToken}`, request: workbenchRequest.current, sessionId, projectId: selected, view}),
+          h('details', {className: 'dm-details'}, h('summary', null, '完整审核包（高级）'),
+            h('p', {className: 'dm-record-text'}, '包含完整研究历史与附件，可能包含回收站中的记录。'),
+            h(Button, {disabled: busy, onClick: () => { setReceipt(null); return run(async () => setReceipt(await api('export', {project_id: selected, sources: [], expected_seq: view.snapshot.state.seq})), '生成完整审核包'); }}, '生成完整审核包'),
+            receipt && h(ExportReceipt, {receipt})))),
       view && tab === 'overview' && h('div', {className: 'dm-import-compact'}, h(Button, {variant: 'ghost', size: 'small', disabled: busy, onClick: () => leave(() => setImporting(true))}, '导入旧研究库（只读副本）')),
       !view && h('section', {className: 'dm-import', 'aria-label': '导入旧研究库（只读副本）'},
         h('div', {className: 'dm-import-copy'},
           h('div', {className: 'dm-import-heading'}, h('h3', null, '延续已有研究'), h('span', {className: 'dm-badge'}, '只读副本')),
           h('p', null, '原库不变；不自动开始研究。')),
         h('div', {className: 'dm-import-action'}, h(Button, {disabled: busy, title: '导入旧研究库（只读副本）', onClick: () => leave(() => setImporting(true))}, '导入旧研究库'))),
-      MaterialsImport && h(MaterialsImport, {request: workbenchRequest.current, sessionId, projectId: selected || null,
-        onNeedProject: () => setCreating(true), onImported: () => run(() => load(), '刷新导入材料'),
+      MaterialsImport && h(MaterialsImport, {request: workbenchRequest.current, sessionId, projectId: selected || null, triggerToken: importToken || null,
+        onBrowse: () => { setTab('records'); setFocus(null); }, onNeedProject: () => setCreating(true), onImported: () => run(() => load(), '刷新导入材料'),
         onOrganize: (prompt, requestId) => { if (!organizeMaterials) throw Error('当前宿主无法发送材料整理请求。'); return organizeMaterials(sessionId, prompt, requestId); }}),
       importing && h(LegacyImport, {key: sessionId, request: workbenchRequest.current, sessionId, close: () => setImporting(false),
         onImported: project => leave(() => run(async () => { setImporting(false); await load(project.id); setTab('overview'); }))}));
@@ -532,7 +537,7 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
       error && h('span', {className: 'dm-entry-error', role: 'alert'}, error),
       opened && h('dialog', {ref: dialogRef, role: 'dialog', 'aria-modal': true, 'aria-label': '数学研究工作台', className: 'dm-dialog', onCancel: cancel}, h(MathView, {sessionId, navigateSession: navigate, organizeMaterials, onClose: () => setOpened(false)})));
   }
-  return {name: 'dsh-math-client', inject: ['slots', 'uiConversation', 'uiWorkspace'], apply(ctx) {
+  return {name: 'dsh-math-client', inject: ['slots', 'uiConversation', 'uiWorkspace', 'remote'], apply(ctx) {
     ctx.effect(() => {
       if (typeof document === 'undefined') return;
       const style = document.createElement('style');

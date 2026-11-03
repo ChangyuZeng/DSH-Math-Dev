@@ -128,15 +128,20 @@ class Projects:
                 "UNKNOWN_SCHEMA", "Unsupported project metadata schema")
         return value
 
-    def listing(self):
+    def listing(self, include_removed=False):
         directory = safe_path(self.root, "projects")
         if not directory.exists():
             return []
+        from library_store import Library
+        library = Library(self.root)
         result = []
         for path in sorted(directory.iterdir()):
             checked_root(path)
             if path.is_dir() and safe_path(path, "project.json").exists():
-                result.append(self.metadata(path.name))
+                metadata = self.metadata(path.name)
+                library_metadata = library.metadata(path.name, {"kind": "project", "id": path.name})
+                if include_removed or not library_metadata["removed"]:
+                    result.append({**metadata, "library": library_metadata} if library_metadata["metadata_rev"] or include_removed else metadata)
         return result
 
     @contextmanager
@@ -400,9 +405,25 @@ def dispatch(root, request):
     if action in ("material-begin", "material-chunk", "material-preview", "material-confirm", "material-cleanup", "material-read", "material-bytes"):
         from material_store import dispatch_material
         return dispatch_material(root, action, args)
+    if action in ("library-list", "library-read", "library-update", "library-remove", "library-restore"):
+        from library_store import dispatch_library
+        return dispatch_library(root, action, args)
+    if action == "selection-export":
+        from selection_export import export_selection
+        args = {"material_refs": None, "include_material_originals": False, "include_dependencies": False,
+                "include_process": False, "include_summary": True, **args}
+        fields(args, "project_id expected_seq expected_library_version selected_refs material_refs include_material_originals include_dependencies include_process include_summary session_id")
+        identifier(args["session_id"])
+        return export_selection(projects, **args)
+    if action == "selection-bytes":
+        from selection_export import read_export
+        fields(args, "project_id export_id offset limit session_id")
+        identifier(args["session_id"])
+        return read_export(projects, **args)
     if action == "list":
-        fields(args, "")
-        return projects.listing()
+        require(type(args) is dict and set(args) <= {"include_removed"}, "INVALID_SCHEMA", "Expected optional include_removed")
+        require(type(args.get("include_removed", False)) is bool, "INVALID_SCHEMA", "Expected include_removed boolean")
+        return projects.listing(**args)
     if action == "create":
         fields(args, "session_id problem")
         return projects.create(**args)

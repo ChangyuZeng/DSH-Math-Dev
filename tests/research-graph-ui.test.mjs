@@ -5,15 +5,15 @@ import {createRequire} from 'node:module';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 const require=createRequire(import.meta.url), UI=require('../research-graph-ui.cjs');
-const n=(id,kind,parentId=null,extra={})=>({id,kind,parentId,ref:kind==='route'?null:{id,rev:1},title:id,summary:'fixture',status:'unassessed',statusLabel:'无此版本审核评估',historical:false,...extra});
+const n=(id,kind,parentId=null,extra={})=>({id,kind,parentId,ref:kind==='route'?null:{id,rev:1},title:'标题 '+id,summary:'fixture',status:'unassessed',statusLabel:'无此版本审核评估',historical:false,...extra});
 const p=n('P','Problem',null,{historical:true}),p2=n('P2','Problem'),r=n('r','route','P',{problem_ref:{id:'P',rev:1},route_id:'R1'}),a=n('A','Note','r'),o=n('O','Obligation','P'),old=n('Old','Note','r',{historical:true}),e=n('E','Evidence','P');
 const graph={project_id:'fixture',nodes:[p,p2,r,a,o,old,e],hierarchy:[{from:'P',to:'r'},{from:'r',to:'A'},{from:'P',to:'O'},{from:'r',to:'Old'},{from:'P',to:'E'}],relations:[{from:'A',to:'O',relation:'candidate_for',label:'候选用于'}],warnings:[],notice:'只读 local_claim R1/R2'};
-function harness({width=900,height=560}={}){
+function harness({width=900,height=560,cardHeights={}}={}){
  const slots=[];let index=0;const effects=[],cleanups=[],listeners=new Map();
  const element={clientWidth:width,clientHeight:height,getBoundingClientRect:()=>({left:0,top:0}),addEventListener:(name,fn,options)=>listeners.set(name,{fn,options}),removeEventListener:(name,fn)=>{if(listeners.get(name)?.fn===fn)listeners.delete(name);}};
  const React={createElement:(type,props,...children)=>({type,props:props||{},children:children.flat(Infinity).filter(v=>v!==false&&v!=null)}),useState(initial){const i=index++;if(!slots[i])slots[i]={value:typeof initial==='function'?initial():initial};return[slots[i].value,value=>{slots[i].value=typeof value==='function'?value(slots[i].value):value;}];},useRef(initial){const i=index++;return slots[i]||=( {current:initial});},useEffect(effect,deps){const i=index++,prev=slots[i];if(!prev||deps.some((v,j)=>!Object.is(v,prev.deps[j]))){slots[i]={deps};effects.push(effect);}}};
  function Reader(){} const Component=UI(React,Reader);
- return {Reader,listeners,unmount(){for(const cleanup of cleanups)cleanup();},render(props){index=0;const tree=Component(props);for(const node of nodes(tree,n=>n.type==='svg'))node.props.ref.current=element;while(effects.length){const cleanup=effects.shift()();if(typeof cleanup==='function')cleanups.push(cleanup);}return tree;}};
+ return {Reader,listeners,unmount(){for(const cleanup of cleanups)cleanup();},render(props){index=0;const tree=Component(props);for(const node of nodes(tree,n=>n.type==='svg'))node.props.ref.current=element;for(const node of nodes(tree,n=>n.type==='article'&&cardHeights[n.props['data-node']]))node.props.ref({offsetHeight:cardHeights[node.props['data-node']]});while(effects.length){const cleanup=effects.shift()();if(typeof cleanup==='function')cleanups.push(cleanup);}return tree;}};
 }
 const nodes=(tree,predicate)=>{const out=[];function visit(v){if(!v||typeof v!=='object')return;if(predicate(v))out.push(v);for(const child of v.children||[])visit(child);}visit(tree);return out;};
 const text=tree=>tree==null?'':typeof tree==='object'?(tree.children||[]).map(text).join(' '):String(tree);
@@ -37,12 +37,18 @@ test('layout preserves historical target needed by current records and shared ca
  assert.equal(nodes(branch,n=>n.type==='path')[0].props.d,`M ${x1} ${y1} C ${x1} ${mid}, ${x2} ${mid}, ${x2} ${y2}`);
 });
 
-test('card click opens exact inline reader; only explicit full-record action calls inspect',()=>{
+test('card details stay inside the exact card and expand independently of children',()=>{
  const h=harness(),calls=[];const input={...props,inspect:o=>calls.push(o)};let tree=h.render(input);tree=h.render(input);
- const card=nodes(tree,n=>n.type==='button'&&n.props.className==='dm-rg-card-main'&&text(n).includes('A@1'))[0];assert.ok(card);card.props.onClick({currentTarget:{focus(){}}});
- tree=h.render(input);const reader=nodes(tree,n=>n.type===h.Reader)[0];assert.ok(reader);assert.equal(reader.props.object,props.view.objects[0]);assert.equal(calls.length,0);
- assert.equal(reader.props.inspect instanceof Function,true);button(tree,'打开完整记录').props.onClick();assert.equal(calls[0].id,'A');
- button(tree,'关闭详情').props.onClick();tree=h.render(input);assert.equal(nodes(tree,n=>n.type===h.Reader).length,0);
+ assert.doesNotMatch(text(tree),/A@1|unassessed|无此版本审核评估/);
+ const card=nodes(tree,n=>n.type==='button'&&n.props.className==='dm-rg-card-main'&&text(n).includes('标题 A'))[0];assert.ok(card);card.props.onClick({currentTarget:{focus(){}}});
+ tree=h.render(input);const reader=nodes(tree,n=>n.type===h.Reader)[0];assert.ok(reader);assert.equal(reader.props.object,props.view.objects[0]);assert.equal(reader.props.compact,true);assert.equal(calls.length,0);
+ assert.equal(nodes(svg(tree),n=>n.type===h.Reader).length,1);assert.equal(nodes(tree,n=>n.props.className==='dm-rg-detail').length,0);
+ const parent=nodes(tree,n=>n.props.className==='dm-rg-card-main'&&text(n).includes('标题 r'))[0];parent.props.onClick({currentTarget:{focus(){}}});tree=h.render(input);
+ assert.equal(nodes(tree,n=>n.props.className==='dm-rg-card-detail').length,2);
+ button(tree,'折叠 1 项').props.onClick();tree=h.render(input);assert.equal(nodes(tree,n=>n.type===h.Reader).length,0);assert.equal(nodes(tree,n=>n.props.className==='dm-rg-card-detail').length,1);
+ button(tree,'展开 1 项').props.onClick();tree=h.render(input);assert.equal(nodes(tree,n=>n.type===h.Reader).length,1);
+ assert.equal(reader.props.inspect instanceof Function,true);button(tree,'完整记录').props.onClick();assert.equal(calls[0].id,'A');
+ const aCard=nodes(tree,n=>n.type==='article'&&n.props['data-node']==='A')[0];button(aCard,'收起详情').props.onClick();tree=h.render(input);assert.equal(nodes(tree,n=>n.type===h.Reader).length,0);assert.equal(nodes(tree,n=>n.props.className==='dm-rg-card-detail').length,1);
 });
 
 test('zoom, keyboard pan, fit, collapse and relation toggle are native view operations',()=>{
@@ -60,17 +66,44 @@ test('narrow outline lists visible exact records and locates them at readable sc
  const outline=nodes(tree,n=>n.type==='details'&&n.props.className==='dm-rg-outline')[0];assert.ok(outline);
  assert.equal(nodes(outline,n=>n.type==='button').length,UI.layout(graph).positions.length);assert.equal(text(outline).includes('Old@1'),false);assert.equal(text(outline).includes('E@1'),false);
  const shrink=button(tree,'缩小');for(let i=0;i<10;i++)shrink.props.onClick();tree=h.render(props);
- let restored=false;button(tree,'A · A@1').props.onClick({currentTarget:{focus(){restored=true;}}});tree=h.render(props);
+ let restored=false;button(tree,'标题 A · 第 1 版').props.onClick({currentTarget:{focus(){restored=true;}}});tree=h.render(props);
  const values=transform(tree).match(/translate\(([-\d.e]+) ([-\d.e]+)\) scale\(([-\d.e]+)\)/).slice(1).map(Number),[x,y,scale]=values;
- const position=UI.layout(graph).positions.find(p=>p.node.id==='A');assert.ok(scale>=0.65);assert.ok(Math.abs(x+(position.x+position.width/2)*scale-170)<1e-9);assert.ok(Math.abs(y+(position.y+position.height/2)*scale-240)<1e-9);
- const reader=nodes(tree,n=>n.type===h.Reader)[0];assert.equal(reader.props.object,props.view.objects[0]);assert.equal(button(tree,'A · A@1').props['aria-current'],'true');
- button(tree,'关闭详情').props.onClick();assert.equal(restored,true);
+ const position=UI.layout(graph,{expanded:{A:true}}).positions.find(p=>p.node.id==='A');assert.ok(scale>=0.65);assert.ok(Math.abs(x+(position.x+position.width/2)*scale-170)<1e-9);assert.ok(Math.abs(y+(position.y+position.height/2)*scale-240)<1e-9);
+ const reader=nodes(tree,n=>n.type===h.Reader)[0];assert.equal(reader.props.object,props.view.objects[0]);assert.equal(button(tree,'标题 A · 第 1 版').props['aria-current'],'true');
+ button(tree,'收起详情').props.onClick();assert.equal(restored,true);
  button(tree,'折叠 1 项').props.onClick();tree=h.render(props);const collapsed=nodes(tree,n=>n.props.className==='dm-rg-outline')[0];assert.equal(text(collapsed).includes('A@1'),false);
+});
+
+test('expanded and measured card heights avoid overlap and move edge endpoints',()=>{
+ const expanded={P:true,r:true,A:true}, heights={P:407,r:486,A:298,O:351};
+ const scene=UI.layout(graph,{expanded,heights,showSupporting:true,showHistory:true});
+ for(const a of scene.positions)for(const b of scene.positions)if(a!==b)assert.ok(a.x+a.width<=b.x||b.x+b.width<=a.x||a.y+a.height<=b.y||b.y+b.height<=a.y,`${a.node.id} overlaps ${b.node.id}`);
+ const byId=new Map(scene.positions.map(p=>[p.node.id,p]));
+ for(const edge of scene.hierarchy){const from=byId.get(edge.from),to=byId.get(edge.to);assert.ok(to.y>=from.y+from.height+36);}
+ assert.equal(byId.get('P').height,407);assert.equal(scene.height,Math.max(...scene.positions.map(p=>p.y+p.height))+24);
+ const h=harness();let tree=h.render(props);tree=h.render(props);
+ const parent=nodes(nodes(tree,n=>n.type==='article'&&n.props['data-node']==='P')[0],n=>n.props.className==='dm-rg-card-main')[0];parent.props.onClick({currentTarget:{focus(){}}});tree=h.render(props);
+ const pCard=nodes(tree,n=>n.type==='foreignObject'&&nodes(n,v=>v.props['data-node']==='P').length)[0];assert.equal(pCard.props.height,486);
+ const expected=UI.layout(graph,{expanded:{P:true}}),positions=new Map(expected.positions.map(p=>[p.node.id,p]));
+ const edge=expected.hierarchy[0],from=positions.get(edge.from),to=positions.get(edge.to),mid=(from.y+from.height+to.y)/2;
+ const branch=nodes(tree,n=>n.props.className==='dm-rg-branch')[0];assert.equal(nodes(branch,n=>n.type==='path')[0].props.d,`M ${from.x+from.width/2} ${from.y+from.height} C ${from.x+from.width/2} ${mid}, ${to.x+to.width/2} ${mid}, ${to.x+to.width/2} ${to.y}`);
+});
+
+test('observed card dimensions relayout the scene and observer disconnects',()=>{
+ const original=globalThis.ResizeObserver,observers=[];
+ globalThis.ResizeObserver=class{constructor(callback){this.callback=callback;this.elements=[];observers.push(this);}observe(element){this.elements.push(element);}disconnect(){this.disconnected=true;}};
+ try{
+  const cardHeights={P:407},h=harness({cardHeights});h.render(props);let tree=h.render(props);
+  const p=()=>nodes(tree,n=>n.type==='foreignObject'&&nodes(n,v=>v.props['data-node']==='P').length)[0];assert.equal(p().props.height,407);
+  const before=transform(tree),observer=observers.at(-1);assert.equal(observer.elements.length,1);observer.elements[0].offsetHeight=455;observer.callback();tree=h.render(props);assert.equal(p().props.height,455);assert.equal(transform(tree),before);
+  h.unmount();assert.ok(observers.every(o=>o.disconnected));
+ }finally{globalThis.ResizeObserver=original;}
 });
 
 test('wheel zoom prevents page scrolling and cleans up its native listener',()=>{
  const h=harness();let tree=h.render(props);tree=h.render(props);const before=transform(tree),wheel=h.listeners.get('wheel');assert.equal(wheel.options.passive,false);
  let prevented=false;wheel.fn({deltaY:-1,clientX:200,clientY:200,preventDefault(){prevented=true;}});tree=h.render(props);assert.equal(prevented,true);assert.notEqual(transform(tree),before);
+ const zoomed=transform(tree);let detailPrevented=false;wheel.fn({target:{closest:()=>({})},deltaY:1,preventDefault(){detailPrevented=true;}});tree=h.render(props);assert.equal(detailPrevented,false);assert.equal(transform(tree),zoomed);
  h.unmount();assert.equal(h.listeners.size,0);
 });
 

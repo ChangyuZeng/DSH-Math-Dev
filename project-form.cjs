@@ -35,7 +35,7 @@
           emit({loaded: true, incoming: changed || recovery(value) ? value : state.incoming,
             ...(recovery(value) ? {finalizeAttempt: recovery(value), uncertain: true} : {}),
             notice: recovery(value) ? '上次确认创建尚未完成。已冻结编辑；只有你点击继续确认才会恢复。' : changed ? '检测到会话草稿更新；你的本地编辑未被覆盖。' : state.notice});
-        } else emit({...accept(value), error: '', notice: recovery(value) ? '上次确认创建尚未完成。已冻结编辑；请核对后继续确认。' : value.draft ? `已读取本会话草稿 · v${value.draft.rev}` : '尚无会话草稿；可手动填写，也可先在聊天中澄清。'});
+        } else emit({...accept(value), error: '', notice: recovery(value) ? '上次确认创建尚未完成。已冻结编辑；请核对后继续确认。' : value.draft ? `已读取草稿 · 版本${value.draft.rev}` : '尚无会话草稿；可手动填写，也可先在聊天中澄清。'});
         return true;
       } catch (error) { if (current(token) && serial === reading) emit({error: error.message}); return false; }
       finally { if (current(token) && serial === reading) emit({loading: false}); }
@@ -58,7 +58,7 @@
       const value = await request('project-draft-save', attempt.args);
       if (!current(token)) return null;
       emit({draft: value.draft, validation: edits === captured ? value.validation : null, dirty: edits !== captured, attempt: null, finalizeAttempt: recovery(value), uncertain: !!recovery(value),
-        incoming: null, notice: `草稿已保存 · v${value.draft.rev}；尚未创建项目。`, error: ''});
+        incoming: null, notice: `草稿已保存 · 版本${value.draft.rev}；尚未创建项目。`, error: ''});
       return {value, captured};
     }
     function write(finalize) {
@@ -182,21 +182,21 @@
         h('section', {className: 'dm-project-primary', 'aria-label': '问题与研究目标'}, ...descriptor.fields.filter(item => primaryKeys.has(item.key)).map(field)),
         h('details', {className: 'dm-details dm-project-conditions', ...(detailedIssues.length ? {open: true} : {})},
           h('summary', null, `详细条件与来源${detailedIssues.length ? ` · 需补全或修正 ${detailedIssues.length} 项` : ''}`),
-          h('p', {className: 'dm-record-text'}, '量词、范围和来源需如实填写。可先保存不完整草稿；确认建项会检查全部必填项。'),
+          h('p', {className: 'dm-record-text'}, '可先存不完整草稿；建项前须补齐条件、范围与来源。'),
           ...[['problem', '问题与范围'], ['goal', '目标类型'], ['source', '来源与状态']].map(([group, title]) =>
             h('fieldset', {className: 'dm-fieldset', key: group}, h('legend', null, title), ...descriptor.fields.filter(item => item.group === group && !primaryKeys.has(item.key)).map(field)))),
         Preview && h('details', {className: 'dm-details'}, h('summary', null, '预览问题与数学公式'), h(Preview, {text: state.fields.statement || ''})),
         state.notice && h('p', {role: 'status', className: 'dm-record-text'}, state.notice),
         state.error && h('p', {role: 'alert', className: 'dm-error'}, state.error),
-        state.finalizeAttempt && h('div', {className: 'dm-conflict'}, h('p', null, `待恢复确认：${state.finalizeAttempt.draft_id} · v${state.finalizeAttempt.expected_rev}。只会继续这次已确认的版本，不会另建重复项目。`),
+        state.finalizeAttempt && h('div', {className: 'dm-conflict'}, h('p', null, `继续确认草稿版本${state.finalizeAttempt.expected_rev}，不会重复建项。`),
           state.dirty && h('p', null, '当前未保存修改不会纳入这次建项；它们会作为本地新草稿保留。'),
           Preview && h('details', null, h('summary', null, '查看已冻结的问题陈述'), h(Preview, {text: state.incoming?.draft?.fields.statement || state.draft?.fields.statement || ''}))),
-        state.incoming && h('div', {className: 'dm-conflict'}, h('p', null, '服务器草稿与本地版本不同；先比较再选择，不会自动合并。保留我的修改后，还需点击“保存草稿”。'),
+        state.incoming && h('div', {className: 'dm-conflict'}, h('p', null, '草稿有冲突，请比较后选择。保留修改后需重新保存。'),
           Comparison ? h(Comparison.FieldComparison, {fields: descriptor.fields, local: state.fields, remote: state.incoming.draft?.fields || {},
-            localVersion: `${state.draft?.id || '未保存'} · v${state.draft?.rev || 0}（本地编辑）`, remoteVersion: `${state.incoming.draft?.id || '无草稿'} · v${state.incoming.draft?.rev || 0}`}) :
+            localVersion: `我的草稿 · 版本${state.draft?.rev || 0}`, remoteVersion: `服务器草稿 · 版本${state.incoming.draft?.rev || 0}`}) :
             h('div', {className: 'dm-comparison-fields'}, ...descriptor.fields.map(field => h('section', {key: field.key}, h('h4', null, field.label),
-              h('p', null, `我的内容 · v${state.draft?.rev || 0}`), h('pre', {className: 'dm-code'}, Array.isArray(state.fields[field.key]) ? state.fields[field.key].join('\n') : state.fields[field.key] || '（空）'),
-              h('p', null, `服务器内容 · v${state.incoming.draft?.rev || 0}`), h('pre', {className: 'dm-code'}, Array.isArray(state.incoming.draft?.fields[field.key]) ? state.incoming.draft.fields[field.key].join('\n') : state.incoming.draft?.fields[field.key] || '（空）')))),
+              h('p', null, `我的内容 · 版本${state.draft?.rev || 0}`), h('pre', {className: 'dm-code'}, Array.isArray(state.fields[field.key]) ? state.fields[field.key].join('\n') : state.fields[field.key] || '（空）'),
+              h('p', null, `服务器内容 · 版本${state.incoming.draft?.rev || 0}`), h('pre', {className: 'dm-code'}, Array.isArray(state.incoming.draft?.fields[field.key]) ? state.incoming.draft.fields[field.key].join('\n') : state.incoming.draft?.fields[field.key] || '（空）')))),
           h('button', {type: 'button', className: 'dm-button', disabled: state.busy, onClick: () => controller.current?.useIncoming(true)}, '保留我的修改，稍后重新保存'),
           h('button', {type: 'button', className: 'dm-button', disabled: state.busy, onClick: () => { if (window.confirm('确定用服务器草稿替换本地未保存内容？')) controller.current?.useIncoming(false); }}, '使用服务器版本')),
         state.attempt && !state.finalizeAttempt && !state.busy && h('button', {type: 'button', className: 'dm-button', onClick: () => controller.current?.retrySave()}, '重试上次保存'),

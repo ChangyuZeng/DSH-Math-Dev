@@ -14,7 +14,7 @@
   const kindLabels = {Problem: '研究问题', Note: '笔记', Obligation: '待证事项', Evidence: '参考材料', Review: '审核记录'};
   const stateLabels = {unreviewed: '未审核', open: '未关闭', candidate: '候选', accepted: '已登记接受', closed: '已登记关闭', needs_recheck: '需重新检查', rejected: '已登记拒绝', failed_attempt: '失败尝试'};
   const kindLabel = kind => own(kindLabels, kind) ? kindLabels[kind] : text(kind);
-  const stateLabel = state => own(stateLabels, state) ? `${stateLabels[state]}（${state}）` : text(state);
+  const stateLabel = state => own(stateLabels, state) ? stateLabels[state] : text(state);
   const materialName = o => o?.kind === 'Evidence' && o.data?.production?.method === 'dsh-math-material-import' ? text(list(o.data.attachments)[0]?.logical_name) : '';
   function title(o) {
     if (o?.data?.title) return text(o.data.title);
@@ -185,15 +185,14 @@
     }
     function Ref({value, view, inspect, relation}) {
       const object = exactObject(view, value);
-      return h('span', {className: 'dm-record-reference'}, relation && h('span', {className: 'dm-muted'}, `${relation} · `),
-        object && typeof inspect === 'function' ? button(`${title(object)} · ${refKey(object)}`, () => inspect(object), {className: 'dm-ref'}) : h('span', {}, validRef(value) ? `${refKey(value)} · 本项目未找到精确版本` : `无效引用：${text(value)}`));
+      return h('span', {className: 'dm-record-reference'}, relation && h('span', {className: 'dm-muted'}, `${({parent: '上级问题', problem_ref: '研究问题', target: '审核目标', candidate: '候选', uses: '依据', candidate_for: '待证事项', candidates: '候选笔记', evidence: '材料', dependencies: '依赖', condition_gap: '条件缺口', basis: '审核依据'})[relation] || '关联'} · `),
+        object ? (typeof inspect === 'function' ? button(`${title(object)} · ${kindLabel(object.kind)} · 版本${object.rev}`, () => inspect(object), {className: 'dm-ref'}) : h('span', {}, `${title(object)} · ${kindLabel(object.kind)} · 版本${object.rev}`)) : h('span', {}, validRef(value) ? `版本${value.rev} · 本项目未找到该记录` : '无效引用'));
     }
     function Registered({row}) {
-      return row?.assessment ? h('div', {className: 'dm-record-meta'}, h('p', {}, `已登记审核状态：${stateLabel(row.assessment.state)}（仅此精确版本；非数学证明）`),
-        list(row.assessment.reasons).length > 0 && h(Field, {label: '已登记原因', value: row.assessment.reasons}),
-        row.assessment.review_id && h('p', {}, `审核记录 ID：${text(row.assessment.review_id)}`)) : h('p', {className: 'dm-muted'}, '此精确版本无可用的已登记审核评估；不推断审核或验证结果。');
+      return row?.assessment ? h('div', {className: 'dm-record-meta'}, h('p', {}, `审核状态：${stateLabel(row.assessment.state)}（仅此版本，非数学证明）`),
+        list(row.assessment.reasons).length > 0 && h(Field, {label: '已登记原因', value: row.assessment.reasons})) : h('p', {className: 'dm-muted'}, '此版本暂无审核评估。');
     }
-    function RecordReader({object, view, inspect, children, onClose, onPin, pinned = false, autoFocus = true}) {
+    function RecordReader({object, view, inspect, children, onClose, onPin, pinned = false, autoFocus = true, compact = false}) {
       const heading = useRef(null), key = refKey(object);
       useEffect(() => { if (autoFocus) { heading.current?.focus?.({preventScroll: true}); heading.current?.scrollIntoView?.({block: 'nearest'}); } }, [key, autoFocus]);
       if (!object) return h('p', {className: 'dm-muted'}, '选择一条记录阅读。');
@@ -210,17 +209,18 @@
         default: fields = [h('p', {key: 'unknown', className: 'dm-muted'}, '未知记录类型，未猜测字段含义；完整内容保留在原始 JSON。')];
       }
       const technicalLabels = new Set(['目标类型（登记值）', '知识状态（登记值）', '笔记类型', '路线', '检查方式（登记值）', '固定 checker', '材料类型', '来源定位', '来源版本', '访问时间', '生产或导入方式', '生产方式版本', '页码', '章节', '定理', '摘录 SHA256', '附件元数据（原文未自动加载）', '审核者', 'checker 版本', '依据哈希', '执行记录（非全局证明）']);
-      if (object.kind === 'Note') for (const value of fields) if (value?.props?.label !== '正文') technicalLabels.add(value?.props?.label);
-       const content = fields.filter(value => value && !technicalLabels.has(value.props?.label));
-      const metadata = fields.filter(value => value && technicalLabels.has(value.props?.label));
+      technicalLabels.add('来源条件映射（登记值）');
+      const technical = value => value.type === ReviewBasis || technicalLabels.has(value.props?.label);
+      const content = fields.filter(value => value && !technical(value));
+      const metadata = fields.filter(value => value && technical(value));
       return h('article', {className: 'dm-record-reader'}, typeof onClose === 'function' && h('div', {className: 'dm-reader-actions'}, button('返回记录列表', onClose)),
-        h('h3', {className: 'dm-record-heading', ref: heading, tabIndex: -1}, title(object)), h('p', {className: 'dm-record-meta'}, `${kindLabel(object.kind)} · `, h('code', {}, key), pinned && ' · 已固定'),
-        h('details', {className: 'dm-details'}, h('summary', {}, '复制与固定'), h(Copy, {value: key, label: '复制 ID@rev', disabled: !validRef(object)}), typeof onPin === 'function' && button(pinned ? '取消固定此版本' : '固定此精确版本', () => onPin(object), {'aria-pressed': pinned})),
-        row && !row.latest && h('p', {role: 'status'}, `正在阅读历史版本 ${key}；存在 @${row.latestRev}，未自动升级。`), object.kind === 'Note' ? h('details', {className: 'dm-details'}, h('summary', {}, '登记与审核状态'), h(Registered, {row})) : h(Registered, {row}), ...content,
+        !compact && h('h3', {className: 'dm-record-heading', ref: heading, tabIndex: -1}, title(object)), !compact && h('p', {className: 'dm-record-meta'}, `${kindLabel(object.kind)} · 版本${object.rev}`, pinned && ' · 已固定'),
+        !compact && h('details', {className: 'dm-details'}, h('summary', {}, '技术操作'), h('code', {}, key), h(Copy, {value: key, label: '复制 ID@rev', disabled: !validRef(object)}), typeof onPin === 'function' && button(pinned ? '取消固定此版本' : '固定此精确版本', () => onPin(object), {'aria-pressed': pinned})),
+        row && !row.latest && h('p', {role: 'status'}, `正在阅读历史版本${object.rev}；最新为版本${row.latestRev}，未自动替换。`), object.kind === 'Note' ? h('details', {className: 'dm-details'}, h('summary', {}, '登记与审核状态'), h(Registered, {row})) : h(Registered, {row}), ...content,
         refs.length > 0 && h(object.kind === 'Note' ? 'details' : 'section', {className: 'dm-record-section dm-record-refs'}, h(object.kind === 'Note' ? 'summary' : 'h4', {}, '引用与参考材料（精确版本）'), h('ul', {}, ...refs.map((r, i) => h('li', {key: i}, h(Ref, {value: r.ref, relation: r.relation, view, inspect}))))),
         incoming.length > 0 && h('details', {className: 'dm-details dm-record-refs'}, h('summary', {}, `被引用位置 · ${incoming.length}（含历史记录）`), h('ul', {}, ...incoming.map((r, i) => h('li', {key: i}, h(Ref, {value: r.object, relation: r.relation, view, inspect}))))),
         metadata.length > 0 && h('details', {className: 'dm-details'}, h('summary', {}, '技术与来源信息'), ...metadata),
-        children, raw(object));
+        children, !compact && raw(object));
     }
     function RecordBrowser({view, inspect}) {
       const [query, setQuery] = useState(''), [kind, setKind] = useState(''), [group, setGroup] = useState(''), [status, setStatus] = useState(''), [history, setHistory] = useState('latest'), [limit, setLimit] = useState(PAGE_SIZE), [selected, setSelected] = useState(null);
@@ -234,17 +234,17 @@
       const extraFilters = Number(!!group) + Number(!!status) + Number(history !== 'latest');
       const resetExtraFilters = () => { setGroup(''); setStatus(''); setHistory('latest'); setLimit(PAGE_SIZE); };
       return h('section', {className: 'dm-record-browser', 'aria-label': '项目内记录检索'},
-        h('div', {className: 'dm-record-filters'}, h('label', {}, '搜索记录', h('input', {type: 'search', value: query, onChange: change(setQuery), placeholder: 'ID、标题或正文'})),
+        h('div', {className: 'dm-record-filters'}, h('label', {}, '搜索记录', h('input', {type: 'search', value: query, onChange: change(setQuery), placeholder: '标题或正文'})),
           select('类型', kind, setKind, [['', '全部类型'], ...[...new Set(allRows.map(r => r.object.kind))].map(k => [k, kindLabel(k)])])),
         h('details', {className: 'dm-details dm-record-advanced'}, h('summary', {}, `更多筛选${extraFilters ? ` · ${extraFilters} 项生效` : ''}`),
           h('div', {className: 'dm-record-filters'},
             select('登记分组', group, setGroup, [['', '全部分组'], ...Object.keys(view?.groups || {}).map(k => [k, groupLabels[k] || k])]),
             select('登记审核状态', status, setStatus, [['', '全部状态'], ...[...new Set(allRows.map(r => r.status))].map(k => [k, k === 'unassessed' ? '无此版本评估' : stateLabel(k)])]),
-            select('版本', history, setHistory, [['latest', '每个 ID 的最新版本'], ['all', '全部精确版本'], ['historical', '仅历史版本']])),
+            select('版本', history, setHistory, [['latest', '每条记录的最新版本'], ['all', '全部版本'], ['historical', '仅历史版本']])),
           button('重置更多筛选', resetExtraFilters, {disabled: !extraFilters})),
-        selected && h('div', {className: 'dm-record-selected'}, h('p', {}, `保留选中：${refKey(selected)}（过滤不改变版本）`), selectedObject ? button('重新打开选中版本', () => open(selectedObject)) : h('p', {role: 'status'}, '本次快照无此精确版本；未替换为新版。')),
+        selected && h('div', {className: 'dm-record-selected'}, h('p', {}, `保留选中：${selectedObject ? title(selectedObject) : '记录'} · 版本${selected.rev}`), selectedObject ? button('重新打开选中版本', () => open(selectedObject)) : h('p', {role: 'status'}, '本次快照无此精确版本；未替换为新版。')),
         h('p', {role: 'status'}, `匹配 ${result.total} 条${result.hasMore ? ` · 已显示 ${result.rows.length} 条` : ''}`),
-        h('ul', {className: 'dm-record-results'}, ...result.rows.map(row => h('li', {key: refKey(row.object), className: 'dm-record-item'}, button(title(row.object), () => open(row.object), {'aria-current': selected && refKey(selected) === refKey(row.object) ? 'true' : undefined}), h('p', {className: 'dm-record-meta'}, `${kindLabel(row.object.kind)} · ${refKey(row.object)} · ${row.latest ? '最新' : '历史'} · ${row.assessment ? `已登记：${stateLabel(row.assessment.state)}` : '无此版本审核评估'}`)))),
+        h('ul', {className: 'dm-record-results'}, ...result.rows.map(row => h('li', {key: refKey(row.object), className: 'dm-record-item'}, button(title(row.object), () => open(row.object), {'aria-current': selected && refKey(selected) === refKey(row.object) ? 'true' : undefined}), h('p', {className: 'dm-record-meta'}, `${kindLabel(row.object.kind)} · 版本${row.object.rev} · ${row.latest ? '最新' : '历史'} · ${row.assessment ? stateLabel(row.assessment.state) : '暂无审核评估'}`)))),
         !result.total && h('p', {className: 'dm-muted'}, '没有匹配记录，请调整搜索或筛选。'), result.hasMore && button('再显示 60 条', () => setLimit(n => n + PAGE_SIZE)));
     }
     function ReviewBasis({basis}) {
@@ -258,7 +258,7 @@
       if (!preview) return null;
       const labels = {required_scope: '要求的审核范围', eligible_for_pass: '技术提交资格（非证明正确性）', eligible: '返回的资格字段', blockers: '阻碍原因', reasons: '返回原因', basis_hash: '依据哈希', notice: '服务提示'};
       return h('section', {className: 'dm-review-summary'}, h('h3', {}, '人工审核预览'), h('p', {}, '以下仅解释返回的审核条件与依据，不是数学验证，也不替人选择结论。'),
-        ...Object.entries(labels).filter(([key]) => own(preview, key)).map(([key, label]) => h(Field, {key, label, value: typeof preview[key] === 'boolean' ? (preview[key] ? 'true（返回值）' : 'false（返回值）') : preview[key]})), own(preview, 'basis') && h(ReviewBasis, {basis: preview.basis}), raw(preview));
+        ...Object.entries(labels).filter(([key]) => key !== 'basis_hash' && own(preview, key)).map(([key, label]) => h(Field, {key, label, value: typeof preview[key] === 'boolean' ? (preview[key] ? 'true（返回值）' : 'false（返回值）') : preview[key]})), (own(preview, 'basis') || own(preview, 'basis_hash')) && h('details', {className: 'dm-details'}, h('summary', {}, '技术审核依据'), own(preview, 'basis_hash') && h(Field, {label: labels.basis_hash, value: preview.basis_hash}), own(preview, 'basis') && h(ReviewBasis, {basis: preview.basis})), raw(preview));
     }
     function ExportReceipt({receipt}) {
       if (!receipt) return null;
@@ -284,15 +284,15 @@
       return h('section', {className: 'dm-context-pack'}, h('div', {className: 'dm-reader-actions'}, h('h3', {className: 'dm-record-heading', ref: heading, tabIndex: -1}, '研究上下文包 · 仅预览与复制'), typeof onClose === 'function' && button('关闭上下文包', onClose)),
         h('p', {}, '不会自动发送到模型。复制不是研究授权（not research authorization）；请先审阅正文、精确引用与风险。'),
         !sameProject && h('p', {role: 'alert'}, '项目已切换，此上下文包不可复制；请关闭后从当前项目重新打开。'),
-        h('p', {}, `初始记录：${refKey(initial)}；默认只纳入该记录与其明确关联的 Problem，引用正文须逐条选择。`),
+        h('p', {}, `初始记录：${title(initial)} · 版本${initial?.rev}。默认包含此记录与关联研究问题；其他正文须逐条选择。`),
         h('div', {className: 'dm-context-options'}, h('label', {}, '搜索可选精确版本', h('input', {type: 'search', value: query, onChange: e => { setQuery(e.target.value); setLimit(PAGE_SIZE); }})),
-          h('ul', {}, ...choices.rows.map(({object}) => h('li', {key: refKey(object)}, h('label', {}, h('input', {type: 'checkbox', checked: keys.includes(refKey(object)), onChange: () => toggle(refKey(object))}), `${title(object)} · ${refKey(object)}`)))),
+          h('ul', {}, ...choices.rows.map(({object}) => h('li', {key: refKey(object)}, h('label', {}, h('input', {type: 'checkbox', checked: keys.includes(refKey(object)), onChange: () => toggle(refKey(object))}), `${title(object)} · ${kindLabel(object.kind)} · 版本${object.rev}`)))),
           choices.hasMore && button('再显示 60 条可选记录', () => setLimit(n => n + PAGE_SIZE)),
           h('label', {}, h('input', {type: 'checkbox', checked: includeLocators, onChange: e => setIncludeLocators(e.target.checked)}), '明确纳入来源定位与 Problem.sources（可能包含敏感本地路径）')),
-        h('p', {}, `已选 ${pack.records.length} 个精确版本：${pack.records.map(o => refKey(o.ref)).join('、') || '无'}。完整预览 ${pack.length} 字符，不静默截断。`),
+        h('p', {}, `已选 ${pack.records.length} 条记录 · 完整内容 ${pack.length} 字符。`),
         h('ul', {className: 'dm-context-risks'}, ...pack.warnings.map((warning, i) => h('li', {key: i}, warning))),
         pack.long && h('label', {}, h('input', {type: 'checkbox', checked: longConfirmed, onChange: e => setLongConfirmed(e.target.checked)}), `内容较长（${pack.length} 字符）；我已审阅并确认复制完整内容，目标输入框可能有长度限制。`),
-        h('pre', {className: 'dm-code dm-context-preview', 'aria-label': '完整上下文包预览'}, pack.text),
+        h('details', {className: 'dm-details'}, h('summary', {}, '完整上下文与技术引用'), h('pre', {className: 'dm-code dm-context-preview', 'aria-label': '完整上下文包预览'}, pack.text)),
         h(Copy, {value: pack.text, label: '明确复制完整上下文包', disabled: !sameProject || !pack.valid || (pack.long && !longConfirmed)}));
     }
     return {RecordReader, RecordBrowser, ReviewSummary, ExportReceipt, ContextPack};

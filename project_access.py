@@ -191,8 +191,13 @@ class ProjectAccess:
         require(limit <= 50, "INVALID_SCHEMA", "limit must be 1..50 projects")
         with self._locked() as state:
             session = deepcopy(state["sessions"].get(session_id, session_state(session_id)))
+            from library_store import Library
+            library = Library(self.root)
             rows = [metadata for metadata in self._visible(session_id, state)
-                    if query.casefold() in (metadata["id"] + " " + str(metadata.get("title", ""))).casefold()]
+                    if not library.project_removed(metadata["id"])
+                    and query.casefold() in (metadata["id"] + " " + str(metadata.get("title", ""))).casefold()]
+            if session["current_project_id"] is not None and library.project_removed(session["current_project_id"]):
+                session["current_project_id"] = None
             result = []
             for metadata in rows[offset:offset + limit]:
                 row = {**metadata, "current": session["current_project_id"] == metadata["id"],

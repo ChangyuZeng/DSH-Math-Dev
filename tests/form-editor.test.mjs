@@ -37,7 +37,7 @@ for(const [kind,labels] of [['Note',['笔记标题','完整正文','主张']],['
   assert.equal(changed.length,3);assert.ok(changed.every(change=>change.meta.dirty));
   const latest=changed.at(-1).draft;t.set({initial:plain(latest)});const echoed=t.render();
   for(const [i,label] of labels.entries())assert.equal(field(echoed,label).props.value,`  合成 ${i}\r\nΩ $x$  `);
-  assert.ok(nodes(echoed).some(node=>node.children.includes('有未保存的修改；仅保留在当前界面内存中。')));
+  assert.ok(nodes(echoed).some(node=>node.children.includes('修改未保存，仅暂存在本窗口。')));
   await submit(echoed);assert.equal(saved.length,1);assert.equal(saved[0].operation_id,t.initial.operation_id);
   assert.equal(JSON.stringify(saved[0]).includes('合成'),true);
 });
@@ -54,7 +54,7 @@ test('restored and promoted unsaved drafts keep a per-operation dirty floor acro
   let retained;const original=fixture('Note',{onDraftChange:(draft,meta)=>{retained={draft:plain(draft),dirty:meta.dirty};}});
   field(original.render(),'笔记标题').props.change('尚未保存的T1');original.react.unmount();
   const updates=[];const restored=fixture('Note',{initial:retained.draft,initialDirty:retained.dirty,onDraftChange:(draft,meta)=>updates.push({draft,meta})});
-  assert.ok(nodes(restored.render()).some(node=>node.children.includes('恢复或整理的内容尚未保存；仅保留在当前界面内存中，需明确保存或放弃。')));
+  assert.ok(nodes(restored.render()).some(node=>node.children.includes('恢复的内容尚未保存，仅暂存在本窗口。')));
   field(restored.render(),'笔记标题').props.change('临时T2');
   restored.set({initial:plain(updates.at(-1).draft),initialDirty:false});
   field(restored.render(),'笔记标题').props.change('尚未保存的T1');assert.equal(updates.at(-1).meta.dirty,true);
@@ -139,10 +139,17 @@ test('program-checked obligations cannot silently enter the human revision path'
 
 test('selected historical reference survives search and does not upgrade revision',()=>{
   const react=hooks(),context={};vm.runInNewContext(source,context);const {Refs}=context.DshMathFormUI(react,F);
-  const props={label:'引用',objects:[1,2].map(rev=>({id:'N',rev,kind:'Note',data:{title:'合成记录',problem_ref:{id:'P',rev:1}}})),kinds:['Note'],problem:{id:'P',rev:1},value:[{id:'N',rev:1}],change:()=>{}};
+  const changes=[];
+  const props={label:'引用',objects:[1,2].map(rev=>({id:'N',rev,kind:'Note',data:{title:'合成记录',problem_ref:{id:'P',rev:1}}})),kinds:['Note'],problem:{id:'P',rev:1},value:[{id:'N',rev:1}],change:v=>changes.push(v)};
   const render=()=>{react.reset();return Refs(props);};field(render(),'搜索 引用').props.change('不匹配');
-  assert.ok(nodes(render()).some(node=>node.type==='span'&&String(node.children[0]).includes('N@1')));
-  assert.equal(nodes(render()).some(node=>node.type==='span'&&String(node.children[0]).includes('N@2')),false);
+  assert.ok(nodes(render()).some(node=>node.type==='span'&&String(node.children[0]).includes('合成记录 · 版本1')));
+  assert.equal(nodes(render()).some(node=>node.type==='span'&&String(node.children[0]).includes('版本2')),false);
+  assert.equal(nodes(render()).filter(node=>node.type==='span').some(node=>String(node.children).includes('N@1')),false);
+  nodes(render()).find(node=>node.props.type==='checkbox'&&node.props.checked).props.onChange();
+  assert.deepEqual(JSON.parse(JSON.stringify(changes)),[[]]);
+  props.value=[];field(render(),'搜索 引用').props.change('');
+  nodes(render()).filter(node=>node.props.type==='checkbox').at(-1).props.onChange();
+  assert.deepEqual(JSON.parse(JSON.stringify(changes.at(-1))),[{id:'N',rev:2}]);
 });
 
 for(const flag of ['busy','readOnly'])test(`${flag} blocks stale editing, uploads, submission and preserves data`,async()=>{
