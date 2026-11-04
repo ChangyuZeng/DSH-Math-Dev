@@ -254,7 +254,7 @@ def run_campaign(manifest, output):
         try:
             gateway = Gateway(ledger,transport=transport,bindings=bindings,tools={run_id:tools},
                 allowed_tools={run_id:allowed},intrinsic_tools=intrinsic,request_adapters=bridges,
-                execution=execution,state_guards={run_id:guard},audit_sink=audit_sink).start()
+                inject_output_cap=True,execution=execution,state_guards={run_id:guard},audit_sink=audit_sink).start()
             if arm in {'C','R'}:
                 from codex_bridge import prepare_codex_smoke
                 plan = prepare_codex_smoke(root/'native',arm=arm,source_root=Path(cfg['sources'][arm]),

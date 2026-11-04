@@ -347,6 +347,13 @@ class HostTransport:
                 io_socket.settimeout(self.response_timeout)
                 upstream = connection.getresponse()
                 evidence['http_status'] = upstream.status
+                media_type = upstream.getheader('Content-Type', '').split(';')[0].strip().lower()
+                encoding = upstream.getheader('Content-Encoding', 'identity').lower()
+                # Static classifications only; never persist arbitrary header text.
+                evidence['response_media_type'] = media_type if media_type in {
+                    'text/event-stream', 'application/json', 'text/html', 'text/plain'} else 'other'
+                evidence['response_content_encoding'] = encoding if encoding in {
+                    'identity', 'gzip', 'br', 'deflate', 'zstd'} else 'other'
                 if upstream.status != 200:
                     # Keep bounded diagnostics without exposing server text,
                     # headers or credentials. The rejected request still has an
