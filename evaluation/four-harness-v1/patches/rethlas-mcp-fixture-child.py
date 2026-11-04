@@ -13,8 +13,7 @@ import sys
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 from four_harness_mcp import COMMON, NATIVE, encoded, post
-from fastmcp import Client
-from fastmcp.client.transports import StdioTransport
+from four_harness_mcp_fixture import transport
 
 
 async def main():
@@ -40,14 +39,12 @@ async def main():
         "client_metadata": {"x-codex-turn-metadata": encoded(metadata).decode()},
     }, metadata=metadata, parent=parent)
     report = json.loads(response["output"][0]["content"][0]["text"])
-    transport = StdioTransport(command=sys.executable, args=["-I", str(ROOT / "four_harness_mcp.py"), "verification"],
-                               env=dict(os.environ), cwd=str(ROOT / "agents/verification"), keep_alive=False)
-    async with Client(transport) as client:
-        names = {tool.name for tool in await client.list_tools()}
+    async with transport("verification") as client:
+        names = {tool.name for tool in (await client.list_tools()).tools}
         assert names == COMMON | NATIVE["verification"], names
 
         async def call(name, arguments, call_id, error=False):
-            result = await client.call_tool_mcp(name, arguments, meta={"callId": call_id, "x-codex-turn-metadata": metadata}, timeout=20)
+            result = await client.call_tool(name, arguments, meta={"callId": call_id, "x-codex-turn-metadata": metadata})
             assert result.isError is error, result.model_dump_json()
             if error:
                 return result

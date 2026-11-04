@@ -118,6 +118,8 @@
 !/evaluation/four-harness-v1/mcp.py
 !/evaluation/four-harness-v1/tools.py
 !/evaluation/four-harness-v1/compute_child.py
+!/evaluation/four-harness-v1/cold_start.py
+!/evaluation/four-harness-v1/observation.py
 !/evaluation/four-harness-v1/native.py
 !/evaluation/four-harness-v1/x_full.py
 !/evaluation/four-harness-v1/m_adapter.mjs
@@ -138,6 +140,7 @@
 !/evaluation/four-harness-v1/patches/rethlas-fixture.md
 !/evaluation/four-harness-v1/patches/rethlas-fixture-child.py
 !/evaluation/four-harness-v1/patches/rethlas-verifier-fixture.py
+!/evaluation/four-harness-v1/patches/rethlas-codex-fixture.py
 !/evaluation/four-harness-v1/patches/rethlas-mcp.py
 !/evaluation/four-harness-v1/patches/rethlas-mcp-fixture.py
 !/evaluation/four-harness-v1/patches/rethlas-mcp-fixture-child.py

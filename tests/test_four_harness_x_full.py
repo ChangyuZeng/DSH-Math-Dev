@@ -5,11 +5,12 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "evaluation/four-harness-v1"))
-from native import NativeBlocked, PINS
-from x_full import CORE, STAGES, fixture_responses, prepare_host_fixture, xean_full_fixture
+from native import NativeBlocked, PINS, copied_fixture
+from x_full import CORE, INTRINSIC, STAGES, fixture_responses, prepare_host_fixture, xean_full_fixture
 
 
 class XHostBoundaryTests(unittest.TestCase):
@@ -44,7 +45,7 @@ class XHostBoundaryTests(unittest.TestCase):
 class XNativeHostTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.source = Path(os.environ.get("FOUR_HARNESS_XEAN_BUILD", ROOT / "dist/four-harness-builds/xean-native-5"))
+        cls.source = Path(os.environ.get("FOUR_HARNESS_XEAN_BUILD", ROOT / "dist/four-harness-builds/xean-native-6"))
         cls.bun = Path(os.environ.get("FOUR_HARNESS_BUN", ROOT / "dist/four-harness-builds/runtime/node_modules/@oven/bun-darwin-aarch64/bin/bun"))
         if not cls.source.is_dir() or not cls.bun.is_file():
             raise RuntimeError("Explicit native qualification requires the installed pinned X build and Bun")
@@ -55,6 +56,87 @@ class XNativeHostTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         return xean_full_fixture(root / "run", source_copy=self.source, bun=self.bun,
                                  scenario=scenario, max_output_tokens=cap)
+
+    def smoke_fixture(self, manifest_change=None):
+        from cold_start import write_materials
+        from gateway import FixtureTransport, Gateway, capability, responses_tools
+        from ledger import Ledger, SMOKE_BUDGET
+        from tools import CommonTools, ToolLimits
+        temporary = tempfile.TemporaryDirectory(prefix="four-x-smoke-tools-")
+        root = Path(temporary.name).resolve()
+        self.addCleanup(temporary.cleanup)
+        ledger = Ledger(root / "ledger.sqlite")
+        ledger.create_campaign("smoke", max_requests=2, max_tokens=32768, scope="smoke")
+        ledger.create_run("X-smoke", "smoke", "X", budget=SMOKE_BUDGET)
+        common = CommonTools("X-smoke", root / "tools", write_materials(root / "materials", "smoke"),
+                             limits=ToolLimits(timeout_seconds=10, artifact_bytes=16 * 1024 * 1024))
+        tokens = {role: capability() for role in ("explorer", "coordinator", "verifier")}
+        transport = FixtureTransport(fixture_responses()[:2])
+        manifests = []
+
+        def declared(scope=None):
+            value = responses_tools(scope)
+            if manifest_change:
+                value = manifest_change(value, len(manifests))
+            manifests.append(value)
+            return value
+
+        with Gateway(ledger, transport=transport,
+                     bindings={token: {"run_id": "X-smoke", "arm": "X", "role": role}
+                               for role, token in tokens.items()}, tools={"X-smoke": common},
+                     allowed_tools={"X-smoke": {tool["name"] for tool in responses_tools()} | INTRINSIC},
+                     intrinsic_tools={("X-smoke", role): INTRINSIC for role in tokens}, inject_output_cap=True) as gateway:
+            # Faults live at the HTTP manifest boundary; the native adapter and
+            # actual Pi role run unchanged through the real gateway and OS jail.
+            with patch("gateway.responses_tools", side_effect=declared):
+                native = copied_fixture(root / "native", gateway=gateway, arm="X", source_copy=self.source,
+                                        executable=self.bun, entry=["four-harness-fixture.ts"],
+                                        role_tokens=tokens, timeout=40)
+            snapshot = ledger.snapshot("X-smoke")
+        return {"native": native, "snapshot": snapshot, "requests": transport.requests,
+                "events": ledger.events(), "manifests": manifests}
+
+    def test_smoke_registers_only_five_manifest_tools_before_native_requests(self):
+        result = self.smoke_fixture()
+        self.assertEqual(result["native"]["returncode"], 0, result["native"])
+        self.assertEqual(result["snapshot"]["requests"], 2)
+        self.assertEqual(result["snapshot"]["total_tokens"], 240)
+        self.assertEqual(len(result["manifests"]), 6)  # launcher preflight + native module, all three roles
+        expected = {"materials_list", "materials_read", "workspace_read", "workspace_write", "compute"}
+        for request in result["requests"]:
+            names = {tool["name"] for tool in request["payload"]["tools"]}
+            self.assertTrue(expected <= names)
+            self.assertFalse({"check", "submit"} & names)
+            self.assertEqual(names - expected, {"read_notes", "submit_notes"})
+        output = json.loads(result["native"]["stdout"])
+        self.assertEqual(output["outcome"]["status"], "completed")
+        self.assertEqual(output["outcome"]["result"]["value"]["notes"][1]["support"], ["n1"])
+
+    def test_manifest_schema_or_role_disagreement_stops_before_dispatch(self):
+        def changed_schema(value, index):
+            if index >= 3:
+                value[0]["description"] += " synthetic drift"
+            return value
+
+        def changed_role(value, index):
+            return value[:-1] if index == 5 else value
+
+        def unknown_tool(value, index):
+            if index >= 3:
+                value[0]["name"] = "synthetic_unknown_tool"
+            return value
+
+        def duplicate_tool(value, index):
+            return value + value[:1] if index >= 3 else value
+
+        for change in (changed_schema, changed_role, unknown_tool, duplicate_tool):
+            with self.subTest(change=change.__name__):
+                result = self.smoke_fixture(change)
+                self.assertNotEqual(result["native"]["returncode"], 0, result["native"])
+                self.assertIn("Native X manifest", result["native"]["stderr"])
+                self.assertEqual(result["snapshot"]["requests"], 0)
+                self.assertEqual(result["requests"], [])
+                self.assertFalse(any(event["type"].startswith("tool_") for event in result["events"]))
 
     def test_actual_host_verifies_all_stages_and_generated_closure(self):
         for cap in (2048, 16384):
@@ -105,6 +187,9 @@ class XNativeHostTests(unittest.TestCase):
                     self.assertEqual(request["payload"]["model"], "gpt-6-astra")
                     self.assertEqual(request["payload"]["reasoning"]["effort"], "max")
                     self.assertEqual(request["payload"]["max_output_tokens"], cap)
+                    names = {tool["name"] for tool in request["payload"]["tools"]}
+                    self.assertTrue({"materials_list", "materials_read", "workspace_read", "workspace_write",
+                                     "compute", "check", "submit"} <= names)
                 self.assertEqual(set(result["build"]["preserved_core"]), set(CORE))
                 self.assertGreater(result["build"]["dependency_file_count"], 0)
                 relation = result["build"]["native_source_relationship"]

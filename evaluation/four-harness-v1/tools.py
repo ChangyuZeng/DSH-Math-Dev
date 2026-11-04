@@ -16,15 +16,20 @@ No callback is needed to obtain metrics. Callers must enforce cumulative ledger
 budgets and cancellation using these hooks; this module enforces per-call limits
 and persistent artifact quotas. Use one host instance per fresh run directory.
 
-Compute is standard-library Python, with the same isolated interpreter (-I -S)
-and hard CPU/address-space limits for all arms. Filesystem access is read-only:
-WORKSPACE and MATERIALS contain snapshots, and artifacts must be written through
-workspace.write. macOS requires sandbox-exec/Seatbelt, Linux requires bubblewrap
-plus seccomp on x86_64/aarch64. Neither backend falls back to Python restrictions.
-A real containment probe runs before the first submitted computation. macOS has
-no hard CPU-core affinity and its RLIMIT_AS is not a reliable resident-memory
-cap: a host RSS watchdog additionally terminates over-limit processes; capabilities
-exposes this limitation so a strict qualification gate can reject that platform.
+Compute is standard-library Python, with an isolated interpreter (-I -S).
+Filesystem access is read-only: WORKSPACE and MATERIALS contain snapshots, and
+artifacts must be written through workspace.write. macOS requires Seatbelt;
+Linux requires bubblewrap plus seccomp. Neither backend falls back to Python
+restrictions. A real containment probe precedes submitted computation.
+
+ToolLimits are host protection, separate from fair model budgets. Darwin defaults
+to resource_mode="macos_monitored": CPU time, output, wall time and process guards
+remain, while memory uses a sampled RSS kill watchdog without RLIMIT_AS. It makes
+no hard resident-memory or CPU-placement guarantee. Optional "strict" mode
+requires RLIMIT_AS and fails closed if the OS rejects it; it never falls back.
+Linux defaults to strict mode. CPU placement is unconstrained unless explicitly
+limited on Linux. Kernel CPU/RSS observations include their sources; unavailable
+observations stay null. Watchdog peaks can miss allocations between samples.
 
 Host credentials, host environment and original materials paths never enter the
 sandbox. There are no network/model imports, shells, arbitrary parent evals,
@@ -46,6 +51,7 @@ import platform
 import selectors
 import shutil
 import signal
+import socket
 import stat
 import subprocess
 import sys
@@ -71,6 +77,8 @@ class ToolError(Exception):
 
 @dataclass(frozen=True)
 class ToolLimits:
+    """Per-tool host protection; these are not fair campaign resource budgets."""
+    resource_mode: str = "macos_monitored" if sys.platform == "darwin" else "strict"
     max_read_bytes: int = 65536
     max_file_bytes: int = 16 * 1024 * 1024
     max_material_bytes: int = 16 * 1024 * 1024
@@ -81,13 +89,21 @@ class ToolLimits:
     cpu_seconds: float = 60.0
     timeout_seconds: float = 60.0
     memory_bytes: int = 4 * 1024 * 1024 * 1024
-    cpu_cores: int = 2
+    cpu_cores: int | None = None
 
     def __post_init__(self):
+        if self.resource_mode not in ("macos_monitored", "strict"):
+            raise ValueError("resource_mode must be macos_monitored or strict")
+        if self.resource_mode == "macos_monitored" and sys.platform != "darwin":
+            raise ValueError("macos_monitored requires Darwin")
         for key, value in asdict(self).items():
+            if key == "resource_mode" or key == "cpu_cores" and value is None:
+                continue
             expected = (int, float) if key in ("cpu_seconds", "timeout_seconds") else (int,)
             if type(value) not in expected or not math.isfinite(value) or value <= 0:
                 raise ValueError(f"{key} must be a finite positive number")
+        if self.cpu_cores is not None and sys.platform != "linux":
+            raise ValueError("CPU placement limits require Linux; use cpu_cores=None on macOS")
         if self.memory_bytes < 64 * 1024 * 1024:
             raise ValueError("memory_bytes must be at least 64 MiB")
 
@@ -329,6 +345,22 @@ def _arguments(args, required=(), optional=()):
         raise ToolError("invalid_arguments", "unknown or missing tool arguments")
 
 
+def _observed_number(value, *, positive=False):
+    if type(value) not in (int, float) or not math.isfinite(value) or value < 0 or positive and value == 0:
+        return None
+    return value
+
+
+def _wait_usage(observation):
+    user = _observed_number(getattr(observation, "ru_utime", None))
+    system = _observed_number(getattr(observation, "ru_stime", None))
+    cpu = user + system if user is not None and system is not None else None
+    peak = _observed_number(getattr(observation, "ru_maxrss", None), positive=True)
+    if peak is not None and sys.platform != "darwin":
+        peak *= 1024
+    return cpu, peak
+
+
 def _rss(pid):
     """Kernel resident bytes for watchdog; absence is unknown, never zero."""
     try:
@@ -365,6 +397,8 @@ class CommonTools:
         if accounting is not None and not callable(accounting):
             raise ValueError("accounting must be callable")
         self.run_id = run_id
+        self._initial_run_id = run_id
+        self._call_count = 0
         self.limits = limits or ToolLimits()
         self.accounting = accounting
         self.run_root = _absolute(run_root)
@@ -417,21 +451,54 @@ class CommonTools:
         elif sys.platform == "linux" and shutil.which("bwrap") and platform.machine().lower() in ("x86_64", "amd64", "aarch64", "arm64"):
             self._sandbox = "bubblewrap"
 
+    def _resource_policy(self):
+        strict = self.limits.resource_mode == "strict"
+        return {"resource_mode": self.limits.resource_mode, "resource_scope": "host_protection",
+                "memory_enforcement": "RLIMIT_AS+RSS_watchdog" if strict else "RSS_watchdog",
+                "hard_memory_limit": False, "hard_resident_memory_limit": False,
+                "address_space_limit_required": strict,
+                "hard_cpu_core_limit": sys.platform == "linux" and self.limits.cpu_cores is not None,
+                "cpu_placement": "affinity" if self.limits.cpu_cores is not None else "unconstrained",
+                "cpu_time_guard": "RLIMIT_CPU", "cpu_time_limit_seconds": math.ceil(self.limits.cpu_seconds),
+                "cpu_observation_source": "wait4_rusage", "rss_observation_source": "kernel_rss+wait4_ru_maxrss",
+                "rss_sampling_interval_seconds": 0.01,
+                "rss_watchdog_is_hard_limit": False}
+
     def capabilities(self):
-        """Metadata only: a backend is not qualified until the real probe passes."""
+        """Metadata only: containment is not qualified until the real probe passes."""
         return {"tools": list(TOOL_NAMES), "runtime": dict(self._runtime),
                 "limits": asdict(self.limits), "sandbox_backend": self._sandbox,
                 "sandbox_available": self._sandbox is not None,
                 "sandbox_verified": self._probe_result is not None and self._probe_result.get("ok", False),
-                "probe": self._probe_result,
-                "compute_filesystem": "read_only_snapshots",
-                "memory_enforcement": "RLIMIT_AS+RSS_watchdog" if sys.platform == "darwin" else "RLIMIT_AS",
-                "hard_resident_memory_limit": False,
-                "hard_cpu_core_limit": sys.platform == "linux",
-                "limitations": (["macOS cannot hard-cap CPU core affinity; RSS watchdog has a 10ms sampling interval",
-                                  "macOS RLIMIT_AS is not a reliable hard resident-memory ceiling"]
-                                 if sys.platform == "darwin" else
-                                 ["Linux backend requires working unprivileged bubblewrap namespaces and supported seccomp ABI"])}
+                "probe": self._probe_result, "compute_filesystem": "read_only_snapshots",
+                **self._resource_policy(),
+                "limitations": ["RSS watchdog can miss short allocations and overshoot between samples; unavailable readings are null",
+                                "Resource guards protect the host and do not make equal-compute claims"] +
+                    (["macOS has no enforced core placement; strict RLIMIT_AS may be rejected by the OS"]
+                     if sys.platform == "darwin" else
+                     ["Linux requires working unprivileged bubblewrap namespaces and supported seccomp ABI"])}
+
+    def pristine_for_cold_start(self):
+        """Verify an unused run with only constructor state, without accounting."""
+        with self._lock:
+            if self.run_id != self._initial_run_id or self._call_count or self._probe_result is not None:
+                return False
+            try:
+                identity = _json_bytes({"run_id": self._initial_run_id})
+                if self.control.read("identity.json") != identity:
+                    return False
+                if self.workspace.inventory()[2] or self.submissions.inventory()[2]:
+                    return False
+                entries, _, count = self.control.inventory()
+                return entries == [("identity.json", len(identity))] and count == 2
+            except (ToolError, OSError):
+                return False
+
+    def material_inventory(self):
+        """Read-only frozen IDs/hashes for gateway preflight; rejects file drift."""
+        with self._lock:
+            return [{"id": key, "size": len(self._material(key)), "sha256": value["sha256"]}
+                    for key, value in sorted(self._materials.items())]
 
     def _material(self, name):
         if name not in self._materials:
@@ -457,9 +524,13 @@ class CommonTools:
         started, parent_cpu = time.monotonic(), time.thread_time()
         request_id = uuid.uuid4().hex
         metrics = {"request_id": request_id, "run_id": self.run_id, "tool": name if type(name) is str else None,
-                   "started_at": _utc(), "child_cpu_seconds": 0.0,
-                   "peak_memory_bytes": None, "params_sha256": None}
+                   "started_at": _utc(), "child_cpu_seconds": 0.0, "known_child_cpu_seconds": 0.0,
+                   "cpu_accounting_complete": True, "resource_scope": "observed_tool_cost",
+                   "resource_mode": self.limits.resource_mode, "child_cpu_observation_source": "wait4_rusage",
+                   "peak_memory_bytes": None, "known_peak_memory_bytes": None,
+                   "memory_accounting_complete": True, "params_sha256": None}
         with self._lock:
+            self._call_count += 1
             self._metrics = metrics
             try:
                 args = {} if arguments is None else arguments
@@ -491,7 +562,9 @@ class CommonTools:
             finally:
                 metrics["wall_seconds"] = time.monotonic() - started
                 metrics["parent_cpu_seconds"] = time.thread_time() - parent_cpu
-                metrics["cpu_seconds"] = metrics["parent_cpu_seconds"] + metrics["child_cpu_seconds"]
+                metrics["cpu_seconds"] = (metrics["parent_cpu_seconds"] + metrics["child_cpu_seconds"]
+                                          if metrics["child_cpu_seconds"] is not None else None)
+                metrics["known_cpu_seconds"] = metrics["parent_cpu_seconds"] + metrics["known_child_cpu_seconds"]
                 metrics["finished_at"] = _utc()
             metrics["result_sha256"] = _hash(_json_bytes(reply))
             reply["metrics"] = dict(metrics)
@@ -508,8 +581,7 @@ class CommonTools:
     def _dispatch(self, name, args, cancel):
         if name == "materials.list":
             _arguments(args)
-            return {"materials": [{"id": key, "size": len(self._material(key)), "sha256": value["sha256"]}
-                                  for key, value in sorted(self._materials.items())]}
+            return {"materials": self.material_inventory()}
         if name == "materials.read":
             _arguments(args, ("id",), ("offset", "length"))
             if type(args["id"]) is not str:
@@ -555,7 +627,8 @@ class CommonTools:
             if self._sandbox is None:
                 raise ToolError("unsupported_sandbox", "no supported OS sandbox is available")
             self._totals()
-            if self._probe_result is None:
+            if (self._probe_result is None or
+                    self._probe_result.get("resource_mode", self.limits.resource_mode) != self.limits.resource_mode):
                 self._probe(cancel)
             if not self._probe_result["ok"]:
                 raise ToolError("unsupported_sandbox", "OS containment probe failed; compute is disabled")
@@ -658,15 +731,10 @@ class CommonTools:
                         "(deny network*)\n(deny process-fork)\n(deny process-exec)\n"
                         + read_rules + "\n(deny file-read* (regex #\"/site-packages(/|$)\"))\n")
             (folder / "lockdown.sb").write_text(lockdown, encoding="utf-8")
-            # Interpreter startup is trusted (-I -S, clean environment); the
-            # child installs lockdown before reading the submitted code file.
-            profile = ("(version 1)(deny default)(allow file-read*)(allow sysctl-read)"
-                       f"(allow process-exec (literal {literal(self._python)}))"
-                       "(deny network*)(deny process-fork)")
-            profile_path = folder / "sandbox.sb"
-            profile_path.write_text(profile, encoding="utf-8")
-            return ["/usr/bin/sandbox-exec", "-f", str(profile_path), str(self._python),
-                    "-I", "-S", "-B", str(child), "seatbelt", str(config)]
+            # macOS rejects reapplying sandbox_init inside sandbox-exec. Start
+            # only the frozen trusted bootstrap (-I -S, clean environment), and
+            # install Seatbelt once before it even reads the submitted code.
+            return [str(self._python), "-I", "-S", "-B", str(child), "seatbelt", str(config)]
         command = [shutil.which("bwrap"), "--die-with-parent", "--unshare-all",
                    "--cap-drop", "ALL", "--clearenv", "--setenv", "PATH", "/nonexistent",
                    "--setenv", "HOME", "/nonexistent", "--setenv", "LC_ALL", "C",
@@ -713,7 +781,8 @@ class CommonTools:
                 material_paths[name] = str(target)
             (folder / "compute_child.py").write_bytes(self._child_bytes)
             (folder / "code.py").write_text(code, encoding="utf-8")
-            config = {"backend": self._sandbox, "code_path": str(folder / "code.py"),
+            config = {"backend": self._sandbox, "resource_mode": self.limits.resource_mode,
+                      "code_path": str(folder / "code.py"),
                       "lockdown_profile": str(folder / "lockdown.sb"),
                       "workspace": str(workspace), "materials": material_paths,
                       "memory_bytes": self.limits.memory_bytes, "cpu_seconds": self.limits.cpu_seconds,
@@ -723,6 +792,7 @@ class CommonTools:
             result = self._run_process(command, workspace, cancel)
             result["sandbox_backend"] = self._sandbox
             result["runtime"] = dict(self._runtime)
+            result["resource_policy"] = self._resource_policy()
             return result
 
     def _probe(self, cancel):
@@ -731,30 +801,47 @@ class CommonTools:
         sentinel_name = "probe-" + uuid.uuid4().hex
         self.control.write(sentinel_name, b"private-probe", exclusive=True)
         sentinel = self.control.path / sentinel_name
-        code = ("import os, socket, subprocess, sys, json\n"
-                "results = {}\n"
-                "def denied(name, action):\n"
-                "    try:\n"
-                "        action()\n"
-                "    except (OSError, PermissionError):\n"
-                "        results[name] = True\n"
-                "    else:\n"
-                "        results[name] = False\n"
-                f"denied('private_read', lambda: open({str(sentinel)!r}, 'rb').read())\n"
-                "denied('workspace_write', lambda: open(os.path.join(WORKSPACE, 'probe'), 'w'))\n"
-                "denied('network', lambda: socket.socket(socket.AF_INET, socket.SOCK_STREAM))\n"
-                "denied('process', lambda: subprocess.run([sys.executable, '-I', '-S', '-c', 'pass']))\n"
-                "denied('exec', lambda: os.execv(sys.executable, [sys.executable, '-I', '-S', '-c', 'print(123)']))\n"
-                "print(json.dumps(results, sort_keys=True))\n")
         try:
-            result = self._compute(code, cancel, probe=True)
+            # A real loopback listener distinguishes OS permission denial from
+            # an absent service, DNS failure, or a disconnected network.
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+                listener.bind(("127.0.0.1", 0))
+                listener.listen(1)
+                address = listener.getsockname()
+                code = ("import os, socket, subprocess, sys, json, errno\n"
+                        "results = {}\n"
+                        "def denied(name, action):\n"
+                        "    try:\n"
+                        "        action()\n"
+                        "    except OSError as error:\n"
+                        "        results[name] = error.errno in (errno.EPERM, errno.EACCES)\n"
+                        "    else:\n"
+                        "        results[name] = False\n"
+                        "def connect():\n"
+                        f"    with socket.create_connection({address!r}, timeout=0.3): pass\n"
+                        "def bind():\n"
+                        "    with socket.socket() as connection: connection.bind(('127.0.0.1', 0))\n"
+                        f"denied('private_read', lambda: open({str(sentinel)!r}, 'rb').read())\n"
+                        "denied('workspace_write', lambda: open(os.path.join(WORKSPACE, 'probe'), 'w'))\n"
+                        "denied('network', connect)\n"
+                        "denied('network_bind', bind)\n"
+                        "denied('process', lambda: subprocess.run([sys.executable, '-I', '-S', '-c', 'pass']))\n"
+                        "denied('exec', lambda: os.execv(sys.executable, [sys.executable, '-I', '-S', '-c', 'print(123)']))\n"
+                        "print(json.dumps(results, sort_keys=True))\n")
+                result = self._compute(code, cancel, probe=True)
             try:
                 checks = json.loads(result["stdout"])
             except (ValueError, TypeError):
                 checks = {}
             ok = result["status"] == "completed" and result["returncode"] == 0 and checks == {
-                "private_read": True, "workspace_write": True, "network": True, "process": True, "exec": True}
+                "private_read": True, "workspace_write": True, "network": True,
+                "network_bind": True, "process": True, "exec": True}
             self._probe_result = {"ok": ok, "checks": checks, "status": result["status"],
+                                  "resource_mode": self.limits.resource_mode,
+                                  "sandbox_backend": self._sandbox,
+                                  "sandbox_initialization": ("trusted_bootstrap_before_user_code" if self._sandbox == "seatbelt"
+                                                             else "bubblewrap_and_seccomp_before_user_code"),
+                                  "network_probe": "permission_errno_on_loopback_connect_and_bind",
                                   "returncode": result["returncode"], "stderr": result["stderr"][:2048]}
         finally:
             # Exact host-created sentinel in the verified control directory.
@@ -763,6 +850,26 @@ class CommonTools:
                 os.unlink(sentinel_name, dir_fd=fd)
             finally:
                 os.close(fd)
+
+    def _record_child_usage(self, child_cpu, peak):
+        if self._metrics is None:
+            return
+        if child_cpu is None:
+            self._metrics["child_cpu_seconds"] = None
+            self._metrics["cpu_accounting_complete"] = False
+        else:
+            self._metrics["known_child_cpu_seconds"] += child_cpu
+            if self._metrics["child_cpu_seconds"] is not None:
+                self._metrics["child_cpu_seconds"] += child_cpu
+        if peak is None:
+            self._metrics["peak_memory_bytes"] = None
+            self._metrics["memory_accounting_complete"] = False
+        else:
+            current = self._metrics["known_peak_memory_bytes"]
+            known = peak if current is None else max(current, peak)
+            self._metrics["known_peak_memory_bytes"] = known
+            if self._metrics["memory_accounting_complete"]:
+                self._metrics["peak_memory_bytes"] = known
 
     def _run_process(self, command, cwd, cancel):
         start = time.monotonic()
@@ -778,6 +885,7 @@ class CommonTools:
             selector.register(stream, selectors.EVENT_READ, label)
         usage, status, returncode = None, "completed", None
         total_output, peak, killed = 0, None, False
+        rss_samples, rss_missing, usage_recorded = 0, 0, False
 
         def kill():
             nonlocal killed
@@ -797,12 +905,15 @@ class CommonTools:
                     if time.monotonic() - start >= self.limits.timeout_seconds and status == "completed":
                         status = "timeout"
                         kill()
-                    resident = _rss(process.pid)
+                    resident = _observed_number(_rss(process.pid), positive=True)
                     if resident is not None:
+                        rss_samples += 1
                         peak = resident if peak is None else max(peak, resident)
                         if resident > self.limits.memory_bytes and status == "completed":
                             status = "memory_limit"
                             kill()
+                    else:
+                        rss_missing += 1
                     waited, wait_status, observation = os.wait4(process.pid, os.WNOHANG)
                     if waited:
                         usage = observation
@@ -821,27 +932,38 @@ class CommonTools:
                         if total_output > self.limits.max_output_bytes and status == "completed":
                             status = "output_limit"
                             kill()
-            child_cpu = usage.ru_utime + usage.ru_stime
-            measured_peak = usage.ru_maxrss if sys.platform == "darwin" else usage.ru_maxrss * 1024
-            peak = max(peak or 0, measured_peak)
-            if self._metrics is not None:
-                self._metrics["child_cpu_seconds"] += child_cpu
-                self._metrics["peak_memory_bytes"] = max(self._metrics["peak_memory_bytes"] or 0, peak)
+            child_cpu, measured_peak = _wait_usage(usage)
+            sampled_peak = peak
+            if measured_peak is not None:
+                peak = measured_peak if peak is None else max(peak, measured_peak)
+            self._record_child_usage(child_cpu, peak)
+            usage_recorded = True
             if returncode in (-signal.SIGXCPU, -signal.SIGKILL) and status == "completed":
-                status = "cpu_limit" if child_cpu >= self.limits.cpu_seconds else "killed"
+                status = ("cpu_limit" if returncode == -signal.SIGXCPU or
+                          child_cpu is not None and child_cpu >= self.limits.cpu_seconds else "killed")
             return {"status": status, "returncode": returncode,
                     "stdout": streams["stdout"].decode("utf-8", errors="replace"),
                     "stderr": streams["stderr"].decode("utf-8", errors="replace"),
                     "output_bytes": total_output, "output_truncated": total_output > self.limits.max_output_bytes,
                     "cpu_seconds": child_cpu, "wall_seconds": time.monotonic() - start,
-                    "peak_memory_bytes": peak}
+                    "cpu_accounting_complete": child_cpu is not None,
+                    "cpu_observation_source": "wait4_rusage" if child_cpu is not None else None,
+                    "peak_memory_bytes": peak,
+                    "peak_memory_observation_sources": (["kernel_rss_samples"] if sampled_peak is not None else []) +
+                                                       (["wait4_ru_maxrss"] if measured_peak is not None else []),
+                    "rss_watchdog": {"samples": rss_samples, "unavailable_samples": rss_missing,
+                                     "peak_sampled_bytes": sampled_peak, "sampling_interval_seconds": 0.01,
+                                     "hard_limit": False}}
         finally:
             kill()
             if usage is None:
                 _, wait_status, usage = os.wait4(process.pid, 0)
                 process.returncode = os.waitstatus_to_exitcode(wait_status)
-                if self._metrics is not None:
-                    self._metrics["child_cpu_seconds"] += usage.ru_utime + usage.ru_stime
+            if not usage_recorded:
+                child_cpu, measured_peak = _wait_usage(usage)
+                if measured_peak is not None:
+                    peak = measured_peak if peak is None else max(peak, measured_peak)
+                self._record_child_usage(child_cpu, peak)
             selector.close()
             process.stdout.close()
             process.stderr.close()

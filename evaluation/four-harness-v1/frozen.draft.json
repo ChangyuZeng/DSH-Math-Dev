@@ -2,17 +2,27 @@
   "format": "dsh-math-four-harness-evaluation-v1",
   "status": "draft_not_executable",
   "execution_authorized": false,
-  "protocol_revision": "v1",
+  "protocol_revision": "mac-cold-start-v2",
+  "comparison": "whole_harness_fixed_model_and_cold_information",
+  "preferred_platform": "macOS",
+  "backup_server": {
+    "selected": false,
+    "run_authorized": false
+  },
   "problem": {
     "id": "RING15-D20-1179649",
     "D": 1048576,
     "pairs": 15,
     "target_h": 1179649,
-    "baseline_h": 1179648,
     "open_status": "pending_refresh_and_expert_review",
-    "materials_sha256": null,
+    "difficulty": "unconfirmed",
+    "materials_sha256": "7c470e2d835224d98853b502ee205572cd6bd2ec67e2e2b238476c03d9e5d6fa",
     "checker_sha256": "e4f721c2d184dc58249063481895d0b1af4d99c6376c42bc32ef8eb4d8baa221",
     "reviewer_ids": []
+  },
+  "operator_only_evaluation": {
+    "baseline_h": 1179648,
+    "visible_to_model": false
   },
   "model": {
     "provider": "openai-codex",
@@ -27,8 +37,8 @@
       "id": "C",
       "name": "Codex plain",
       "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
-      "adapter_sha256": "2b96f740a0d537a72c76fd2ed22cf6127d55571322984c0fd673244ef04fb799",
-      "prompt_sha256": "89d64a44b94a9af22303d515603630554ddedef592b52548582d2808466103dd",
+      "adapter_sha256": "10c2a1dcf3a08d5f29c58a0782e68b22488377941530d2462dcf5ef1189997e1",
+      "prompt_sha256": "a8b2623f0f15f39824294a53697f48c6eeb7080cbf6d99532c46cf1a6822a79c",
       "qualification": "offline_evidence_required_live_blocked",
       "source": {
         "repository": "https://github.com/openai/codex",
@@ -88,15 +98,15 @@
         "codex-rs/protocol/src/prompts/base_instructions/default.md": "ac8ae107a0d72fe3476b430afb161ea4e67da2e446d778aefc44828160559807"
       },
       "prompt_scope": "Native source templates plus exact adaptation; assembled request payloads are hashed per request, not live-qualified",
-      "configuration": "model = \"gpt-6-astra\"\nmodel_provider = \"four_harness\"\nmodel_reasoning_effort = \"max\"\nmodel_context_window = 65536\nmodel_auto_compact_token_limit = 49152\napproval_policy = \"never\"\nsandbox_mode = \"read-only\"\nweb_search = \"disabled\"\ncli_auth_credentials_store = \"ephemeral\"\nmcp_oauth_credentials_store = \"file\"\ncheck_for_update_on_startup = false\nproject_doc_max_bytes = 0\n[analytics]\nenabled = false\n[feedback]\nenabled = false\n[features]\nshell_tool = false\nunified_exec = false\napply_patch_freeform = false\nmulti_agent = false\nmulti_agent_v2 = false\ncollab = false\ncode_mode = false\napps = false\nplugins = false\nweb_search = false\nweb_search_request = false\nstandalone_web_search = false\n[model_providers.four_harness]\nname = \"four-harness mandatory gateway\"\nbase_url = \"http://127.0.0.1:1/C/agent/v1\"\nwire_api = \"responses\"\nenv_key = \"FOUR_HARNESS_TOKEN\"\nrequires_openai_auth = false\nrequest_max_retries = 0\nstream_max_retries = 0\nsupports_websockets = false\n[mcp_servers.common]\ncommand = \"/frozen/python3\"\nargs = [\"-I\", \"/frozen/mcp.py\", \"--url\", \"http://127.0.0.1:1/C/agent/tools\", \"--token-env\", \"FOUR_HARNESS_TOKEN\"]\nenv_vars = [\"FOUR_HARNESS_TOKEN\"]\nrequired = true\nenabled_tools = [\"materials_list\", \"materials_read\", \"workspace_read\", \"workspace_write\", \"compute\", \"check\", \"submit\"]\n",
-      "configuration_sha256": "97b7620b4aca265653ff0d3e55a47fa580ea7285fb60b3296be080e1ce2e3710"
+      "configuration": "model = \"gpt-6-astra\"\nmodel_provider = \"four_harness\"\nmodel_reasoning_effort = \"max\"\nmodel_context_window = 65536\nmodel_auto_compact_token_limit = 49152\napproval_policy = \"never\"\nsandbox_mode = \"read-only\"\nweb_search = \"disabled\"\ncli_auth_credentials_store = \"ephemeral\"\nmcp_oauth_credentials_store = \"file\"\ncheck_for_update_on_startup = false\nproject_doc_max_bytes = 0\n[analytics]\nenabled = false\n[feedback]\nenabled = false\n[features]\nshell_tool = false\nunified_exec = false\napply_patch_freeform = false\nunbounded_connection_retries = false\nrespect_system_proxy = false\nsystem_proxy_fallback = false\nmulti_agent = false\nmulti_agent_v2 = false\ncollab = false\ncode_mode = false\napps = false\nplugins = false\nweb_search = false\nweb_search_request = false\nstandalone_web_search = false\n[model_providers.four_harness]\nname = \"four-harness mandatory gateway\"\nbase_url = \"http://127.0.0.1:1/C/agent/v1\"\nwire_api = \"responses\"\nenv_key = \"FOUR_HARNESS_TOKEN\"\nrequires_openai_auth = false\nrequest_max_retries = 0\nstream_max_retries = 0\nsupports_websockets = false\n[mcp_servers.common]\ncommand = \"/frozen/python3\"\nargs = [\"-I\", \"/frozen/mcp.py\", \"--url\", \"http://127.0.0.1:1/C/agent/tools\", \"--token-env\", \"FOUR_HARNESS_TOKEN\"]\nenv_vars = [\"FOUR_HARNESS_TOKEN\"]\nrequired = true\nenabled_tools = [\"materials_list\", \"materials_read\", \"workspace_read\", \"workspace_write\", \"compute\", \"check\", \"submit\"]\n",
+      "configuration_sha256": "76fc5f6ffc3027f59fc46fd0a588d77ad5a002c3a7dc2a8e697106f1caba9ca7"
     },
     {
       "id": "X",
       "name": "Xean-adapted",
       "commit": "26669ebb071f8fc13e8a51f66a474d7ce9af387a",
-      "adapter_sha256": "8fccbc327f9c3201aebd223d02348c2c7c0414275e5df43c1fec74a2d28d517a",
-      "prompt_sha256": "84801f18b9f37b759d0ebe4a0e3480032964223b5cca9c4f3328faa6b789f138",
+      "adapter_sha256": "46f17da28a70eebafd6141a325dc668196060fbb49fa7a279b8e75974e1ef880",
+      "prompt_sha256": "bdbc2893dfabd3b19b72a59450281c7cbefd37d9af6a44d19345f022f65718a8",
       "qualification": "offline_evidence_required_live_blocked",
       "source": {
         "repository": "https://github.com/chaoxu/xean",
@@ -164,8 +174,8 @@
       "id": "R",
       "name": "Rethlas-adapted",
       "commit": "887cc46427636bbdd235160a112f9a30ae81d040",
-      "adapter_sha256": "02c6961c8178301286d60a1b95461851d20f2648056c9d0a57b7ae99e63520fe",
-      "prompt_sha256": "b224e86f888711268d90b34d36a5026f7e5946fe3f11143909cccb3f6432423f",
+      "adapter_sha256": "dfcbafa4417bd581e2b2405a8bc4b1a3134e0839f0f65f6ee70526f80d06aa7b",
+      "prompt_sha256": "4696e63d85480a25b06be4ce40d997f9aea99442d6815ba8b630d88d464f21d7",
       "qualification": "offline_evidence_required_live_blocked",
       "source": {
         "repository": "https://github.com/frenzymath/Rethlas",
@@ -211,15 +221,15 @@
         "agents/verification/requirements.txt": "8e7287d5c9e950c856a12171156d271d5f24c96df21b00824ff16e3f9f405e70"
       },
       "prompt_scope": "Native source templates plus exact adaptation; assembled request payloads are hashed per request, not live-qualified",
-      "configuration": "model = \"gpt-6-astra\"\nmodel_provider = \"four_harness_generator\"\nmodel_reasoning_effort = \"max\"\nmodel_context_window = 65536\nmodel_auto_compact_token_limit = 49152\napproval_policy = \"never\"\nsandbox_mode = \"read-only\"\nweb_search = \"disabled\"\ncli_auth_credentials_store = \"ephemeral\"\nmcp_oauth_credentials_store = \"file\"\ncheck_for_update_on_startup = false\n[analytics]\nenabled = false\n[feedback]\nenabled = false\n[features]\nshell_tool = false\nunified_exec = false\napply_patch_freeform = false\nmulti_agent = true\napps = false\nplugins = false\n[model_providers.four_harness_generator]\nname = \"four-harness R generator\"\nbase_url = \"http://127.0.0.1:1/R/generator/v1\"\nwire_api = \"responses\"\nenv_key = \"FOUR_HARNESS_GENERATOR_TOKEN\"\nrequires_openai_auth = false\nrequest_max_retries = 0\nstream_max_retries = 0\nsupports_websockets = false\n[model_providers.four_harness_strategy]\nname = \"four-harness R strategy\"\nbase_url = \"http://127.0.0.1:1/R/strategy/v1\"\nwire_api = \"responses\"\nenv_key = \"FOUR_HARNESS_STRATEGY_TOKEN\"\nrequires_openai_auth = false\nrequest_max_retries = 0\nstream_max_retries = 0\nsupports_websockets = false\n[model_providers.four_harness_verifier]\nname = \"four-harness R verifier\"\nbase_url = \"http://127.0.0.1:1/R/verifier/v1\"\nwire_api = \"responses\"\nenv_key = \"FOUR_HARNESS_VERIFIER_TOKEN\"\nrequires_openai_auth = false\nrequest_max_retries = 0\nstream_max_retries = 0\nsupports_websockets = false\nenv_http_headers = { \"X-Four-Parent-Request-Id\" = \"FOUR_HARNESS_PARENT_REQUEST_ID\" }\n[model_providers.four_harness_repair]\nname = \"four-harness R repair\"\nbase_url = \"http://127.0.0.1:1/R/repair/v1\"\nwire_api = \"responses\"\nenv_key = \"FOUR_HARNESS_REPAIR_TOKEN\"\nrequires_openai_auth = false\nrequest_max_retries = 0\nstream_max_retries = 0\nsupports_websockets = false\n[model_providers.four_harness_compaction]\nname = \"four-harness R compaction\"\nbase_url = \"http://127.0.0.1:1/R/compaction/v1\"\nwire_api = \"responses\"\nenv_key = \"FOUR_HARNESS_COMPACTION_TOKEN\"\nrequires_openai_auth = false\nrequest_max_retries = 0\nstream_max_retries = 0\nsupports_websockets = false\n",
-      "configuration_sha256": "540a32774f757c16ae2c53634ae5ffcef8361e06b7eea612540e3fa841b487ad"
+      "configuration": "model = \"gpt-6-astra\"\nmodel_provider = \"four_harness_generator\"\nmodel_reasoning_effort = \"max\"\nmodel_context_window = 65536\nmodel_auto_compact_token_limit = 49152\napproval_policy = \"never\"\nsandbox_mode = \"read-only\"\nweb_search = \"disabled\"\ncli_auth_credentials_store = \"ephemeral\"\nmcp_oauth_credentials_store = \"file\"\ncheck_for_update_on_startup = false\n[analytics]\nenabled = false\n[feedback]\nenabled = false\n[features]\nshell_tool = false\nunified_exec = false\napply_patch_freeform = false\nunbounded_connection_retries = false\nrespect_system_proxy = false\nsystem_proxy_fallback = false\nmulti_agent = true\napps = false\nplugins = false\n[model_providers.four_harness_generator]\nname = \"four-harness R generator\"\nbase_url = \"http://127.0.0.1:1/R/generator/v1\"\nwire_api = \"responses\"\nenv_key = \"FOUR_HARNESS_GENERATOR_TOKEN\"\nrequires_openai_auth = false\nrequest_max_retries = 0\nstream_max_retries = 0\nsupports_websockets = false\n[model_providers.four_harness_strategy]\nname = \"four-harness R strategy\"\nbase_url = \"http://127.0.0.1:1/R/strategy/v1\"\nwire_api = \"responses\"\nenv_key = \"FOUR_HARNESS_STRATEGY_TOKEN\"\nrequires_openai_auth = false\nrequest_max_retries = 0\nstream_max_retries = 0\nsupports_websockets = false\n[model_providers.four_harness_verifier]\nname = \"four-harness R verifier\"\nbase_url = \"http://127.0.0.1:1/R/verifier/v1\"\nwire_api = \"responses\"\nenv_key = \"FOUR_HARNESS_VERIFIER_TOKEN\"\nrequires_openai_auth = false\nrequest_max_retries = 0\nstream_max_retries = 0\nsupports_websockets = false\nenv_http_headers = { \"X-Four-Parent-Request-Id\" = \"FOUR_HARNESS_PARENT_REQUEST_ID\" }\n[model_providers.four_harness_repair]\nname = \"four-harness R repair\"\nbase_url = \"http://127.0.0.1:1/R/repair/v1\"\nwire_api = \"responses\"\nenv_key = \"FOUR_HARNESS_REPAIR_TOKEN\"\nrequires_openai_auth = false\nrequest_max_retries = 0\nstream_max_retries = 0\nsupports_websockets = false\n[model_providers.four_harness_compaction]\nname = \"four-harness R compaction\"\nbase_url = \"http://127.0.0.1:1/R/compaction/v1\"\nwire_api = \"responses\"\nenv_key = \"FOUR_HARNESS_COMPACTION_TOKEN\"\nrequires_openai_auth = false\nrequest_max_retries = 0\nstream_max_retries = 0\nsupports_websockets = false\n",
+      "configuration_sha256": "d2e5c36acb0ad4794428ccd20441d98e8621098b6f5efdf1e90bd94aa2cc362a"
     },
     {
       "id": "M",
       "name": "dsh-math-adapted",
       "commit": "ffc582c52585d958bcb3198259ea27c69ee6f8bb",
-      "adapter_sha256": "3a5f4791b72eb9b7a8cbef799d33c3ca7dd0249c148ae559b35e28b13237ff6e",
-      "prompt_sha256": "1645f8b4e4596cfaca86fae337fb1aeff92867222ad8b88bc8354e2850923c32",
+      "adapter_sha256": "74471dd6eed417a8cbef417de2001b405af80a7a79c30b720f79888ce9295495",
+      "prompt_sha256": "68bf184b2447d1b54d5d6c8cc958e8d4ec187ffd827257240f1098d209f70e40",
       "qualification": "offline_evidence_required_live_blocked",
       "source": {
         "repository": "https://github.com/ChangyuZeng/DSH-Math-Dev",
@@ -252,15 +262,12 @@
           "max_output_tokens": 16384,
           "context_tokens": 65536,
           "tool_calls": 500,
-          "cpu_cores": 2,
-          "cpu_seconds": 14400,
-          "memory_bytes": 4294967296,
           "artifact_bytes": 1073741824,
           "tool_timeout_seconds": 60
         },
         "workflow_base": "ffc582c52585d958bcb3198259ea27c69ee6f8bb"
       },
-      "configuration_sha256": "304e85f0b9b256bb4de8ec12b7b993109ccfaef636dcf9be50cb4d7a330210d3"
+      "configuration_sha256": "f65e983edd05db35734d3abe0d1505d3907b733497141d83524781c64b13889b"
     }
   ],
   "repeats_per_arm": 5,
@@ -273,11 +280,32 @@
     "max_output_tokens": 16384,
     "context_tokens": 65536,
     "tool_calls": 500,
-    "cpu_cores": 2,
-    "cpu_seconds": 14400,
-    "memory_bytes": 4294967296,
     "artifact_bytes": 1073741824,
     "tool_timeout_seconds": 60
+  },
+  "resource_policy": {
+    "mode": "observed",
+    "scope": "per_tool_and_sampled_native_process_tree",
+    "equal_cpu_or_memory_budget": false,
+    "whole_process_tree_complete": false,
+    "cpu_core_limit": null,
+    "aggregate_cpu_limit": null,
+    "host_protection_is_fair_budget": false,
+    "missing_observations": null,
+    "nested_tool_cpu_additive": false,
+    "process_and_tool_cpu_additive": false
+  },
+  "information_policy": {
+    "start": "cold",
+    "external_network": "gateway_only_no_retrieval",
+    "materials": "canonical_task_and_submission_only",
+    "public_baseline_or_routes_visible": false,
+    "previous_runs_visible": false,
+    "same_run_memory_allowed": true,
+    "cross_run_memory_allowed": false,
+    "training_exposure": "unknown",
+    "provider_cache_state": "not_controlled",
+    "midpoint_continuation": "separate_future_experiment"
   },
   "live_smoke": {
     "format": "four-harness-smoke-proposal-v1",
@@ -291,6 +319,157 @@
     },
     "fallback_allowed": false,
     "prompt": "Non-target qualification only. Read the common material, compute 2 + 3 using the common compute tool, and report 5. Do not search or solve Ring15.",
+    "protocol": "four-harness-mac-cold-start-v2",
+    "information_policy": {
+      "start": "cold",
+      "external_network": "gateway_only_no_retrieval",
+      "materials": "canonical_task_and_submission_only",
+      "public_baseline_or_routes_visible": false,
+      "previous_runs_visible": false,
+      "same_run_memory_allowed": true,
+      "cross_run_memory_allowed": false,
+      "training_exposure": "unknown",
+      "provider_cache_state": "not_controlled",
+      "midpoint_continuation": "separate_future_experiment"
+    },
+    "cold_input": {
+      "protocol": "four-harness-mac-cold-start-v2",
+      "scope": "smoke",
+      "files_sha256": {
+        "task.txt": "684a280364ccd753b7e791e241b1cad706780b3a8c5a674c227199c65d884a0a",
+        "submission.txt": "6b21d72359fd25e3784d074e67aa32603fbd1539ea7d06d9ccfe6efb785dc6ed"
+      },
+      "materials_sha256": "58e4d4664fd0775d448d8f3c5a4d8c156380c2535e3d7b8acedce82e7ecc35b3",
+      "information_policy": {
+        "start": "cold",
+        "external_network": "gateway_only_no_retrieval",
+        "materials": "canonical_task_and_submission_only",
+        "public_baseline_or_routes_visible": false,
+        "previous_runs_visible": false,
+        "same_run_memory_allowed": true,
+        "cross_run_memory_allowed": false,
+        "training_exposure": "unknown",
+        "provider_cache_state": "not_controlled",
+        "midpoint_continuation": "separate_future_experiment"
+      },
+      "execution_authorized": false
+    },
+    "resource_policy": {
+      "mode": "observed",
+      "scope": "per_tool_and_sampled_native_process_tree",
+      "equal_cpu_or_memory_budget": false,
+      "whole_process_tree_complete": false,
+      "cpu_core_limit": null,
+      "aggregate_cpu_limit": null,
+      "host_protection_is_fair_budget": false,
+      "missing_observations": null,
+      "nested_tool_cpu_additive": false,
+      "process_and_tool_cpu_additive": false
+    },
+    "common_tools": [
+      {
+        "type": "function",
+        "name": "materials_list",
+        "description": "List the frozen common materials by ID and hash.",
+        "parameters": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false
+        }
+      },
+      {
+        "type": "function",
+        "name": "materials_read",
+        "description": "Read a byte window of a frozen material.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "offset": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "length": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65536
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "type": "function",
+        "name": "workspace_read",
+        "description": "Read a byte window of a file in this run only.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "offset": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "length": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65536
+            }
+          },
+          "required": [
+            "path"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "type": "function",
+        "name": "workspace_write",
+        "description": "Write a bounded UTF-8 file in this run only.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "path",
+            "text"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "type": "function",
+        "name": "compute",
+        "description": "Run Python in the fixed offline compute sandbox.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "additionalProperties": false
+        }
+      }
+    ],
+    "target_checker_and_submission_allowed": false,
     "per_run_budget": {
       "wall_seconds": 180,
       "model_requests": 2,
@@ -298,9 +477,6 @@
       "max_output_tokens": 2048,
       "context_tokens": 65536,
       "tool_calls": 8,
-      "cpu_cores": 2,
-      "cpu_seconds": 120,
-      "memory_bytes": 4294967296,
       "artifact_bytes": 16777216,
       "tool_timeout_seconds": 10
     },
@@ -336,11 +512,12 @@
     ],
     "limits": [
       "Two requests cannot prove full Xean/Rethlas multi-role or long-context behavior",
-      "Resolver, provider output semantics, hard resource containment and all-arm native fixtures remain prerequisite gates"
+      "Resolver, provider output semantics, strict information isolation and native paths remain prerequisite gates; CPU/RSS are observations with separate host protection"
     ],
     "authorization": "Requires a new explicit human authorization after the concrete manifest and failed gates are reviewed"
   },
-  "network_during_research": false,
+  "network_during_research": "numeric_loopback_gateway_only",
+  "external_retrieval": false,
   "cross_run_memory": false,
   "automatic_replacement_runs": false,
   "gates": {
@@ -350,33 +527,38 @@
     "common_tools_qualified": false,
     "all_calls_metered": false,
     "budget_enforcement": false,
+    "strict_information_isolation": false,
+    "resource_observations_audited": false,
     "model_identity": false,
     "arm_versions_frozen": false,
     "human_run_authorization": false
   },
   "adapter_sources_sha256": {
-    "ledger.py": "75370728d05b0c8f1a50a65fd9c808f69ba5d644733be14b5d7c5abbf406baff",
-    "gateway.py": "bee96c279b0b87c626505170685942b719fc35671a25a9934360c4ad78035675",
-    "mcp.py": "cdeed74ec3d4c42eb0ec5fe7e5c9a657c961f56756c2c724a70d3a343dfe0df4",
-    "native.py": "c0a08a7713eabd51fd27d0d354cfd4691b4aa7b09858a9a441f525d7fab8289e",
-    "tools.py": "83f226d37eb8b54fe7821051c41b17dca001c9eb48d7bd3f32ba12c358b5b0ca",
-    "compute_child.py": "2507a66436c024aa2cecae9b265553720e129e3026f8ca4156d549c8e47f2533",
-    "m_adapter.mjs": "1e18aa104ab4ffb02458169fa287804e982fd8937c5b75d8fc655a832f2f0426",
+    "ledger.py": "d6ef71ce707f506168e070a71057cba7ff4491f6e26fd2fbbc7c9141c4b8b5de",
+    "gateway.py": "15e5995ababaf7efec0d2f37cc393594619a2d525b63f5659a143c410ac1fc87",
+    "mcp.py": "41fdcaf909d5ae4d46b4d1bac0e2a9d3982b625c5133f612b4694b17d3a2879f",
+    "native.py": "1434e04cea8fef82a4080f14c5a5248965e1f551116dcd598d9558db0f9919f5",
+    "tools.py": "28b677039b4fd1b645a4a44adb103c123ffa888d7a900b3ff14148661670bb7c",
+    "compute_child.py": "ba4c3ae3e1c80cc95d5f379d50ef6e92b39bd936de90e079605d477c74a24a16",
+    "cold_start.py": "453c3bf81362dc52d98234541a2831b5dfc4e9f2e17834b45f1338be2f9f2a26",
+    "observation.py": "fa9465309cd213b109e45a8bdbbda6370697f41709912f8ab7f6b6e7c9e5f119",
+    "m_adapter.mjs": "0cf5089a0ec3261da003ffba395e5e57da6aeb5ca180e7d943b12a28b7857c14",
     "m_service.py": "461d4a6bd159c6b3c059523aeb09674c3868204f0d4227ad78f22842ba701c45",
-    "qualify.py": "9205227766bfa338d2c5b64f99eb50658fa90824355dbdf930a3a33467112fdc",
-    "x_full.py": "2216e5b296ee26e0fc28fcf80382dfed5233e30b45546904007276fb92ba949d",
-    "m_bridge.mjs": "da82c8fdbdc55a8c5ff2290cb41c9227b2277041ee68f36d1ac95c5433ae499e",
+    "qualify.py": "0d0ad213163199688f020937c764f451752441055329d283d14330b379bfb738",
+    "x_full.py": "ec0e228cd30f05c3f150f3af45cc297e941b1765cdf92ad24caf9dac628e5833",
+    "m_bridge.mjs": "c7061ed5f6206ffb5c77621f6b50c1a9ff407c7522b23189aac7af19746279d1",
+    "patches/rethlas-codex-fixture.py": "6230ff867ae4b264a68b3aa94d9cd93d2c7edd66211ccf8f2bf058550732f43f",
     "patches/rethlas-fixture-child.py": "a9f2bbd4c91245904aec29fe2a063f032eff365a72a843ed4fe9ea0f2492a8ee",
     "patches/rethlas-fixture.md": "9cdf6cfd19b16643e95d77723f818e2e5f9162a546ccbaa613cd227631654119",
-    "patches/rethlas-mcp-fixture-child.py": "ee3007b1415ada50f1b5f20215d0af50fcfce52bad6201854d2474c1e0fa560e",
-    "patches/rethlas-mcp-fixture.py": "85632360d5a108dc89b9363ee3c4fc94385b2a48b2267c47ef4b82cdd4d12ff4",
+    "patches/rethlas-mcp-fixture-child.py": "d0645172b07c68aecaee671628b6191f00c92927b8e88761e6d79dd364f6c17b",
+    "patches/rethlas-mcp-fixture.py": "5fcaa1d6ef71d9dc5e6b9787d716f660ce026fb5fa2386065cc30c45cc21d7c9",
     "patches/rethlas-mcp-requirements.txt": "8e48e9b01ae17535d0f1cb71d2b870580474b1f76cd9c6efcc05328a487d5d96",
-    "patches/rethlas-mcp.py": "38665e2cd1419d038bd57b2b92216e67480ecbfac973f573e3e1e3c19253890c",
+    "patches/rethlas-mcp.py": "0319627844df2b9e0f1df31b0b5b916e55d22b718d34a1fe945f9b802a29cf29",
     "patches/rethlas-verifier-fixture.py": "f9a6afe8f645af8ddbe32224d81a9ef790d3682cf56c879657f099b61f472a49",
-    "patches/rethlas.json": "b7a7e5df65f1478c5d61c540f6d27b6c3883fdb13d37bb02387ac3edab6dead8",
+    "patches/rethlas.json": "2f31ba67d825d31e3f5bb442fd8e2becffaa525cc0ea5a9302e520fc66c56d13",
     "patches/xean-fixture.ts": "5538ecf4bebba4d4b23f2535f35ed41ed24f17879cc3bcee6b6bd9d8ee09463c",
     "patches/xean-host-fixture.ts": "9c67c92e3ca8ee2d672828e52ec3cbf34c120b085f0103583044b0ccb656ebea",
-    "patches/xean-native.ts": "d877ab5a4faee789e119155b044e1973b4aa2842ba8732d0aa678a1585c84483",
+    "patches/xean-native.ts": "1ab5243de299827626a941f3fdef0c3b378e7eab011d141ff1b4743b01e3a621",
     "patches/xean.json": "54338f95b006feb15dc5fcae8a3bf893143d529ce036a1262449f01463a12d1c"
   },
   "tool_schema_sha256": "f490def33a107603b9de0be1984289d447d183656c39505152fb950ce086e256",
@@ -515,11 +697,34 @@
     "python_libraries": "stdlib-only for shared compute; no site packages",
     "qualified": false
   },
+  "cold_input": {
+    "protocol": "four-harness-mac-cold-start-v2",
+    "scope": "formal",
+    "files_sha256": {
+      "task.txt": "d78423ed66789ed0f0c06718026ed19b8a8e89903d4707914db742d9e9f76558",
+      "submission.txt": "d4e6dca441a11a9d6e8a69b4cc726dd96cf2a31037d8fa4823f3630532661380"
+    },
+    "materials_sha256": "7c470e2d835224d98853b502ee205572cd6bd2ec67e2e2b238476c03d9e5d6fa",
+    "information_policy": {
+      "start": "cold",
+      "external_network": "gateway_only_no_retrieval",
+      "materials": "canonical_task_and_submission_only",
+      "public_baseline_or_routes_visible": false,
+      "previous_runs_visible": false,
+      "same_run_memory_allowed": true,
+      "cross_run_memory_allowed": false,
+      "training_exposure": "unknown",
+      "provider_cache_state": "not_controlled",
+      "midpoint_continuation": "separate_future_experiment"
+    },
+    "execution_authorized": false
+  },
   "pending_gates": [
     "live provider identity, pricing and request/output semantics",
-    "hard aggregate CPU/core/memory/artifact watchdog for complete harness process trees",
+    "strict external-information isolation for complete native process trees",
     "all native role/descendant and compaction paths reach the shared ledger",
-    "published material freeze, frontier refresh and independent reviewers",
+    "wall/artifact limits and truthful host-protection observations",
+    "canonical cold-input review; operator-only frontier refresh and independent reviewers",
     "explicit separate smoke and formal human approvals"
   ]
 }

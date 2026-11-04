@@ -20,11 +20,16 @@ import uuid
 POLICY = {"provider": "openai-codex", "model": "gpt-6-astra", "effort": "max"}
 FORMAL_BUDGET = dict(wall_seconds=7200, model_requests=120, total_tokens=1000000,
                      max_output_tokens=16384, context_tokens=65536, tool_calls=500,
-                     cpu_cores=2, cpu_seconds=14400, memory_bytes=4294967296,
                      artifact_bytes=1073741824, tool_timeout_seconds=60)
 SMOKE_BUDGET = {**FORMAL_BUDGET, 'wall_seconds': 180, 'model_requests': 2, 'total_tokens': 32768,
-                'max_output_tokens': 2048, 'tool_calls': 8, 'cpu_seconds': 120,
+                'max_output_tokens': 2048, 'tool_calls': 8,
                 'tool_timeout_seconds': 10, 'artifact_bytes': 16777216}
+RESOURCE_POLICY = {'mode': 'observed', 'scope': 'per_tool_and_sampled_native_process_tree',
+                   'equal_cpu_or_memory_budget': False, 'whole_process_tree_complete': False,
+                   'cpu_core_limit': None, 'aggregate_cpu_limit': None,
+                   'host_protection_is_fair_budget': False,
+                   'missing_observations': None, 'nested_tool_cpu_additive': False,
+                   'process_and_tool_cpu_additive': False}
 ROLES = {"C": {"agent", "compaction"}, "X": {"coordinator", "explorer", "verifier", "compaction"},
          "R": {"generator", "strategy", "verifier", "repair", "compaction"},
          "M": {"worker", "compaction"}}
@@ -201,7 +206,8 @@ class Ledger:
             db.execute("INSERT INTO runs VALUES(?,?,?,?,?,?,NULL)",
                        (run_id, campaign_id, arm, canonical(dict(budget=budget, frozen=frozen or {}, model=POLICY)),
                         time.time(), time.monotonic()))
-            self._event(db, run_id, "run_created", arm=arm, frozen=frozen or {}, budget=budget)
+            self._event(db, run_id, "run_created", arm=arm, frozen=frozen or {}, budget=budget,
+                        resource_policy=RESOURCE_POLICY)
 
     def _run(self, db, run_id, *, active=True):
         run = db.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
@@ -450,10 +456,10 @@ class Ledger:
                 budget = json.loads(run["spec"])["budget"]
                 rows = db.execute("SELECT * FROM tools WHERE run=?", (run_id,)).fetchall()
                 require(len(rows) < budget["tool_calls"], "TOOL_BUDGET", "Tool call limit exhausted")
-                cpu = sum(row["cpu"] if row["cpu"] is not None else row["cpu_reservation"] for row in rows)
-                reservation = budget["tool_timeout_seconds"] * budget["cpu_cores"]
-                require(cpu + reservation <= budget["cpu_seconds"], "CPU_BUDGET", "Cannot reserve tool CPU budget")
-                db.execute("INSERT INTO tools VALUES(?,?,'started',?,NULL,NULL)", (tool_id, run_id, reservation))
+                # CPU is an observation under the Mac cold-start protocol, not a
+                # fair budget. The legacy column records zero reserved CPU only;
+                # an absent observation remains SQL NULL and is never cost zero.
+                db.execute("INSERT INTO tools VALUES(?,?,'started',0,NULL,NULL)", (tool_id, run_id))
             elif kind == "tool_finished":
                 row = db.execute("SELECT * FROM tools WHERE id=? AND run=?", (tool_id, run_id)).fetchone()
                 require(row is not None and row["state"] in {"started", "unknown"}, "TOOL_SCHEMA", "Unreserved tool completion")
@@ -463,10 +469,16 @@ class Ledger:
                     event = {**event, "late_receipt": True}
                 metrics = event.get("metrics", event)
                 cpu = metrics.get("cpu_seconds")
-                require(type(cpu) in {int, float} and math.isfinite(cpu) and cpu >= 0, "TOOL_USAGE", "CPU usage missing")
+                require(cpu is None or (type(cpu) in {int, float} and math.isfinite(cpu) and cpu >= 0),
+                        "TOOL_USAGE", "CPU observation must be nonnegative or null")
+                flags = [metrics[key] for key in ('cpu_observation_complete', 'cpu_accounting_complete') if key in metrics]
+                require(all(flag is None or type(flag) is bool for flag in flags), 'TOOL_USAGE', 'CPU completeness must be boolean or null')
+                complete = (False if cpu is None or False in flags else
+                            True if flags and all(flag is True for flag in flags) else None)
+                metrics = {**metrics, 'cpu_observation_complete': complete,
+                           'resource_scope': 'observed_not_equal_budget'}
+                event = {**event, 'metrics': metrics}
                 db.execute("UPDATE tools SET state='finished',cpu=?,metrics=? WHERE id=?", (cpu, canonical(metrics), tool_id))
-                if cpu > row["cpu_reservation"]:
-                    self._close(db, run_id, "tool_cpu_exceeded")
             else:
                 raise GateError("TOOL_SCHEMA", "Unknown tool event")
             self._event(db, run_id, kind, tool=event)
@@ -481,13 +493,21 @@ class Ledger:
             run = self._run(db, run_id, active=False)
             rows = db.execute("SELECT * FROM requests WHERE run=?", (run_id,)).fetchall()
             usages = [json.loads(row["usage"]) for row in rows if row["usage"]]
+            tools = db.execute("SELECT * FROM tools WHERE run=?", (run_id,)).fetchall()
+            resource_observations = {**RESOURCE_POLICY, 'tool_count': len(tools),
+                'tool_cpu_complete': all(tool['state'] == 'finished' and tool['cpu'] is not None and
+                    tool['metrics'] is not None and json.loads(tool['metrics']).get('cpu_observation_complete') is True
+                    for tool in tools),
+                'tools': [{'id': tool['id'], 'state': tool['state'], 'cpu_seconds': tool['cpu'],
+                           'metrics': json.loads(tool['metrics']) if tool['metrics'] else None} for tool in tools],
+                'aggregate_cpu_seconds': None}
             complete = all(row["state"] == "finished" and row["usage"] and json.loads(row["usage"])["complete"] for row in rows)
             return dict(run_id=run_id, arm=run["arm"], terminal=run["terminal"], requests=len(rows),
                         known_total_tokens=sum(self._known_lower_bound(u) for u in usages),
                         total_tokens=sum(u["total_tokens"] for u in usages) if complete else None,
                         charged_or_reserved_tokens=self._cost(rows), accounting_complete=complete,
                         detail_complete=complete and all(u["detail_complete"] for u in usages),
-                        request_states=[dict(row) for row in rows])
+                        request_states=[dict(row) for row in rows], resource_observations=resource_observations)
 
     def events(self):
         with self.connection() as db:

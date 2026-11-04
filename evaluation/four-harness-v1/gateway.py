@@ -14,7 +14,8 @@ import secrets
 import threading
 from urllib.parse import urlsplit
 
-from ledger import GateError, POLICY, canonical, digest, require, native_identity
+from ledger import GateError, POLICY, RESOURCE_POLICY, canonical, digest, require, native_identity
+from cold_start import INFORMATION_POLICY, canonical_inputs
 
 # Tool contracts are shared by MCP, Pi and the workflow worker. Names use API-
 # compatible underscores; internal dotted names have exactly the same semantics.
@@ -43,14 +44,18 @@ INTERNAL_NAMES = {'materials_list': 'materials.list', 'materials_read': 'materia
                   **{name: name for name in ('compute', 'check', 'submit')}}
 
 
-def responses_tools():
+def target_tool(name):
+    return isinstance(name, str) and name.rsplit('__', 1)[-1] in {'check', 'submit'}
+
+
+def responses_tools(scope=None):
     return [dict(type='function', name=name, description=description, parameters=parameters)
-            for name, description, parameters in TOOL_SCHEMAS]
+            for name, description, parameters in TOOL_SCHEMAS if scope != 'smoke' or not target_tool(name)]
 
 
-def mcp_tools():
-    return [dict(name=name, description=description, inputSchema=parameters)
-            for name, description, parameters in TOOL_SCHEMAS]
+def mcp_tools(scope=None):
+    return [dict(name=tool['name'], description=tool['description'], inputSchema=tool['parameters'])
+            for tool in responses_tools(scope)]
 
 
 def as_sse(response):
@@ -143,6 +148,35 @@ class Gateway:
         self.tools = tools or {}
         self.allowed_tools = allowed_tools or {}
         self.intrinsic_tools = intrinsic_tools or {}  # (run_id, role) -> exact native state-tool names
+        self.cold_scopes = {}
+        with ledger.connection() as db:
+            for run_id in {binding['run_id'] for binding in self.bindings.values()}:
+                run = ledger._run(db, run_id)
+                campaign = db.execute('SELECT spec FROM campaign WHERE id=?', (run['campaign'],)).fetchone()
+                scope = json.loads(campaign['spec'])['scope']
+                if scope in {'smoke', 'formal'}:
+                    self.cold_scopes[run_id] = scope
+        self.cold_accounting = {}
+        for run_id in self.cold_scopes:
+            from tools import CommonTools
+            host = self.tools.get(run_id)
+            require(type(host) is CommonTools and host.run_id == run_id,
+                    'COLD_RUN_BINDING', 'Cold tools must belong to this exact run')
+            require(host.pristine_for_cold_start(), 'COLD_STATE', 'Cold tools must have empty state and no prior tool attempts')
+            with ledger.connection() as db:
+                run = ledger._run(db, run_id)
+                budget = json.loads(run['spec'])['budget']
+            require(host.limits.timeout_seconds <= budget['tool_timeout_seconds'] and
+                    host.limits.artifact_bytes <= budget['artifact_bytes'],
+                    'TOOL_BUDGET', 'Common tool timeout/artifact limits exceed the run budget')
+            def account(event, run_id=run_id):
+                require(event.get('run_id') == run_id, 'COLD_RUN_BINDING', 'Tool receipt belongs to another run')
+                ledger.tool_event(run_id, event)
+            # The gateway owns the mandatory callback, not a caller-supplied
+            # optional lambda which could silently charge a different ledger/run.
+            host.accounting = account
+            self.cold_accounting[run_id] = account
+            self.check_cold_materials(run_id)
         self.inject_output_cap = inject_output_cap
         self.cancel_event = threading.Event()
         require(isinstance(drain_timeout, (int, float)) and 0 <= drain_timeout <= 30,
@@ -202,13 +236,17 @@ class Gateway:
                     payload = json.loads(raw)
                     require(type(payload) is dict, 'SCHEMA', 'Expected request object')
                     require(not gateway.cancel_event.is_set(), 'STOPPED', 'Gateway has stopped')
+                    gateway.check_cold_materials(run_id)
                     if path.path.endswith('/manifest'):
                         require(payload == {}, 'SCHEMA', 'Manifest request must be empty')
                         with gateway.ledger.connection() as db:
                             frozen = json.loads(gateway.ledger._run(db, run_id)['spec'])
                         self.reply(200, {'offline': gateway.is_offline, 'model_policy': POLICY,
-                                         'tools': responses_tools(), 'context_window': frozen['budget']['context_tokens'],
-                                         'budget': frozen['budget']})
+                                         'tools': responses_tools(gateway.cold_scopes.get(run_id)), 'scope': gateway.cold_scopes.get(run_id, 'offline'),
+                                         'context_window': frozen['budget']['context_tokens'],
+                                         'budget': frozen['budget'], 'resource_policy': RESOURCE_POLICY,
+                                         'information_policy': INFORMATION_POLICY,
+                                         'canonical_cold_input_checked': run_id in gateway.cold_scopes})
                         return
                     metadata = codex_metadata(payload, self.headers.get('X-Codex-Turn-Metadata'),
                                               required=binding.get('require_native_metadata', False))
@@ -235,6 +273,8 @@ class Gateway:
                     if path.path.endswith('/tools'):
                         require(set(payload) == {'name', 'arguments'} and payload['name'] in INTERNAL_NAMES,
                                 'TOOL_NOT_ALLOWED', 'Only common tool names are permitted')
+                        require(gateway.cold_scopes.get(run_id) != 'smoke' or not target_tool(payload['name']),
+                                'TOOL_NOT_ALLOWED', 'Target checker/submission is unavailable in non-target smoke')
                         require(run_id in gateway.tools, 'TOOLS_UNAVAILABLE', 'Common tools not bound')
                         result = gateway.tools[run_id].call(INTERNAL_NAMES[payload['name']], payload['arguments'],
                                                             cancel_event=gateway.cancel_event)
@@ -246,8 +286,17 @@ class Gateway:
                         return
                     require('provider' not in payload or payload['provider'] == POLICY['provider'], 'MODEL_DRIFT', 'Provider drift')
                     payload.pop('provider', None)
+                    request_input = payload.get('input', [])
+                    # Codex code-mode can place an additional_tools namespace in
+                    # input rather than the ordinary tools array. This route has
+                    # no qualified executor/accounting adaptation yet.
+                    require(not (isinstance(request_input, list) and any(
+                        isinstance(item, dict) and item.get('type') == 'additional_tools' for item in request_input)),
+                        'TOOL_NOT_ALLOWED', 'Native additional_tools/code-mode namespaces are not qualified')
                     declared = payload.get('tools', [])
                     allowed = gateway.allowed_tools.get(run_id, TOOL_NAMES)
+                    if gateway.cold_scopes.get(run_id) == 'smoke':
+                        allowed = {name for name in allowed if not target_tool(name)}
                     require(type(declared) is list, 'TOOL_NOT_ALLOWED', 'Invalid tools declaration')
                     for tool in declared:
                         require(type(tool) is dict and tool.get('type') == 'function' and tool.get('name') in allowed,
@@ -319,6 +368,19 @@ class Gateway:
         self.server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
         self.server.daemon_threads = True
         self.url = f'http://127.0.0.1:{self.server.server_port}'
+
+    def check_cold_materials(self, run_id):
+        scope = self.cold_scopes.get(run_id)
+        if scope is None:
+            return
+        host = self.tools.get(run_id)
+        require(getattr(host, 'run_id', None) == run_id and host.accounting is self.cold_accounting.get(run_id),
+                'COLD_RUN_BINDING', 'Cold tool identity or mandatory accounting binding changed')
+        require(callable(getattr(host, 'material_inventory', None)), 'COLD_INPUT', 'Canonical cold material inventory is required')
+        import hashlib
+        expected = [{'id': name, 'size': len(data), 'sha256': hashlib.sha256(data).hexdigest()}
+                    for name, data in sorted(canonical_inputs(scope).items())]
+        require(host.material_inventory() == expected, 'COLD_INPUT', 'Smoke/formal input must match the canonical cold task exactly')
 
     def start(self):
         require(self.thread is None, 'ALREADY_STARTED', 'Gateway already started')

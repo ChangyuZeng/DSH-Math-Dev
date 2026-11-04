@@ -178,7 +178,7 @@ def xean_full_fixture(root, *, source_copy, bun, max_output_tokens=MAX_OUTPUT, s
             row["thread"] == str(request["native"]["conversation"]["id"])
             for index, (row, request) in enumerate(zip(rows, physical)) if index))
     blockers = ["NATIVE_FORK_RESUME_NOT_EXERCISED", "NATIVE_PARALLEL_DESCENDANTS_NOT_EXERCISED", "NATIVE_COMPACTION_NOT_EXERCISED",
-                "NATIVE_CODEX_SOURCE_SEARCH_BRANCH_NOT_EXERCISED", "NATIVE_PROCESS_RESOURCE_LIMITS_NOT_QUALIFIED"]
+                "NATIVE_CODEX_SOURCE_SEARCH_BRANCH_NOT_EXERCISED", "NATIVE_STATE_ARTIFACT_LIMITS_NOT_QUALIFIED"]
     if not host_complete:
         blockers.insert(0, "FULL_X_HOST_PATH_INCOMPLETE")
     if not parent_qualified:

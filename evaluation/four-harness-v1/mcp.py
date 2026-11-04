@@ -11,11 +11,6 @@ from urllib.error import HTTPError
 from urllib.parse import urlsplit
 from urllib.request import Request, ProxyHandler, build_opener
 
-# -I omits this script directory; add only its resolved immutable source folder.
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from gateway import mcp_tools
-
 
 def serve(url, token, input_stream=sys.stdin, output_stream=sys.stdout):
     parsed = urlsplit(url)
@@ -37,7 +32,12 @@ def serve(url, token, input_stream=sys.stdin, output_stream=sys.stdout):
             elif method == 'ping':
                 result = {}
             elif method == 'tools/list':
-                result = {'tools': mcp_tools()}
+                req = Request(url.removesuffix('/tools') + '/manifest', b'{}',
+                              {'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json'})
+                with opener.open(req, timeout=15) as response:
+                    manifest = json.load(response)
+                result = {'tools': [{'name': tool['name'], 'description': tool['description'], 'inputSchema': tool['parameters']}
+                                    for tool in manifest['tools']]}
             elif method == 'tools/call':
                 data = json.dumps({'name': params['name'], 'arguments': params.get('arguments', {})}).encode()
                 headers = {'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json'}

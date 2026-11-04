@@ -13,7 +13,8 @@ if (!Number.isSafeInteger(outputCap) || outputCap <= 0 || outputCap > 16384)
 const routes = JSON.parse(process.env.FOUR_HARNESS_ROUTES ?? "null");
 if (!routes || process.env.FOUR_HARNESS_OFFLINE_FIXTURE !== "1")
   throw new Error("Native X requires explicit isolated offline gateway routes");
-for (const role of ["explorer", "coordinator", "verifier"]) {
+const roles = ["explorer", "coordinator", "verifier"] as const;
+for (const role of roles) {
   const route = routes[role], url = new URL(route?.url ?? "about:blank");
   if (url.protocol !== "http:" || url.hostname !== "127.0.0.1" || !url.port ||
       url.pathname !== `/X/${role}` || url.username || url.password || url.search || url.hash || !route.token)
@@ -54,7 +55,38 @@ export const meteredTool: typeof defineTool = (options) => {
     }
   } });
 };
-export const commonTools = declarations.map((tool: any) => defineTool({
+const canonical = (value: unknown) => JSON.stringify(value, (_key, item) =>
+  item && typeof item === "object" && !Array.isArray(item)
+    ? Object.fromEntries(Object.keys(item).sort().map((key) => [key, item[key]])) : item);
+async function admittedDeclarations() {
+  // Authenticate every role before native tools or model calls can be registered.
+  // The frozen file is the schema authority; a manifest only admits a subset.
+  const manifests = await Promise.all(roles.map((role) => post(routes[role], "/manifest", {})));
+  const frozen = new Map(declarations.map((tool: any) => [tool.name, tool]));
+  let admission: string | undefined;
+  let names: string[] = [];
+  for (const manifest of manifests) {
+    if (manifest.offline !== true || !["offline", "smoke", "formal"].includes(manifest.scope) ||
+        canonical(manifest.model_policy) !== canonical({ provider: "openai-codex", model: "gpt-6-astra", effort: "max" }) ||
+        manifest.context_window !== 65536 || manifest.budget?.max_output_tokens !== outputCap ||
+        !Array.isArray(manifest.tools) || manifest.tools.length === 0)
+      throw new Error("Native X manifest policy differs from the frozen gateway");
+    names = [];
+    for (const tool of manifest.tools) {
+      if (!tool || typeof tool.name !== "string" || names.includes(tool.name) || !frozen.has(tool.name) ||
+          canonical(tool) !== canonical(frozen.get(tool.name)) ||
+          (manifest.scope === "smoke" && ["check", "submit"].includes(tool.name)))
+        throw new Error("Native X manifest contains an unknown, duplicate, or changed tool schema");
+      names.push(tool.name);
+    }
+    const current = canonical({ scope: manifest.scope, names: [...names].sort() });
+    if (admission !== undefined && admission !== current)
+      throw new Error("Native X manifest tool admission differs between roles");
+    admission = current;
+  }
+  return declarations.filter((tool: any) => names.includes(tool.name));
+}
+export const commonTools = (await admittedDeclarations()).map((tool: any) => defineTool({
   name: tool.name, description: tool.description, parameters: tool.parameters,
   callers: ["model"], replay: "unsafe", executionMode: "sequential",
   async execute(value: unknown, api: any, context: any) {

@@ -42,6 +42,9 @@ class QualificationEntryTests(unittest.TestCase):
         self.assertFalse(plan['authorized'])
         self.assertFalse(plan['executable'])
         self.assertFalse(plan['target_problem_allowed'])
+        self.assertFalse(plan['target_checker_and_submission_allowed'])
+        self.assertEqual({tool['name'] for tool in plan['common_tools']},
+                         {'materials_list', 'materials_read', 'workspace_read', 'workspace_write', 'compute'})
         self.assertEqual(plan['model'], {'provider': 'openai-codex', 'model': 'gpt-6-astra', 'effort': 'max'})
         self.assertEqual(sum(arm['max_requests'] for arm in plan['arms']), 8)
         self.assertEqual(plan['per_run_budget']['model_requests'], 2)
@@ -94,7 +97,11 @@ class QualificationEntryTests(unittest.TestCase):
         self.assertTrue(all(value is False for value in frozen['gates'].values()))
         self.assertTrue(all(not arm['source'].get('source_verified', False) for arm in frozen['arms'][:3]))
         self.assertEqual(frozen['model']['resolved_version'], None)
-        self.assertEqual(frozen['problem']['materials_sha256'], None)
+        self.assertEqual(frozen['problem']['materials_sha256'], frozen['cold_input']['materials_sha256'])
+        self.assertEqual(frozen['protocol_revision'], 'mac-cold-start-v2')
+        self.assertFalse(frozen['information_policy']['public_baseline_or_routes_visible'])
+        self.assertFalse(frozen['resource_policy']['equal_cpu_or_memory_budget'])
+        self.assertFalse({'cpu_seconds', 'cpu_cores', 'memory_bytes'} & frozen['per_run_budget'].keys())
         self.assertEqual(len(frozen['adapter_sources_sha256']['ledger.py']), 64)
         self.assertFalse(frozen['runtime']['qualified'])
 

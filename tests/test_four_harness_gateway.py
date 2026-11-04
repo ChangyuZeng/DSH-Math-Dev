@@ -84,6 +84,16 @@ class GatewayTests(unittest.TestCase):
         rejected = [e for e in self.ledger.events() if e['type'] == 'request_rejected']
         self.assertEqual(len(rejected), 3)
 
+    def test_native_additional_tools_cannot_bypass_top_level_allowlist(self):
+        gw = self.start()
+        for tools in [[{'type': 'function', 'name': 'shell'}],
+                      [{'type': 'namespace', 'name': 'functions', 'tools': [{'type': 'function', 'name': 'apply_patch'}]}]]:
+            status, reply = self.post(gw, {**self.payload, 'input': [{'type': 'additional_tools', 'tools': tools}], 'tools': []})
+            self.assertEqual(status, 409)
+            self.assertEqual(reply['error']['code'], 'TOOL_NOT_ALLOWED')
+        self.assertEqual(self.transport.requests, [])
+        self.assertEqual(self.ledger.snapshot('M1')['requests'], 0)
+
     def test_partial_receipt_never_becomes_zero_or_gets_replayed(self):
         partial = response(); partial['usage'] = {'output_tokens': 1}
         gw = self.start(FixtureTransport([partial, response()]))

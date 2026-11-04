@@ -47,8 +47,9 @@ export function createGatewayBindings({gateway, token, fetchImpl = globalThis.fe
     async preflight({requireOffline = true, signal} = {}) {
       const {value} = await post('manifest', {}, {signal});
       if (requireOffline && value.offline !== true) throw error('LIVE_DISABLED', 'This bridge CLI requires a verified offline fixture gateway');
-      if (!value.model_policy || !Array.isArray(value.tools) || !Number.isSafeInteger(value.context_window)) {
-        throw error('GATEWAY_MANIFEST', 'Gateway must declare exact model policy, common tools, and context window');
+      if (!value.model_policy || !Array.isArray(value.tools) || !Number.isSafeInteger(value.context_window)
+          || !['offline', 'formal', 'smoke'].includes(value.scope)) {
+        throw error('GATEWAY_MANIFEST', 'Gateway must declare exact model policy, tool scope, common tools, and context window');
       }
       manifest = structuredClone(value);
       return structuredClone(manifest);
@@ -61,7 +62,9 @@ export function createGatewayBindings({gateway, token, fetchImpl = globalThis.fe
     },
     async tools({name, arguments: args, signal}) {
       if (!manifest) throw error('PREFLIGHT_REQUIRED', 'Gateway manifest must be checked before tools');
-      if (!Object.hasOwn(API_NAMES, name)) throw error('TOOL_NOT_ALLOWED', 'Only the seven common tools are available');
+      if (!Object.hasOwn(API_NAMES, name) || !manifest.tools.some(schema => schema.name === API_NAMES[name])) {
+        throw error('TOOL_NOT_ALLOWED', 'Only tools admitted by the current scope are available');
+      }
       return (await post('tools', {name: API_NAMES[name], arguments: args}, {signal})).value;
     },
   });
@@ -118,7 +121,8 @@ export async function runBridge(argv, {env = process.env, stdin = process.stdin,
   const bootstrap = text.trim() ? JSON.parse(text) : {};
   const service = await createPythonWorkflowService({root: args.root, python: args.python});
   const adapter = createMAdapter({service, transport: bindings.transport, tools: bindings.tools,
-    toolSchemas: manifest.tools, resolvedModel: manifest.model_policy, contextWindow: manifest.context_window});
+    toolSchemas: manifest.tools, toolScope: manifest.scope,
+    resolvedModel: manifest.model_policy, contextWindow: manifest.context_window});
   await adapter.initialize({runId: args['run-id'], problem: bootstrap.problem ?? syntheticProblem(),
     modelPolicy: manifest.model_policy, budget: bootstrap.budget ?? {
       requests: manifest.budget?.model_requests, total_tokens: manifest.budget?.total_tokens,

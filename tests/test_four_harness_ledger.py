@@ -44,6 +44,36 @@ class LedgerTests(unittest.TestCase):
         self.ledger.start_request(rid)
         return rid
 
+    def test_numeric_cpu_subtotal_does_not_erase_incomplete_observation(self):
+        for tool, flags, expected in [
+            ('partial', {'cpu_observation_complete': False, 'cpu_accounting_complete': False}, False),
+            ('unattested', {}, None),
+            ('complete', {'cpu_accounting_complete': True}, True),
+        ]:
+            self.ledger.tool_event('C1', {'type': 'tool_started', 'request_id': tool})
+            self.ledger.tool_event('C1', {'type': 'tool_finished', 'request_id': tool,
+                'metrics': {'cpu_seconds': 0.25, **flags}})
+            rows = self.ledger.snapshot('C1')['resource_observations']['tools']
+            self.assertEqual(rows[-1]['cpu_seconds'], 0.25)
+            self.assertIs(rows[-1]['metrics']['cpu_observation_complete'], expected)
+        self.assertFalse(self.ledger.snapshot('C1')['resource_observations']['tool_cpu_complete'])
+
+    def test_cpu_is_observed_without_equal_budget_or_invented_totals(self):
+        self.assertFalse({'cpu_seconds', 'cpu_cores', 'memory_bytes'} & FORMAL_BUDGET.keys())
+        for tool, observed in [('long', 1000000.0), ('missing', None)]:
+            self.ledger.tool_event('C1', {'type': 'tool_started', 'request_id': tool})
+            self.ledger.tool_event('C1', {'type': 'tool_finished', 'request_id': tool, 'cpu_seconds': observed})
+        snapshot = self.ledger.snapshot('C1')
+        self.assertIsNone(snapshot['terminal'])
+        observed = snapshot['resource_observations']
+        self.assertFalse(observed['equal_cpu_or_memory_budget'])
+        self.assertFalse(observed['tool_cpu_complete'])
+        self.assertIsNone(observed['aggregate_cpu_seconds'])
+        self.assertEqual([row['cpu_seconds'] for row in observed['tools']], [1000000.0, None])
+        rid = self.dispatched()
+        self.ledger.finish_request(rid, response())
+        self.assertEqual(self.ledger.snapshot('C1')['requests'], 1)
+
     def test_usage_subsets_not_double_counted_and_details_remain_unknown(self):
         usage = normalize_usage(response()['usage'])
         self.assertEqual(usage['total_tokens'], 120)

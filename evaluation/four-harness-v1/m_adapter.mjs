@@ -12,7 +12,7 @@ export const WORKFLOW_SOURCE_PIN = Object.freeze({
   sha256: '9dc11c4f63c7bff9c9ece539331bf10f9007eb5f27f694e005caae7c76399410',
 });
 const OLD_SENTENCE = 'No tool or network calls are available.';
-const NEW_SENTENCE = 'Only the supplied benchmark tools are available: materials_list/read, workspace_read/write, compute, check, and submit. Use their common JSON contracts; network access is unavailable. After tool use return the required workflow proposal JSON.';
+const NEW_SENTENCE = 'Only the supplied benchmark tools are available. Use their common JSON contracts; network access is unavailable. After tool use return the required workflow proposal JSON.';
 export const COMMON_TOOL_NAMES = Object.freeze({materials_list: 'materials.list', materials_read: 'materials.read',
   workspace_read: 'workspace.read', workspace_write: 'workspace.write', compute: 'compute', check: 'check', submit: 'submit'});
 const hash = value => createHash('sha256').update(value).digest('hex');
@@ -73,14 +73,16 @@ export function normalizeResponsesUsage(raw) {
   return usage;
 }
 
-function validateTools(schemas) {
-  if (!Array.isArray(schemas) || schemas.length !== Object.keys(COMMON_TOOL_NAMES).length) {
-    throw fail('TOOLS', 'All seven common benchmark tool schemas are required');
+function validateTools(schemas, scope) {
+  if (!['offline', 'formal', 'smoke'].includes(scope)) throw fail('TOOLS_SCOPE', 'A known benchmark tool scope is required');
+  const admitted = new Set(Object.keys(COMMON_TOOL_NAMES).filter(name => scope !== 'smoke' || !['check', 'submit'].includes(name)));
+  if (!Array.isArray(schemas) || schemas.length !== admitted.size) {
+    throw fail('TOOLS', scope === 'smoke' ? 'All five non-target smoke tool schemas are required' : 'All seven common benchmark tool schemas are required');
   }
   const names = new Set();
   for (const schema of schemas) {
-    if (schema?.type !== 'function' || !Object.hasOwn(COMMON_TOOL_NAMES, schema.name) || names.has(schema.name) || !schema.parameters) {
-      throw fail('TOOLS', 'Use unique Responses function schemas with common safe tool names');
+    if (schema?.type !== 'function' || !admitted.has(schema.name) || names.has(schema.name) || !schema.parameters) {
+      throw fail('TOOLS', 'Use unique Responses function schemas admitted by the current scope');
     }
     names.add(schema.name);
   }
@@ -94,11 +96,12 @@ function validateTools(schemas) {
  * conservatively unknown. tools({name,arguments,callId,signal}) invokes the shared
  * tool implementation with dotted names and returns its JSON value unchanged.
  */
-export function createMAdapter({service, transport, tools, toolSchemas, resolvedModel, contextWindow}) {
+export function createMAdapter({service, transport, tools, toolSchemas, resolvedModel, contextWindow, toolScope = 'offline'}) {
   if (!service?.call || typeof transport !== 'function' || typeof tools !== 'function') {
     throw fail('CONFIG', 'A Python workflow service, metered transport, and common tools callback are required');
   }
-  const schemas = validateTools(toolSchemas), toolsHash = hash(canonical(schemas));
+  const schemas = validateTools(toolSchemas, toolScope), toolsHash = hash(canonical(schemas));
+  const admittedTools = new Set(schemas.map(schema => schema.name));
   let identity, runner, busy = false, activeAccounting, frozenSpec;
   const evidence = async () => (runner ??= await loadBenchmarkWorkflow()).evidence;
   const getIdentity = async () => {
@@ -193,7 +196,7 @@ export function createMAdapter({service, transport, tools, toolSchemas, resolved
             const toolResults = [], callIds = new Set();
             for (const toolCall of toolCalls) {
               checkAbort(signal);
-              if (!Object.hasOwn(COMMON_TOOL_NAMES, toolCall.name) || typeof toolCall.call_id !== 'string' || callIds.has(toolCall.call_id)) {
+              if (!admittedTools.has(toolCall.name) || typeof toolCall.call_id !== 'string' || callIds.has(toolCall.call_id)) {
                 throw fail('UNAUTHORIZED_TOOL', 'Responses requested an unknown tool or duplicate call id');
               }
               callIds.add(toolCall.call_id);
@@ -223,7 +226,7 @@ export function createMAdapter({service, transport, tools, toolSchemas, resolved
     async preflight() {
       const source = await evidence(), actual = await resolved();
       return {ready: true, mode: 'injected_transport_only', source, resolved_model: actual,
-        tools_sha256: toolsHash, capabilities: Object.values(COMMON_TOOL_NAMES),
+        tools_sha256: toolsHash, tool_scope: toolScope, capabilities: schemas.map(schema => COMMON_TOOL_NAMES[schema.name]),
         accounting_coverage: 'every tool iteration invokes the required central metered transport'};
     },
     async initialize({runId, problem, modelPolicy, budget, contextBudget, stageGoal}) {

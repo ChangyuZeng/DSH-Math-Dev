@@ -45,9 +45,9 @@ async function temporary(t) {
   return root;
 }
 async function fixture(t, {transport = async () => response(), tools = async () => ({stdout: '5\n', exit_code: 0}),
-  resolvedModel = model, customBudget = budget} = {}) {
+  resolvedModel = model, customBudget = budget, toolSchemas = schemas, toolScope = 'offline'} = {}) {
   const root = await temporary(t), service = await createPythonWorkflowService({root});
-  const adapter = createMAdapter({service, transport, tools, toolSchemas: schemas, resolvedModel, contextWindow: 65_536});
+  const adapter = createMAdapter({service, transport, tools, toolSchemas, toolScope, resolvedModel, contextWindow: 65_536});
   const initialized = await adapter.initialize({runId: 'synthetic-run', problem, modelPolicy: model, budget: customBudget,
     contextBudget: {max_tokens: 50_000}, stageGoal: 'Compute the synthetic addition and record an unreviewed candidate.'});
   return {root, service, adapter, initialized};
@@ -78,6 +78,50 @@ test('M usage preserves nullable provider subfields and never double counts cach
   assert.equal(absent.reasoning_tokens, null);
   assert.equal(absent.complete, false);
   assert.equal(normalizeResponsesUsage(usage({total_tokens: 110})).complete, false);
+});
+
+test('M scope requires five smoke tools and preserves seven formal tools', () => {
+  const config = {service: {call() {}}, transport: async () => response(), tools: async () => ({}),
+    resolvedModel: model, contextWindow: 65536};
+  const five = schemas.filter(schema => !['check', 'submit'].includes(schema.name));
+  assert.throws(() => createMAdapter({...config, toolScope: 'smoke', toolSchemas: schemas}), {code: 'TOOLS'});
+  assert.throws(() => createMAdapter({...config, toolScope: 'formal', toolSchemas: five}), {code: 'TOOLS'});
+  assert.throws(() => createMAdapter({...config, toolScope: 'other', toolSchemas: schemas}), {code: 'TOOLS_SCOPE'});
+  assert.doesNotThrow(() => createMAdapter({...config, toolScope: 'formal', toolSchemas: schemas}));
+});
+
+test('M smoke consumes a common tool result in two native workflow requests with five declarations', async t => {
+  const five = schemas.filter(schema => !['check', 'submit'].includes(schema.name)), requests = [];
+  let toolCalls = 0;
+  const f = await fixture(t, {toolScope: 'smoke', toolSchemas: five, transport: async input => {
+    requests.push(input);
+    return requests.length === 1 ? toolResponse() : response();
+  }, tools: async () => { toolCalls++; return {stdout: '5\\n'}; }});
+  const preflight = await f.adapter.preflight();
+  assert.equal(preflight.tool_scope, 'smoke');
+  assert.equal(preflight.capabilities.length, 5);
+  const result = await f.adapter.run();
+  assert.equal(requests.length, 2);
+  assert.equal(toolCalls, 1);
+  assert.equal(result.run.usage.requests, 2);
+  for (const row of requests) assert.deepEqual(row.request.tools.map(tool => tool.name), five.map(tool => tool.name));
+  assert.equal(JSON.parse(requests[1].request.input.at(-1).output).stdout, '5\\n');
+});
+
+test('M smoke rejects undeclared target response tools before executing any tool', async t => {
+  const five = schemas.filter(schema => !['check', 'submit'].includes(schema.name));
+  for (const name of ['check', 'submit']) {
+    let toolCalls = 0, requests = 0;
+    const f = await fixture(t, {toolScope: 'smoke', toolSchemas: five, transport: async () => {
+      requests++;
+      return response(null, {output: [{type: 'function_call', name, call_id: 'target-call', arguments: '{}'}]});
+    }, tools: async () => { toolCalls++; return {}; }});
+    await assert.rejects(f.adapter.run(), {code: 'UNAUTHORIZED_TOOL'});
+    assert.equal(requests, 1);
+    assert.equal(toolCalls, 0);
+    assert.equal((await f.adapter.read()).usage.requests, 1);
+    await assert.rejects(f.adapter.run(), {code: 'NO_REPLAY'});
+  }
 });
 
 test('M actual executeLoop uses common tools and commits stable Note/Obligation exact revisions', async t => {
@@ -180,7 +224,7 @@ test('M gateway error with raw usage retains costs and server identity without c
   const binding = createGatewayBindings({gateway: 'http://127.0.0.1:12345', token: 'fixture-capability',
     fetchImpl: async url => {
       if (url.pathname.endsWith('/manifest')) {
-        return new Response(JSON.stringify({offline: true, model_policy: model, tools: schemas, context_window: 65536}));
+        return new Response(JSON.stringify({offline: true, scope: 'offline', model_policy: model, tools: schemas, context_window: 65536}));
       }
       assert.equal(url.pathname, '/M/worker/v1/responses');
       calls++;
@@ -339,7 +383,7 @@ test('M gateway bindings obtain shared schemas and preserve tool JSON, parents, 
   const binding = createGatewayBindings({gateway: 'http://127.0.0.1:12345', token: 'fixture-capability',
     fetchImpl: async (url, options) => {
       calls.push({url, options, body: JSON.parse(options.body)});
-      const value = url.pathname.endsWith('/manifest') ? {offline: true, model_policy: model, tools: schemas, context_window: 65536}
+      const value = url.pathname.endsWith('/manifest') ? {offline: true, scope: 'offline', model_policy: model, tools: schemas, context_window: 65536}
         : url.pathname.endsWith('/tools') ? toolValue : response();
       return new Response(JSON.stringify(value), {headers: {'X-Four-Request-Id': 'central-physical-2'}});
     }});
@@ -356,6 +400,20 @@ test('M gateway bindings obtain shared schemas and preserve tool JSON, parents, 
   assert.equal(calls.every(call => call.options.redirect === 'error'), true);
 });
 
+test('M smoke bridge refuses target tools locally and requires an explicit manifest scope', async () => {
+  let scope = 'smoke', calls = 0;
+  const tools = schemas.filter(schema => !['check', 'submit'].includes(schema.name));
+  const bindings = createGatewayBindings({gateway: 'http://127.0.0.1:12345', token: 'synthetic', fetchImpl: async () => {
+    calls++;
+    return new Response(JSON.stringify({offline: true, scope, model_policy: model, tools, context_window: 65536}));
+  }});
+  await bindings.preflight();
+  for (const name of ['check', 'submit']) await assert.rejects(bindings.tools({name, arguments: {}}), {code: 'TOOL_NOT_ALLOWED'});
+  assert.equal(calls, 1);
+  scope = undefined;
+  await assert.rejects(bindings.preflight(), {code: 'GATEWAY_MANIFEST'});
+});
+
 test('M gateway bindings fail closed for live gateways and preserve unknown versus rejected dispatch', async () => {
   let calls = 0;
   const live = createGatewayBindings({gateway: 'http://127.0.0.1:12345', token: 'fixture', fetchImpl: async () => {
@@ -369,7 +427,7 @@ test('M gateway bindings fail closed for live gateways and preserve unknown vers
   let mode = 'manifest';
   const binding = createGatewayBindings({gateway: 'http://127.0.0.1:12345', token: 'fixture', fetchImpl: async () => {
     calls++;
-    if (mode === 'manifest') return new Response(JSON.stringify({offline: true, model_policy: model, tools: schemas, context_window: 65536}));
+    if (mode === 'manifest') return new Response(JSON.stringify({offline: true, scope: 'offline', model_policy: model, tools: schemas, context_window: 65536}));
     if (mode === 'unknown') throw Error('Network reset');
     return new Response(JSON.stringify({error: {code: 'BUDGET', message: 'Rejected before transport', dispatched: false}}), {status: 409});
   }});

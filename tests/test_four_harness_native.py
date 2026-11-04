@@ -40,13 +40,15 @@ class NativeContracts(unittest.TestCase):
         self.assertEqual(native.localhost_url("http://127.0.0.1:8000/C/agent/v1", arm="C", role="agent"),
                          "http://127.0.0.1:8000/C/agent/v1")
 
-    def test_native_config_has_exact_model_no_retry_or_builtin_escape(self):
+    def test_native_config_declares_exact_model_and_zero_retries(self):
         config = tomllib.loads(native.codex_config("http://127.0.0.1:8000/C/agent/v1",
             mcp_command=(sys.executable, "-I", str(HERE / "mcp.py")), tools_url="http://127.0.0.1:8000/C/agent/tools"))
         self.assertEqual(config["model"], "gpt-6-astra")
         self.assertEqual(config["model_reasoning_effort"], "max")
         self.assertEqual(config["model_context_window"], 65536)
         self.assertFalse(config["features"]["shell_tool"])
+        for feature in ("unbounded_connection_retries", "respect_system_proxy", "system_proxy_fallback"):
+            self.assertFalse(config["features"][feature])
         self.assertEqual(config["web_search"], "disabled")
         self.assertEqual(config["cli_auth_credentials_store"], "ephemeral")
         provider = config["model_providers"]["four_harness"]
@@ -61,6 +63,8 @@ class NativeContracts(unittest.TestCase):
             "HTTP_PROXY": "http://external:8080", "NODE_OPTIONS": "--require=evil", "PYTHONPATH": "/evil"}):
             env = native.isolated_environment(directory, token="fixture-token")
             self.assertEqual(set(env) & {"OPENAI_API_KEY", "HTTP_PROXY", "NODE_OPTIONS", "PYTHONPATH"}, set())
+            self.assertEqual(env["NO_PROXY"], "127.0.0.1,localhost,::1")
+            self.assertEqual(env["no_proxy"], env["NO_PROXY"])
             self.assertTrue(all(env[key].startswith(str(Path(directory).resolve())) for key in ("HOME", "CODEX_HOME", "XDG_CONFIG_HOME")))
             with self.assertRaises(FileExistsError):
                 native.isolated_environment(directory, token="another-token")
@@ -102,6 +106,32 @@ class NativeContracts(unittest.TestCase):
         with self.assertRaises(native.NativeBlocked):
             native.rethlas_config("http://127.0.0.1:8000", {"generator": "fixture"})
 
+    def test_cleanup_preserves_reused_pid(self):
+        owned = native.OwnedProcessTree(os.getpid())
+        owned.known = {999999: (1, 2)}
+        with patch.object(owned, "sample", return_value=[]), patch.object(native, "process_identity", return_value={
+                "pid": 999999, "ppid": 1, "pgid": 999999, "birth": (3, 4)}), patch.object(native.os, "kill") as kill:
+            result = owned.cleanup()
+        kill.assert_not_called()
+        self.assertEqual(result["remaining_known_pids"], [])
+
+    @unittest.skipUnless(sys.platform == "darwin" or sys.platform.startswith("linux"), "process birth identity reader")
+    def test_cleanup_catches_detached_mcp_child_on_exit_and_timeout(self):
+        child = "import time; time.sleep(60)"
+        for timeout_case in (False, True):
+            with self.subTest(timeout=timeout_case), tempfile.TemporaryDirectory() as directory:
+                code = ("import subprocess,sys,time; "
+                        f"child=subprocess.Popen([sys.executable,'-I','-c',{child!r}],start_new_session=True); "
+                        "print(child.pid,flush=True); " + f"time.sleep({60 if timeout_case else 0.8})")
+                result = native.run_process([sys.executable, "-I", "-c", code],
+                    env={"PATH": "/usr/bin:/bin"}, cwd=directory, timeout=1.5 if timeout_case else 5)
+                child_pid = int(result["stdout"].strip())
+                self.assertIsNone(native.process_identity(child_pid))
+                self.assertEqual(result["timed_out"], timeout_case)
+                self.assertTrue(result["cleanup_complete_for_known_processes"])
+                self.assertGreaterEqual(result["cleanup"]["known_processes"], 2)
+                self.assertFalse(result["cleanup"]["whole_process_tree_complete"])
+
     def test_x_all_six_native_profiles_have_exact_effort_and_role_route(self):
         settings = native.xean_settings()
         for role in ("coordinator", "explorer", "correctness", "source", "requirements", "reconstruction"):
@@ -112,7 +142,7 @@ class NativeContracts(unittest.TestCase):
 
 @unittest.skipUnless(os.environ.get("FOUR_HARNESS_NATIVE_FIXTURES") == "1", "explicit offline native fixture opt-in")
 class InstalledCodexFixture(unittest.TestCase):
-    def test_actual_cli_two_requests_through_common_mcp(self):
+    def test_actual_cli_starts_then_rejects_unqualified_code_mode_tools(self):
         with tempfile.TemporaryDirectory(prefix="four-harness-native-test-") as directory:
             root = Path(directory).resolve()
             ledger = Ledger(root / "host" / "ledger.sqlite")
@@ -126,27 +156,35 @@ class InstalledCodexFixture(unittest.TestCase):
                               "name": "mcp__common__materials_list", "arguments": "{}", "status": "completed"}]),
                 response(2, [{"type": "message", "id": "msg_fixture_2", "role": "assistant", "status": "completed",
                               "content": [{"type": "output_text", "text": "fixture complete", "annotations": []}]}])])
-            with Gateway(ledger, transport=transport, bindings={token: {"run_id": "C-fixture", "arm": "C", "role": "agent"}},
+            with Gateway(ledger, transport=transport, bindings={token: {"run_id": "C-fixture", "arm": "C", "role": "agent", "require_native_metadata": True}},
                          tools={"C-fixture": common}, allowed_tools={"C-fixture": {"mcp__common__" + name for name in native.TOOLS}},
                          inject_output_cap=True) as gateway:
                 result = native.codex_fixture(root / "native", gateway=gateway, token=token,
                     mcp_command=(str(Path(sys.executable).resolve()), "-I", str(HERE / "mcp.py")), timeout=35)
-            if result.get("blocker") == "MACOS_MANAGED_PREFERENCES":
-                self.assertFalse(result["native_qualified"])
-                self.assertFalse(result["live_ready"])
-                self.assertEqual(len(transport.requests), 0)
-                self.assertEqual(ledger.snapshot("C-fixture")["requests"], 0)
-                return  # Correct fail-closed diagnostic, not a qualified native run.
-            self.assertEqual(result["returncode"], 0, json.dumps(result, indent=2))
-            self.assertEqual(len(transport.requests), 2, json.dumps(ledger.events(), indent=2))
-            self.assertEqual(ledger.snapshot("C-fixture")["requests"], 2)
+            # This is a native startup regression and a fail-closed compatibility
+            # result, not a successful common-MCP turn qualification. The pinned
+            # Astra catalog forces an unmetered additional_tools code-mode surface.
+            self.assertEqual(result["blocker"], "TOOL_NOT_ALLOWED", json.dumps(result, indent=2))
+            self.assertTrue(result["native_startup_succeeded"])
+            self.assertTrue(result["isolation_probe_passed"])
+            self.assertEqual(result["managed_preferences_probe"], {
+                "forced": {"config_toml_base64": False, "requirements_toml_base64": False},
+                "synchronized": True, "preference_values_read": False})
+            self.assertTrue(result["cleanup_complete_for_known_processes"])
+            self.assertFalse(result["native_qualified"])
+            self.assertFalse(result["live_ready"])
+            self.assertEqual(result["returncode"], 1)
+            self.assertEqual(len(result["gateway_rejections"]), 1)
+            self.assertNotIn("Connection failed", result["stdout"])
+            self.assertNotIn("Failed to synchronize managed preferences", result["stderr"])
+            self.assertEqual(transport.requests, [], json.dumps(ledger.events(), indent=2))
+            self.assertEqual(ledger.snapshot("C-fixture")["requests"], 0)
             self.assertTrue(ledger.snapshot("C-fixture")["accounting_complete"])
-            for captured in transport.requests:
-                payload = captured["payload"]
-                self.assertEqual(payload["reasoning"]["effort"], "max")
-                self.assertEqual(payload["max_output_tokens"], 16384)
-                self.assertEqual(payload["model"], "gpt-6-astra")
-            self.assertIn("function_call_output", json.dumps(transport.requests[1]))
+            self.assertFalse(any(event["type"] == "tool_started" for event in ledger.events()))
+            observations = result["resource_observations"]
+            self.assertTrue(observations["observer_stopped"])
+            self.assertFalse(observations["whole_process_tree_complete"])
+            self.assertFalse(observations["equal_cpu_or_memory_budget"])
 
 
 @unittest.skipUnless(os.environ.get("FOUR_HARNESS_NATIVE_FIXTURES") == "1", "explicit offline native fixture opt-in")
@@ -177,6 +215,32 @@ class CopiedXeanFixture(unittest.TestCase):
 
 @unittest.skipUnless(os.environ.get("FOUR_HARNESS_NATIVE_FIXTURES") == "1", "explicit offline native fixture opt-in")
 class CopiedRethlasFixture(unittest.TestCase):
+    def test_actual_codex_generation_and_verifier_startup_reject_unqualified_tools(self):
+        source = Path(os.environ.get("FOUR_HARNESS_RETHLAS_SOURCE", "/Users/zcy/Codes/Math Agent/Rethlas-upstream"))
+        python_site = ROOT / "dist/four-harness-builds/rethlas-mcp-python"
+        with tempfile.TemporaryDirectory(prefix="four-harness-r-codex-test-") as directory:
+            report = native.rethlas_codex_fixture(Path(directory) / "evidence", source_root=source,
+                python_executable=sys.executable, python_site=python_site)
+            self.assertEqual(report["native"]["returncode"], 0, json.dumps(report["native"], indent=2))
+            self.assertEqual(report["details"]["runtime_version"], "codex-cli 0.166.0")
+            self.assertEqual(report["details"]["generation"]["returncode"], 1, json.dumps(report["details"], indent=2))
+            self.assertEqual(report["details"]["verification"]["http_status"], 500)
+            self.assertEqual([(item["role"], item["code"]) for item in report["gateway_rejections"]],
+                             [("generator", "TOOL_NOT_ALLOWED"), ("verifier", "TOOL_NOT_ALLOWED")],
+                             json.dumps(report["details"], indent=2))
+            self.assertEqual(report["requests"], [])
+            self.assertEqual(report["snapshot"]["requests"], 0)
+            self.assertTrue(report["snapshot"]["accounting_complete"])
+            self.assertFalse(report["native_qualified"])
+            self.assertFalse(report["live_ready"])
+            self.assertFalse(report["details"]["continuation_after_rejected_generator"])
+            for role in ("generation", "verification"):
+                logs = "\n".join(report["details"][role]["logs"])
+                self.assertIn("Native additional_tools/code-mode namespaces are not qualified", logs)
+                self.assertNotIn("Connection failed", logs)
+                self.assertNotIn("Failed to synchronize managed preferences", logs)
+            self.assertFalse(any(event["type"] == "tool_started" for event in report["events"]))
+
     def test_actual_generation_resume_and_verifier_subprocess_paths(self):
         source = Path(os.environ.get("FOUR_HARNESS_RETHLAS_SOURCE", "/Users/zcy/Codes/Math Agent/Rethlas-upstream"))
         python_site = ROOT / "dist/four-harness-builds/rethlas-python"
@@ -223,6 +287,7 @@ class CopiedRethlasFixture(unittest.TestCase):
                              json.dumps({"native": evidence["native"], "snapshot": evidence["snapshot"]}, indent=2))
             report = json.loads(evidence["native"]["stdout"])
             self.assertFalse(report["native_recursive_spawn_qualified"])
+            self.assertEqual(report["tool_timeout_seconds"], 60)
             self.assertFalse(evidence["native_qualified"])
             self.assertEqual(evidence["snapshot"]["requests"], 3)
             self.assertEqual(evidence["snapshot"]["known_total_tokens"], 360)

@@ -1,9 +1,12 @@
 """Trusted bootstrap for CommonTools; never an unsandboxed Python executor.
 
-The host launches this file inside Seatbelt or bubblewrap. User code is read
-only after OS restrictions and hard resource limits are installed. The Linux
-seccomp filter also prohibits process/thread creation, exec, namespace changes
-and network syscalls. This is OS enforcement, not a Python import blacklist.
+The host launches this frozen file in an isolated interpreter. It installs
+Seatbelt once on macOS, or starts inside bubblewrap and installs Linux seccomp.
+User code is read only after OS restrictions and host-protection guards are installed.
+macos_monitored deliberately omits RLIMIT_AS; the parent measures RSS and kills
+over-limit processes without claiming a hard memory ceiling. Strict mode requires
+RLIMIT_AS. The Linux seccomp filter also prohibits process/thread creation, exec,
+namespace changes and network syscalls. This is OS enforcement, not an import blacklist.
 """
 
 import ctypes
@@ -54,9 +57,9 @@ def _linux_filter():
 
 
 def _mac_lockdown(config):
-    # The outer sandbox permits trusted interpreter startup reads and the
-    # initial exec. Install the full deny-default profile before reading or
-    # executing submitted Python; even interpreter re-exec is then prohibited.
+    # Only the frozen bootstrap has run so far (-I -S, no inherited settings).
+    # Install the deny-default profile once before reading submitted Python;
+    # even interpreter re-exec is then prohibited. Failure has no fallback.
     library = ctypes.CDLL("/usr/lib/libsandbox.dylib")
     library.sandbox_init.argtypes = [ctypes.c_char_p, ctypes.c_uint64,
                                     ctypes.POINTER(ctypes.c_char_p)]
@@ -64,7 +67,11 @@ def _mac_lockdown(config):
     error = ctypes.c_char_p()
     profile = Path(config["lockdown_profile"]).read_bytes()
     if library.sandbox_init(profile, 0, ctypes.byref(error)):
-        raise RuntimeError("cannot tighten macOS process sandbox")
+        message = error.value.decode("utf-8", errors="replace") if error.value else "unknown error"
+        if error.value:
+            library.sandbox_free_error.argtypes = [ctypes.c_char_p]
+            library.sandbox_free_error(error)
+        raise RuntimeError("cannot install macOS process sandbox: " + message)
 
 
 def _limit(kind, value):
@@ -79,14 +86,18 @@ def main():
     config = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
     if config["backend"] != sys.argv[1]:
         raise RuntimeError("sandbox backend mismatch")
+    mode = config["resource_mode"]
+    if mode not in ("macos_monitored", "strict") or mode == "macos_monitored" and sys.platform != "darwin":
+        raise RuntimeError("unsupported resource mode")
     _limit(resource.RLIMIT_CORE, 0)
     _limit(resource.RLIMIT_FSIZE, 0)  # all files are read-only; stdout uses pipes
     _limit(resource.RLIMIT_NOFILE, 64)
     _limit(resource.RLIMIT_CPU, max(1, math.ceil(config["cpu_seconds"])))
-    _limit(resource.RLIMIT_AS, config["memory_bytes"])
+    if mode == "strict":
+        _limit(resource.RLIMIT_AS, config["memory_bytes"])
     if sys.platform == "linux" and sys.argv[1] == "bubblewrap":
-        # One OS thread is stricter than the protocol's two-core ceiling.
-        if hasattr(os, "sched_getaffinity"):
+        # Optional placement protects the host; it is not a fair model budget.
+        if config["cpu_cores"] is not None:
             available = sorted(os.sched_getaffinity(0))
             os.sched_setaffinity(0, available[:config["cpu_cores"]])
         _linux_filter()

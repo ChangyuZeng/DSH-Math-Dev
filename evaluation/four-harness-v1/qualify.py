@@ -19,10 +19,11 @@ import tempfile
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 sys.path.insert(0, str(HERE))
-from ledger import Ledger, FORMAL_BUDGET, SMOKE_BUDGET, POLICY, canonical, GateError
+from ledger import Ledger, FORMAL_BUDGET, SMOKE_BUDGET, POLICY, RESOURCE_POLICY, canonical, GateError
+from cold_start import PROTOCOL, INFORMATION_POLICY, input_manifest, write_materials, prepare as prepare_cold_start
 from gateway import Gateway, FixtureTransport, capability, responses_tools
 from native import (PINS, ROLES, source_identity, NativeBlocked, codex_fixture, DEFAULT_NODE, DEFAULT_CODEX,
-                    codex_config, xean_settings, rethlas_config)
+                    codex_config, xean_settings, rethlas_config, run_process)
 from tools import CommonTools, ToolLimits
 from audit import validate_witness
 
@@ -61,7 +62,10 @@ def inspect_sources(sources):
 def smoke_plan():
     return {'format': 'four-harness-smoke-proposal-v1', 'authorized': False, 'executable': False,
             'target_problem_allowed': False, 'model': POLICY, 'fallback_allowed': False,
-            'prompt': TOY, 'per_run_budget': SMOKE_BUDGET, 'max_requests_total': 8, 'max_tokens_total': 131072,
+            'prompt': TOY, 'protocol': PROTOCOL, 'information_policy': INFORMATION_POLICY,
+            'cold_input': input_manifest('smoke'), 'resource_policy': RESOURCE_POLICY,
+            'common_tools': responses_tools('smoke'), 'target_checker_and_submission_allowed': False,
+            'per_run_budget': SMOKE_BUDGET, 'max_requests_total': 8, 'max_tokens_total': 131072,
             'arms': [{'id': arm, 'max_requests': 2, 'entry': f'qualify.py launch --scope smoke --arm {arm} --manifest <approved-frozen-manifest>'}
                      for arm in 'CXRM'],
             'acceptance': ['exact provider/model/effort and raw usage for every physical role request',
@@ -69,7 +73,7 @@ def smoke_plan():
                            'two-request run and eight-request campaign ceiling, no retry/replacement',
                            'incomplete native multi-role chain is reported, not replaced with a new loop'],
             'limits': ['Two requests cannot prove full Xean/Rethlas multi-role or long-context behavior',
-                       'Resolver, provider output semantics, hard resource containment and all-arm native fixtures remain prerequisite gates'],
+                       'Resolver, provider output semantics, strict information isolation and native paths remain prerequisite gates; CPU/RSS are observations with separate host protection'],
             'authorization': 'Requires a new explicit human authorization after the concrete manifest and failed gates are reviewed'}
 
 
@@ -121,7 +125,7 @@ def runtime_inventory():
     if r_site.is_dir():
         from native import rethlas_mcp_dependencies
         r_installed = rethlas_mcp_dependencies(r_site)
-    x_build = REPO / 'dist/four-harness-builds/xean-native-5'
+    x_build = REPO / 'dist/four-harness-builds/xean-native-6'
     x_installed = None
     if (x_build / 'node_modules').is_dir():
         from x_full import _tree_manifest
@@ -147,14 +151,14 @@ def draft(sources):
         'X': xean_settings(),
         'R': rethlas_config('http://127.0.0.1:1', {role: '<ephemeral-capability>' for role in ROLES['R']}),
         'M': {'model_policy': POLICY, 'budget': FORMAL_BUDGET, 'workflow_base': identities['M']['base_commit']}}
-    source_files = ['ledger.py', 'gateway.py', 'mcp.py', 'native.py', 'tools.py', 'compute_child.py',
+    source_files = ['ledger.py', 'gateway.py', 'mcp.py', 'native.py', 'tools.py', 'compute_child.py', 'cold_start.py', 'observation.py',
                     'm_adapter.mjs', 'm_service.py', 'qualify.py', 'x_full.py']
     if (HERE / 'm_bridge.mjs').is_file():
         source_files.append('m_bridge.mjs')
     source_files += [str(path.relative_to(HERE)) for path in sorted((HERE / 'patches').glob('*'))
                      if path.is_file() and path.suffix in {'.json', '.ts', '.py', '.md', '.txt'}]
     hashes = {name: sha(HERE / name) for name in source_files}
-    common = ['ledger.py', 'gateway.py', 'tools.py', 'compute_child.py', 'qualify.py']
+    common = ['ledger.py', 'gateway.py', 'tools.py', 'compute_child.py', 'qualify.py', 'cold_start.py', 'observation.py']
     for arm in manifest['arms']:
         arm.update(source=identities[arm['id']], qualification='offline_evidence_required_live_blocked')
         arm['commit'] = identities[arm['id']].get('commit', identities[arm['id']].get('base_commit'))
@@ -176,10 +180,15 @@ def draft(sources):
     manifest['problem']['checker_sha256'] = sha(HERE / 'audit.py')
     manifest['live_smoke'] = smoke_plan()
     manifest['runtime'] = runtime_inventory()
+    manifest['cold_input'] = input_manifest('formal')
+    manifest['problem']['materials_sha256'] = manifest['cold_input']['materials_sha256']
+    manifest['information_policy'] = INFORMATION_POLICY
+    manifest['resource_policy'] = RESOURCE_POLICY
     manifest['pending_gates'] = ['live provider identity, pricing and request/output semantics',
-                                'hard aggregate CPU/core/memory/artifact watchdog for complete harness process trees',
+                                'strict external-information isolation for complete native process trees',
                                 'all native role/descendant and compaction paths reach the shared ledger',
-                                'published material freeze, frontier refresh and independent reviewers',
+                                'wall/artifact limits and truthful host-protection observations',
+                                'canonical cold-input review; operator-only frontier refresh and independent reviewers',
                                 'explicit separate smoke and formal human approvals']
     return manifest
 
@@ -229,8 +238,20 @@ def fixture_acceptance(native, state, events, requests, *, call_id='call_fixture
     return {**checks, 'passed': all(checks.values())}
 
 
-def fixture(arm, root, node, codex, *, sources=None, xean_build=None, bun=None, python_site=None, coverage='basic'):
+def fixture(arm, root, node, codex, *, sources=None, xean_build=None, bun=None, python_site=None, coverage='basic', tool_scope='offline'):
+    if tool_scope not in {'offline', 'smoke'} or (tool_scope == 'smoke' and (arm not in {'C', 'M'} or coverage != 'basic')):
+        raise GateError('TOOL_SCOPE', 'This smoke scope entry supports C/M basic fake fixtures only')
     root = Path(root).resolve()
+    if coverage == 'native':
+        if arm != 'R':
+            raise GateError('COVERAGE', 'Native coverage is the original R commands with installed Codex; C basic already uses native Codex')
+        from native import rethlas_codex_fixture
+        result = rethlas_codex_fixture(root, source_root=Path(sources) / 'rethlas-upstream-887cc46',
+                                      python_executable=sys.executable, python_site=python_site)
+        result.update(arm=arm, mode='offline_native_codex_startup_probe', real_model_requests=0,
+                      physical_fake_requests=len(result['requests']), passed=result['native_qualified'])
+        new_json(root / 'report.json', result)
+        return result
     if coverage == 'full':
         if arm == 'X':
             from x_full import xean_full_fixture
@@ -280,12 +301,12 @@ def fixture(arm, root, node, codex, *, sources=None, xean_build=None, bun=None, 
         raise GateError('FRESH_RUN', 'Offline fixture output directory must not exist')
     root.mkdir(parents=True, mode=0o700)
     ledger = Ledger(root / 'host' / 'ledger.sqlite')
-    ledger.create_campaign('offline', max_requests=2, max_tokens=131072)
-    budget = {**FORMAL_BUDGET, 'model_requests': 2, 'total_tokens': 131072}
-    ledger.create_run(arm + '1', 'offline', arm, budget=budget)
-    material = root / 'fixture.txt'
-    material.write_text(TOY, encoding='utf-8')
-    tools = CommonTools(arm + '1', root / 'tools', {'fixture': {'path': str(material), 'sha256': sha(material)}},
+    budget = dict(SMOKE_BUDGET) if tool_scope == 'smoke' else {**FORMAL_BUDGET, 'model_requests': 2, 'total_tokens': 131072}
+    ledger.create_campaign('offline-fixture', max_requests=2, max_tokens=budget['total_tokens'], scope=tool_scope)
+    ledger.create_run(arm + '1', 'offline-fixture', arm, budget=budget)
+    materials = write_materials(root / 'materials', 'smoke')
+    limits = ToolLimits(timeout_seconds=budget['tool_timeout_seconds'], artifact_bytes=budget['artifact_bytes'])
+    tools = CommonTools(arm + '1', root / 'tools', materials, limits=limits,
                         accounting=lambda event: ledger.tool_event(arm + '1', event))
     role = 'agent' if arm == 'C' else 'worker'
     tool_name = 'mcp__common__materials_list' if arm == 'C' else 'materials_list'
@@ -298,7 +319,7 @@ def fixture(arm, root, node, codex, *, sources=None, xean_build=None, bun=None, 
                                      'content': [{'type': 'output_text', 'annotations': [],
                                                   'text': 'fixture complete' if arm == 'C' else json.dumps(proposal)}]}])])
     token = capability()
-    common_names = {tool['name'] for tool in responses_tools()}
+    common_names = {tool['name'] for tool in responses_tools(tool_scope)}
     allowed = {f'mcp__common__{name}' for name in common_names} if arm == 'C' else common_names
     with Gateway(ledger, transport=transport, bindings={token: {'run_id': arm + '1', 'arm': arm, 'role': role, 'require_native_metadata': arm == 'C'}},
                  tools={arm + '1': tools}, allowed_tools={arm + '1': allowed}, inject_output_cap=True) as gw:
@@ -312,15 +333,14 @@ def fixture(arm, root, node, codex, *, sources=None, xean_build=None, bun=None, 
             workflow_root = Path(tempfile.mkdtemp(prefix='four-harness-m-')).resolve()
             env = {'PATH': os.pathsep.join([str(Path(node).parent), '/usr/bin', '/bin']),
                    'FOUR_HARNESS_TOKEN': token, 'HOME': str(root), 'TMPDIR': str(workflow_root.parent), 'LANG': 'C.UTF-8'}
-            process = subprocess.run([str(node), str(bridge), '--offline', '--gateway', gw.url,
-                                      '--token-env', 'FOUR_HARNESS_TOKEN', '--root', str(workflow_root), '--run-id', arm + '1', '--python', sys.executable],
-                                     env=env, cwd=REPO, input='', capture_output=True, text=True, timeout=120)
-            native = {'returncode': process.returncode, 'stdout': process.stdout, 'stderr': process.stderr,
-                      'workflow_root': str(workflow_root)}
+            native = run_process([str(node), str(bridge), '--offline', '--gateway', gw.url,
+                                  '--token-env', 'FOUR_HARNESS_TOKEN', '--root', str(workflow_root), '--run-id', arm + '1', '--python', sys.executable],
+                                 env=env, cwd=REPO, timeout=120)
+            native['workflow_root'] = str(workflow_root)
         state = ledger.snapshot(arm + '1')
         events = ledger.events()
         acceptance = fixture_acceptance(native, state, events, transport.requests)
-        result = {'arm': arm, 'mode': 'offline_fixture', 'real_model_requests': 0, 'native': native,
+        result = {'arm': arm, 'mode': 'offline_fixture', 'tool_scope': tool_scope, 'real_model_requests': 0, 'native': native,
                   'ledger': state, 'events': events, 'common_tools': tools.capabilities(),
                   'physical_fake_requests': len(transport.requests), 'acceptance': acceptance,
                   'passed': acceptance['passed']}
@@ -338,17 +358,23 @@ def main(argv=None):
     p = sub.add_parser('fixture'); p.add_argument('arm', choices=list('CXRM')); p.add_argument('--output', required=True)
     p.add_argument('--node', default=str(DEFAULT_NODE)); p.add_argument('--codex', default=str(DEFAULT_CODEX))
     p.add_argument('--sources', default=str(REPO / 'dist/four-harness-sources'))
-    p.add_argument('--xean-build', default=str(REPO / 'dist/four-harness-builds/xean-native-5'))
+    p.add_argument('--xean-build', default=str(REPO / 'dist/four-harness-builds/xean-native-6'))
     p.add_argument('--bun', default=str(REPO / 'dist/four-harness-builds/runtime/node_modules/@oven/bun-darwin-aarch64/bin/bun'))
-    p.add_argument('--coverage', choices=['basic', 'full'], default='basic', help='Full: original X public host or original R MCP paths')
+    p.add_argument('--coverage', choices=['basic', 'full', 'native'], default='basic',
+                   help='Full: original X host or R MCP paths; native: original R startup with installed Codex, still fake transport')
     p.add_argument('--python-site', help='Isolated R dependency directory; defaults to the selected fixture dependency set')
+    p.add_argument('--tool-scope', choices=['offline', 'smoke'], default='offline',
+                   help='C/M basic fake fixtures can exercise the cold smoke budget and five-tool boundary')
     sub.add_parser('smoke-plan')
+    p = sub.add_parser('prepare-cold'); p.add_argument('--scope', choices=['formal', 'smoke'], default='formal')
+    p.add_argument('--output', required=True)
     p = sub.add_parser('launch'); p.add_argument('--scope', choices=['smoke', 'formal'], required=True)
     p.add_argument('--arm', choices=list('CXRM'), required=True); p.add_argument('--manifest', required=True)
     args = parser.parse_args(argv)
     try:
         if args.command == 'inspect': result = inspect_sources(args.sources)
         elif args.command == 'smoke-plan': result = smoke_plan()
+        elif args.command == 'prepare-cold': result = prepare_cold_start(args.output, scope=args.scope)
         elif args.command == 'freeze-draft':
             result = draft(args.sources); new_json(args.output, result)
         elif args.command == 'baseline':
@@ -360,9 +386,10 @@ def main(argv=None):
                       'interpretation': 'public baseline replay only; no search or new target result'}
         elif args.command == 'fixture':
             python_site = args.python_site or str(REPO / 'dist/four-harness-builds' /
-                                                   ('rethlas-mcp-python' if args.coverage == 'full' else 'rethlas-python'))
+                                                   ('rethlas-mcp-python' if args.coverage in {'full', 'native'} else 'rethlas-python'))
             result = fixture(args.arm, args.output, args.node, args.codex, sources=args.sources,
-                             xean_build=args.xean_build, bun=args.bun, python_site=python_site, coverage=args.coverage)
+                             xean_build=args.xean_build, bun=args.bun, python_site=python_site,
+                             coverage=args.coverage, tool_scope=args.tool_scope)
         else:
             manifest = json.loads(Path(args.manifest).read_text())
             missing = [key for key, value in manifest.get('gates', {}).items() if value is not True]

@@ -15,6 +15,8 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 from urllib.parse import urlsplit
 
 MODEL = {"provider": "openai-codex", "model": "gpt-6-astra", "effort": "max"}
@@ -87,6 +89,10 @@ def isolated_environment(root, *, token, path_entries=()):
     return {**{key: str(value) for key, value in directories.items()},
             "PATH": os.pathsep.join([*(str(Path(p).resolve()) for p in path_entries), "/usr/bin", "/bin"]),
             "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8", "TERM": "dumb", "NO_COLOR": "1",
+            # This pinned reqwest still proxies numeric IPs with NO_PROXY="*".
+            # Exact loopback entries bypass macOS system proxy discovery; the OS
+            # sandbox independently denies every port except the bound gateway.
+            "NO_PROXY": "127.0.0.1,localhost,::1", "no_proxy": "127.0.0.1,localhost,::1",
             "FOUR_HARNESS_TOKEN": token, "FOUR_HARNESS_OFFLINE_FIXTURE": "1",
             "CFFIXED_USER_HOME": str(directories["HOME"]),
             "PYTHONNOUSERSITE": "1", "PYTHONDONTWRITEBYTECODE": "1",
@@ -94,7 +100,7 @@ def isolated_environment(root, *, token, path_entries=()):
 
 
 def codex_config(url, *, arm="C", role="agent", mcp_command=(), tools_url=None):
-    """No fallback effort, credential store, provider, retry or built-in web/shell."""
+    """Pin routing/effort and request tool restrictions; qualify the actual wire."""
     url = localhost_url(url, arm=arm, role=role)
     lines = [f'model = {json.dumps(MODEL["model"])}', 'model_provider = "four_harness"',
              'model_reasoning_effort = "max"', f"model_context_window = {CONTEXT}",
@@ -104,6 +110,7 @@ def codex_config(url, *, arm="C", role="agent", mcp_command=(), tools_url=None):
              'check_for_update_on_startup = false', 'project_doc_max_bytes = 0',
              '[analytics]', 'enabled = false', '[feedback]', 'enabled = false',
              '[features]', 'shell_tool = false', 'unified_exec = false', 'apply_patch_freeform = false',
+             'unbounded_connection_retries = false', 'respect_system_proxy = false', 'system_proxy_fallback = false',
              'multi_agent = false', 'multi_agent_v2 = false', 'collab = false', 'code_mode = false',
              'apps = false', 'plugins = false', 'web_search = false', 'web_search_request = false',
              'standalone_web_search = false',
@@ -128,7 +135,7 @@ def rethlas_config(gateway_url, role_tokens):
     """Freeze native root and recursive providers without disabling R's strategy.
 
     The copied MCP shim meters the original tools and binds verifier subprocess
-    parents. Native Codex startup/spawn still needs separate qualification.
+    parents. Native Codex tool execution/spawn still needs separate qualification.
     """
     base = localhost_url(gateway_url)
     require(urlsplit(base).path in {"", "/"}, "ROLE_ROUTE", "R providers require the gateway origin")
@@ -140,6 +147,7 @@ def rethlas_config(gateway_url, role_tokens):
              'cli_auth_credentials_store = "ephemeral"', 'mcp_oauth_credentials_store = "file"',
              'check_for_update_on_startup = false', '[analytics]', 'enabled = false', '[feedback]', 'enabled = false',
              '[features]', 'shell_tool = false', 'unified_exec = false', 'apply_patch_freeform = false',
+             'unbounded_connection_retries = false', 'respect_system_proxy = false', 'system_proxy_fallback = false',
              'multi_agent = true', 'apps = false', 'plugins = false']
     for role in ROLES["R"]:
         url = localhost_url(base.rstrip("/") + f"/R/{role}/v1", arm="R", role=role)
@@ -178,8 +186,14 @@ def macos_fixture_profile(root, *, readable=(), writable=(), gateway_url):
     reads = " ".join(f"(subpath {quote(p)})" for p in paths)
     writes = " ".join(f"(subpath {quote(Path(p).resolve())})" for p in (root, *writable))
     return ("(version 1)\n(deny default)\n(allow process*)\n(allow sysctl-read)\n"
-            "(allow file-read-metadata)\n(allow mach-lookup)\n(deny mach-lookup (global-name \"com.apple.securityd\") "
+            "(allow file-read-metadata)\n"
+            '(allow mach-lookup (global-name "com.apple.cfprefsd.agent") (global-name "com.apple.cfprefsd.daemon"))\n'
+            "(deny mach-lookup (global-name \"com.apple.securityd\") "
             "(global-name \"com.apple.security.agent\"))\n"
+            # The forced-value query initializes both managed-source generation
+            # counters; denying either makes the subsequent native sync fail.
+            f'(allow ipc-posix-shm-read-data (ipc-posix-name "apple.cfprefs.{os.getuid()}v1") '
+            '(ipc-posix-name "apple.cfprefs.daemonv1"))\n'
             f"(allow file-map-executable {reads})\n"
             f"(allow file-read* {reads} (literal \"/\") (literal \"/private/etc/localtime\") "
             "(literal \"/private/etc/hosts\") (literal \"/private/etc/resolv.conf\"))\n"
@@ -188,24 +202,146 @@ def macos_fixture_profile(root, *, readable=(), writable=(), gateway_url):
             "(allow signal (target same-sandbox))\n")
 
 
+def process_identity(pid):
+    """Read process metadata only; birth identity prevents signaling a reused PID."""
+    if sys.platform == "darwin":
+        import ctypes
+
+        class BSDInfo(ctypes.Structure):
+            _fields_ = [(name, ctypes.c_uint32) for name in
+                        ("flags", "status", "xstatus", "pid", "ppid", "uid", "gid", "ruid", "rgid", "svuid", "svgid", "reserved")]
+            _fields_ += [("comm", ctypes.c_char * 16), ("name", ctypes.c_char * 32)]
+            _fields_ += [(name, ctypes.c_uint32) for name in ("nfiles", "pgid", "jobc", "tdev", "tpgid", "nice")]
+            _fields_ += [("start_seconds", ctypes.c_uint64), ("start_microseconds", ctypes.c_uint64)]
+
+        library = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+        library.proc_pidinfo.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_int]
+        library.proc_pidinfo.restype = ctypes.c_int
+        record = BSDInfo()
+        if library.proc_pidinfo(pid, 3, 0, ctypes.byref(record), ctypes.sizeof(record)) != ctypes.sizeof(record):
+            return None
+        if record.pid != pid or record.uid != os.getuid() or record.status == 5:  # SZOMB
+            return None
+        return {"pid": pid, "ppid": record.ppid, "pgid": record.pgid,
+                "birth": (record.start_seconds, record.start_microseconds)}
+    if sys.platform.startswith("linux"):
+        directory = Path("/proc") / str(pid)
+        try:
+            if directory.stat().st_uid != os.getuid():
+                return None
+            fields = (directory / "stat").read_text().rsplit(")", 1)[1].split()
+            if fields[0] == "Z":
+                return None
+            return {"pid": pid, "ppid": int(fields[1]), "pgid": int(fields[2]), "birth": int(fields[19])}
+        except (FileNotFoundError, ProcessLookupError):
+            return None
+    raise NativeBlocked("PROCESS_IDENTITY", "This OS has no qualified process birth identity reader")
+
+
+class OwnedProcessTree:
+    """Retain observed ancestry across setsid; never infer ownership from a name."""
+    def __init__(self, pid):
+        self.root = pid
+        self.lock = threading.RLock()
+        self.known = {}
+        self.signaled = set()
+        self.errors = []
+        root = process_identity(pid)
+        if root is not None:
+            self.known[pid] = root["birth"]
+
+    def sample(self):
+        from observation import process_snapshot
+        rows = process_snapshot()
+        with self.lock:
+            live = {pid: record for pid, birth in self.known.items()
+                    if (record := process_identity(pid)) is not None and record["birth"] == birth}
+            selected = set(live)
+            while True:
+                additions = set()
+                for row in rows:
+                    pid = row["pid"]
+                    if pid in selected or row["ppid"] not in selected:
+                        continue
+                    record = process_identity(pid)
+                    if record is not None and record["ppid"] in selected:
+                        self.known[pid] = record["birth"]
+                        additions.add(pid)
+                if not additions:
+                    break
+                selected.update(additions)
+        return rows
+
+    def cleanup(self):
+        # Refresh ancestry before any parent is signaled. Known children that
+        # created a session remain owned after their original parent exits.
+        try:
+            self.sample()
+        except (OSError, RuntimeError, subprocess.TimeoutExpired) as error:
+            self.errors.append(type(error).__name__)
+        with self.lock:
+            identities = sorted(self.known.items(), key=lambda item: item[0] == self.root)
+        for pid, birth in identities:
+            record = process_identity(pid)
+            if record is None or record["birth"] != birth:
+                continue
+            try:
+                os.kill(pid, signal.SIGKILL)
+                self.signaled.add(pid)
+            except ProcessLookupError:
+                pass
+            except OSError as error:
+                self.errors.append({"pid": pid, "error": type(error).__name__, "errno": error.errno})
+        deadline = time.monotonic() + 1
+        remaining = []
+        while time.monotonic() < deadline:
+            remaining = [pid for pid, birth in identities
+                         if (record := process_identity(pid)) is not None and record["birth"] == birth]
+            if not remaining:
+                break
+            threading.Event().wait(0.02)
+        return {"scope": "observed_descendants_with_verified_birth_identity", "signaled_processes": len(self.signaled),
+                "known_processes": len(identities), "remaining_known_pids": remaining, "errors": self.errors,
+                "whole_process_tree_complete": False, "unobserved_short_lived_parents_possible": True}
+
+
 def run_process(command, *, env, cwd, timeout=30):
-    """One process group, one attempt, including teardown on timeout."""
+    """One attempt; clean identity-verified children, including new sessions."""
+    from observation import ProcessObserver
     process = subprocess.Popen([str(x) for x in command], cwd=cwd, env=env, stdin=subprocess.DEVNULL,
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
+    owned = OwnedProcessTree(process.pid)
+    observer = ProcessObserver(process.pid, sampler=owned.sample).start()
     timed_out = False
+    deadline = time.monotonic() + timeout
+    stdout = stderr = ""
     try:
-        stdout, stderr = process.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        timed_out = True
-        os.killpg(process.pid, signal.SIGKILL)
-        stdout, stderr = process.communicate(timeout=5)
+        while True:
+            try:
+                stdout, stderr = process.communicate(timeout=max(0.001, min(0.2, deadline - time.monotonic())))
+                break
+            except subprocess.TimeoutExpired:
+                timed_out = time.monotonic() >= deadline
+                if not timed_out and process.poll() is None:
+                    continue
+                cleanup = owned.cleanup()
+                try:
+                    stdout, stderr = process.communicate(timeout=3)
+                except subprocess.TimeoutExpired as error:
+                    stdout = error.output.decode(errors="replace") if isinstance(error.output, bytes) else error.output or ""
+                    stderr = error.stderr.decode(errors="replace") if isinstance(error.stderr, bytes) else error.stderr or ""
+                    owned.errors.append("OUTPUT_PIPE_REMAINS_OPEN")
+                    process.stdout.close()
+                    process.stderr.close()
+                break
     finally:
-        # Descendants must not outlive an exited parent (MCP/verification servers).
-        try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-    return {"returncode": process.returncode, "stdout": stdout, "stderr": stderr, "timed_out": timed_out}
+        cleanup = owned.cleanup()
+        resource_observations = observer.stop()
+    require(not cleanup["remaining_known_pids"] and not cleanup["errors"], "PROCESS_CLEANUP",
+            "Owned native process cleanup was incomplete: " + json.dumps(cleanup, sort_keys=True))
+    return {"returncode": process.poll(), "stdout": stdout, "stderr": stderr, "timed_out": timed_out,
+            "cleanup": cleanup, "resource_observations": resource_observations,
+            "cleanup_complete_for_known_processes": not cleanup["remaining_known_pids"] and not cleanup["errors"]}
 
 
 def isolation_probe(prefix, *, node, env, work):
@@ -227,6 +363,39 @@ setTimeout(() => process.exit(44), 2000).unref();'''
             probe = run_process([*prefix, node, "-e", probe_js, canary, str(listener.getsockname()[1])],
                                 env=env, cwd=work, timeout=5)
             require(probe["returncode"] == 0, "ISOLATION_PROBE", f"Credential/network denial probe failed: {probe}")
+
+
+def managed_preferences_probe(prefix, *, python, env, work):
+    """Reject forced host policy without reading any managed preference value."""
+    script = '''import ctypes, json
+cf = ctypes.CDLL("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")
+cf.CFStringCreateWithCString.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_uint32]
+cf.CFStringCreateWithCString.restype = ctypes.c_void_p
+cf.CFPreferencesAppValueIsForced.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+cf.CFPreferencesAppValueIsForced.restype = ctypes.c_bool
+cf.CFPreferencesAppSynchronize.argtypes = [ctypes.c_void_p]
+cf.CFPreferencesAppSynchronize.restype = ctypes.c_bool
+cf.CFRelease.argtypes = [ctypes.c_void_p]
+app = cf.CFStringCreateWithCString(None, b"com.openai.codex", 0x08000100)
+forced = {}
+try:
+    for name in ("config_toml_base64", "requirements_toml_base64"):
+        key = cf.CFStringCreateWithCString(None, name.encode(), 0x08000100)
+        try:
+            forced[name] = bool(cf.CFPreferencesAppValueIsForced(key, app))
+        finally:
+            cf.CFRelease(key)
+    synchronized = bool(cf.CFPreferencesAppSynchronize(app))
+finally:
+    cf.CFRelease(app)
+print(json.dumps({"forced": forced, "synchronized": synchronized, "preference_values_read": False}))
+'''
+    probe = run_process([*prefix, python, "-I", "-c", script], env=env, cwd=work, timeout=5)
+    require(probe["returncode"] == 0, "MANAGED_PREFERENCES_PROBE", "Cannot verify isolated native preferences")
+    result = json.loads(probe["stdout"])
+    require(result["synchronized"] is True, "MANAGED_PREFERENCES_PROBE", "Native preference synchronization failed")
+    require(not any(result["forced"].values()), "HOST_MANAGED_CONFIG", "Forced host Codex policy must not enter an isolated run")
+    return result
 
 
 def codex_fixture(root, *, gateway, token, mcp_command, prompt="Call materials_list once, then say fixture complete.",
@@ -267,15 +436,24 @@ def codex_fixture(root, *, gateway, token, mcp_command, prompt="Call materials_l
     check = run_process([*prefix, "/usr/bin/true"], env=env, cwd=work, timeout=5)
     require(check["returncode"] == 0, "OS_ISOLATION", f"Sandbox unavailable: exit={check['returncode']} {check['stderr'].strip()}")
     isolation_probe(prefix, node=node, env=env, work=work)
+    preferences = managed_preferences_probe(prefix, python=Path(sys.executable).resolve(), env=env, work=work)
     version = run_process([*prefix, node, codex, "--version"], env=env, cwd=work, timeout=10)
     require(version["returncode"] == 0 and version["stdout"].strip() == "codex-cli " + PINS["C"]["version"],
             "BINARY_VERSION", f"Native version check failed: {version['stdout']}{version['stderr']}")
     command = [*prefix, node, codex, "exec", "--skip-git-repo-check", "--ephemeral", "--json", "-C", work, prompt]
     result = run_process(command, env=env, cwd=work, timeout=timeout)
-    blocker = ("MACOS_MANAGED_PREFERENCES" if result["returncode"] and
+    binding = gateway.bindings[token]
+    rejected = [{key: event[key] for key in ("event_id", "role", "code")}
+                for event in gateway.ledger.events()
+                if event["type"] == "request_rejected" and event["run_id"] == binding["run_id"]]
+    blocker = (rejected[-1]["code"] if rejected else
+               "MACOS_MANAGED_PREFERENCES" if result["returncode"] and
                "Failed to synchronize managed preferences" in result["stderr"] else
                "NATIVE_PROCESS_FAILED" if result["returncode"] else None)
+    startup = '"type":"thread.started"' in result["stdout"] and '"type":"turn.started"' in result["stdout"]
     return {**result, "blocker": blocker, "native_qualified": not bool(blocker),
+             "native_startup_succeeded": startup, "gateway_rejections": rejected, "isolation_probe_passed": True,
+             "managed_preferences_probe": preferences,
             "source_pin": PINS["C"], "runtime_version": version["stdout"].strip(),
             "entrypoint_sha256": sha256(codex), "node_sha256": sha256(node),
             "config_sha256": sha256(Path(env["CODEX_HOME"]) / "config.toml"),
@@ -335,7 +513,7 @@ def prepare_source(root, destination, arm):
     return receipt
 
 
-def copied_fixture(root, *, gateway, arm, source_copy, executable, entry, role_tokens, timeout=30, extra_env=None):
+def copied_fixture(root, *, gateway, arm, source_copy, executable, entry, role_tokens, timeout=30, extra_env=None, native_codex=False):
     """Launch an actual copied entry point with a fake-only transport and OS jail."""
     from gateway import FixtureTransport, Gateway
     require(type(gateway) is Gateway and type(gateway.transport) is FixtureTransport and gateway.is_offline,
@@ -349,6 +527,8 @@ def copied_fixture(root, *, gateway, arm, source_copy, executable, entry, role_t
     expected = receipt.get("files")
     require(isinstance(expected, dict) and expected, "BUILD_MANIFEST", "Complete copied source hashes are required")
     require(entry and entry[0] in expected, "ENTRYPOINT", "Native entry must be in the pinned build manifest")
+    require(type(native_codex) is bool and (not native_codex or arm == "R" and entry[0] == "four_harness_codex_fixture.py"),
+            "ENTRYPOINT", "Actual Codex startup is restricted to the audited R offline fixture")
     for relative, digest in expected.items():
         require(sha256(source_copy / relative) == digest, "BUILD_DRIFT", f"Copied native source modified: {relative}")
     root.mkdir(parents=True, mode=0o700)
@@ -379,10 +559,32 @@ def copied_fixture(root, *, gateway, arm, source_copy, executable, entry, role_t
     if arm == "R":
         import shlex
         require(set(role_tokens) == set(ROLES["R"]), "ROLE_ROUTE", "Every R role must have a gateway capability")
-        _new_file(Path(env["CODEX_HOME"]) / "config.toml", rethlas_config(gateway.url, role_tokens))
+        config = rethlas_config(gateway.url, role_tokens)
+        if native_codex:
+            # A copied export has no .git. This marker bounds project discovery
+            # to the frozen export and explicitly trusts only that fresh copy.
+            config = 'project_root_markers = ["four-harness-build.json"]\n' + config
+            for project in (source_copy, source_copy / "agents/generation", source_copy / "agents/verification"):
+                config += f'\n[projects.{json.dumps(str(project))}]\ntrust_level = "trusted"\n'
+        _new_file(Path(env["CODEX_HOME"]) / "config.toml", config)
         env.update({f"FOUR_HARNESS_{role.upper()}_TOKEN": token for role, token in role_tokens.items()})
-        child = "four_harness_mcp_fixture_child.py" if entry[0] == "four_harness_mcp_fixture.py" else "four_harness_fixture_child.py"
-        wrapper = _new_file(root / "bin/codex", "#!/bin/sh\nexec " + shlex.join([str(executable), "-I", str(source_copy / child)]) + ' "$@"\n', mode=0o700)
+        if native_codex:
+            codex = DEFAULT_CODEX.resolve()
+            package = json.loads((codex.parent.parent / "package.json").read_text())
+            require(package.get("name") == "@openai/codex" and package.get("version") == PINS["C"]["version"],
+                    "BINARY_VERSION", "Installed R Codex differs from the frozen binary version")
+            launch = shlex.join([str(node), str(codex)])
+            wrapper_text = ('#!/bin/sh\n'
+                f'if [ "$1" = "--version" ]; then exec {launch} --version; fi\n'
+                'if [ "$1" != "exec" ]; then exit 64; fi\n'
+                'case "${FOUR_HARNESS_ROLE:-}" in generator|verifier) ;; *) exit 65;; esac\n'
+                'shift\n'
+                f'exec {launch} exec --skip-git-repo-check --config '
+                '\'model_reasoning_effort="max"\' --config "model_provider=\\\"four_harness_${FOUR_HARNESS_ROLE}\\\"" "$@"\n')
+        else:
+            child = "four_harness_mcp_fixture_child.py" if entry[0] == "four_harness_mcp_fixture.py" else "four_harness_fixture_child.py"
+            wrapper_text = "#!/bin/sh\nexec " + shlex.join([str(executable), "-I", str(source_copy / child)]) + ' "$@"\n'
+        wrapper = _new_file(root / "bin/codex", wrapper_text, mode=0o700)
         env["PATH"] = str(wrapper.parent) + os.pathsep + env["PATH"]
         env["CODEX_BIN"] = str(wrapper)
         env["FOUR_HARNESS_STATE"] = str(root / "child-state.json")
@@ -395,15 +597,19 @@ def copied_fixture(root, *, gateway, arm, source_copy, executable, entry, role_t
     work = root / "workspace"
     work.mkdir(mode=0o700)
     readable = [source_copy, executable.parent, node.parent.parent, Path(sys.prefix).resolve(), "/opt/homebrew/Cellar", "/usr/bin", "/bin"]
+    if native_codex:
+        readable.append(DEFAULT_CODEX.resolve().parent.parent)
     if extra_env and extra_env.get("FOUR_HARNESS_PYTHON_SITE"):
         readable.append(extra_env["FOUR_HARNESS_PYTHON_SITE"])
     profile = _new_file(root / "fixture.sb", macos_fixture_profile(root, readable=readable, writable=writable,
                         gateway_url=next(iter(routes.values()))["url"] + "/v1"))
     prefix = ["/usr/bin/sandbox-exec", "-f", profile]
     isolation_probe(prefix, node=node, env=env, work=work)
+    preferences = managed_preferences_probe(prefix, python=executable, env=env, work=work) if native_codex else None
     result = run_process([*prefix, executable, *[str(source_copy / item) if index == 0 else str(item) for index, item in enumerate(entry)]],
                          env=env, cwd=work, timeout=timeout)
     return {**result, "source_pin": PINS[arm], "sandbox_sha256": sha256(profile),
+            "isolation_probe_passed": True, "managed_preferences_probe": preferences,
             "entrypoint_sha256": sha256(source_copy / entry[0]), "build_receipt_sha256": sha256(source_copy / "four-harness-build.json"),
             "mode": "offline_native_fixture", "live_ready": False}
 
@@ -454,7 +660,7 @@ def xean_fixture(root, *, source_copy, bun, max_output_tokens=MAX_OUTPUT):
             "events": ledger.events(), "requests": transport.requests,
             "qualification_scope": "actual X Explorer createRoleRuntime + Pi GenerationTask, common material tool and original submit_notes",
             "qualification_blockers": ["FULL_X_HOST_COORDINATOR_VERIFIER_CHAIN_NOT_EXERCISED", "DESCENDANT_PARENT_LINKAGE_NOT_QUALIFIED",
-                                       "NATIVE_PROCESS_RESOURCE_LIMITS_NOT_QUALIFIED"],
+                                       ],
             "native_qualified": False, "live_ready": False}
 
 
@@ -475,9 +681,46 @@ def rethlas_fixture(root, *, source_root, python_executable, python_site, max_ou
     return {"native": result, "snapshot": snapshot, "final_snapshot": ledger.snapshot(run_id),
             "events": ledger.events(), "requests": transport.requests,
             "qualification_scope": "actual R generation shell exec/resume and imported verify endpoint/subprocess with one-shot fake child",
-            "qualification_blockers": ["CODEX_ISOLATION_STARTUP_NOT_QUALIFIED", "NATIVE_MCP_ACCOUNTING_NOT_IMPLEMENTED",
+            "qualification_blockers": ["NATIVE_CODEX_MODEL_TOOL_ROUNDTRIP_NOT_QUALIFIED", "NATIVE_MCP_ACCOUNTING_NOT_EXERCISED_BY_THIS_FIXTURE",
                                        "RECURSIVE_STRATEGY_REPAIR_COMPACTION_INTERCEPTION_NOT_QUALIFIED",
-                                       "FULL_VERIFICATION_CHAIN_NOT_EXERCISED", "NATIVE_PROCESS_RESOURCE_LIMITS_NOT_QUALIFIED"],
+                                       "FULL_VERIFICATION_CHAIN_NOT_EXERCISED", ],
+            "native_qualified": False, "live_ready": False}
+
+
+def rethlas_codex_fixture(root, *, source_root, python_executable, python_site, max_output_tokens=MAX_OUTPUT):
+    """Probe original R generation/verifier commands with genuine pinned Codex.
+
+    These are independent offline startup probes. They cannot qualify a complete
+    R generation/verification chain while the native tool surface is rejected.
+    """
+    from gateway import FixtureTransport, Gateway, capability
+    from tools import CommonTools
+    dependencies = rethlas_mcp_dependencies(python_site)
+    root, ledger, run_id = _fixture_ledger(root, "R", 2, max_output_tokens)
+    build = root / "source-copy"
+    prepare_source(source_root, build, "R")
+    tokens = {role: capability() for role in ROLES["R"]}
+    transport = FixtureTransport([_fixture_response(1, []), _fixture_response(2, [])])
+    common = CommonTools(run_id=run_id, run_root=root / "tools", materials={},
+                         accounting=lambda event: ledger.tool_event(run_id, event))
+    with Gateway(ledger, transport=transport,
+                 bindings={token: {"run_id": run_id, "arm": "R", "role": role, "require_native_metadata": True}
+                           for role, token in tokens.items()},
+                 tools={run_id: common}, allowed_tools={run_id: set(TOOLS)}, inject_output_cap=True) as gateway:
+        result = copied_fixture(root / "native", gateway=gateway, arm="R", source_copy=build,
+                                executable=python_executable, entry=["four_harness_codex_fixture.py"],
+                                role_tokens=tokens, timeout=65, native_codex=True,
+                                extra_env={"FOUR_HARNESS_PYTHON_SITE": str(Path(python_site).resolve())})
+        snapshot = ledger.snapshot(run_id)
+    details = json.loads(result["stdout"]) if result["returncode"] == 0 else {}
+    rejected = [{key: event[key] for key in ("event_id", "role", "code")} for event in ledger.events()
+                if event["type"] == "request_rejected"]
+    blockers = sorted({event["code"] for event in rejected}) or ["NATIVE_PROCESS_FAILED"]
+    return {"native": result, "details": details, "snapshot": snapshot, "final_snapshot": ledger.snapshot(run_id),
+            "dependencies": dependencies, "events": ledger.events(), "requests": transport.requests,
+            "gateway_rejections": rejected,
+            "qualification_scope": "actual original R generation shell and separate verifier API invoke installed Codex; startup/rejection probes only",
+            "qualification_blockers": blockers + ["ACTUAL_RECURSIVE_SPAWN_NOT_EXERCISED", "FULL_VERIFICATION_SKILL_CHAIN_NOT_EXERCISED"],
             "native_qualified": False, "live_ready": False}
 
 
@@ -511,8 +754,8 @@ def rethlas_mcp_dependencies(python_site):
 def rethlas_mcp_fixture(root, *, source_root, python_executable, python_site, max_output_tokens=MAX_OUTPUT, scenario="positive"):
     """Actual original MCP memory/verification path; immutable fake model replies.
 
-    Native metadata fixture covers descendant accounting, not the Rust spawn
-    implementation (which remains blocked by Codex's isolated macOS startup).
+    Native metadata fixtures cover descendant accounting, not the Rust spawn
+    implementation. The actual Codex tool surface still fails gateway admission.
     """
     from gateway import FixtureTransport, Gateway, capability
     from tools import CommonTools
@@ -541,7 +784,7 @@ def rethlas_mcp_fixture(root, *, source_root, python_executable, python_site, ma
                  tools={run_id: common}, allowed_tools={run_id: set(TOOLS)},
                  intrinsic_tools={(run_id, role): verification if role == "verifier" else generation for role in tokens}) as gateway:
         result = copied_fixture(root / "native", gateway=gateway, arm="R", source_copy=build, executable=python_executable,
-                                entry=["four_harness_mcp_fixture.py", scenario], role_tokens=tokens, timeout=60,
+                                entry=["four_harness_mcp_fixture.py", scenario], role_tokens=tokens, timeout=75,
                                 extra_env={"FOUR_HARNESS_PYTHON_SITE": str(Path(python_site).resolve())})
         snapshot = ledger.snapshot(run_id)
     capabilities = json.loads(result["stdout"]) if result["returncode"] == 0 else {}
@@ -549,9 +792,9 @@ def rethlas_mcp_fixture(root, *, source_root, python_executable, python_site, ma
             "events": ledger.events(), "requests": transport.requests,
             "dependencies": dependencies, "common_compute": capabilities.get("common_compute"), "scenario": scenario,
             "qualification_scope": "actual original R MCP memory/BM25/branch, common tools, frozen search, verify API/subprocess and original report validation/writing; native metadata protocol fixture",
-            "qualification_blockers": ["CODEX_ISOLATION_STARTUP_NOT_QUALIFIED", "ACTUAL_RECURSIVE_SPAWN_NOT_EXERCISED",
+            "qualification_blockers": ["NATIVE_CODEX_MODEL_TOOL_ROUNDTRIP_NOT_QUALIFIED", "ACTUAL_RECURSIVE_SPAWN_NOT_EXERCISED",
                                        "REPAIR_COMPACTION_NOT_EXERCISED", "FULL_VERIFICATION_SKILL_CHAIN_NOT_EXERCISED",
-                                       "NATIVE_PROCESS_RESOURCE_LIMITS_NOT_QUALIFIED"] +
+                                       ] +
                                       (["COMMON_COMPUTE_OS_CONTAINMENT_UNAVAILABLE"] if capabilities.get("common_compute", {}).get("available") is False else []),
             "native_qualified": False, "live_ready": False}
 

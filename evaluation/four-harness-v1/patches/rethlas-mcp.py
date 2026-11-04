@@ -16,7 +16,6 @@ import mimetypes
 import os
 from pathlib import Path
 import re
-import resource
 import subprocess
 import sys
 import time
@@ -34,9 +33,6 @@ sys.modules.setdefault("four_harness_mcp", sys.modules[__name__])
 # table; host Apache/MIME configuration is outside the isolated environment.
 mimetypes.knownfiles = []
 mimetypes.init(files=[])
-
-from fastmcp.server.middleware import Middleware
-from fastmcp.tools.tool import Tool
 
 COMMON = {"materials_list", "materials_read", "workspace_read", "workspace_write", "compute", "check", "submit"}
 NATIVE = {
@@ -102,11 +98,13 @@ def common_call(name, arguments):
 
 
 def _cpu():
-    children = resource.getrusage(resource.RUSAGE_CHILDREN)
-    return time.process_time() + children.ru_utime + children.ru_stime
+    # This process interval can overlap concurrent tools and excludes children.
+    # It is an observation, not a complete or additive tool CPU budget.
+    return time.process_time()
 
 
-class MeteredOriginalTools(Middleware):
+class MeteredOriginalTools:
+    """Mixin loaded without importing the server in one-shot fixture clients."""
     def __init__(self, mode):
         self.mode = mode
 
@@ -156,6 +154,7 @@ class MeteredOriginalTools(Middleware):
                 await asyncio.to_thread(post, role, "intrinsic", {
                     **identity, "phase": "finish", "result_sha256": digest(outcome), "status": status,
                     "cpu_seconds": max(0.0, _cpu() - cpu), "wall_seconds": time.monotonic() - started,
+                    "cpu_observation_complete": False, "cpu_observation_source": "mcp_server_process_interval",
                 }, metadata=native, parent=parent)
         finally:
             ACTIVE.reset(token)
@@ -236,7 +235,9 @@ class OriginalServiceTransport:
         raise RuntimeError("Original R service attempted an unregistered endpoint")
 
 
-def attach_common(app):
+def attach_common(app, mode):
+    from fastmcp.tools.tool import Tool
+
     def materials_list() -> dict:
         return common_call("materials_list", {})
 
@@ -259,7 +260,13 @@ def attach_common(app):
         return common_call("submit", {"candidate": candidate})
 
     functions = {function.__name__: function for function in (materials_list, materials_read, workspace_read, workspace_write, compute, check, submit)}
-    for schema in json.loads((ROOT / "four-harness-tools.json").read_text()):
+    manifest = post("generator" if mode == "generation" else "verifier", "manifest", {})
+    schemas = manifest.get("tools")
+    if not isinstance(schemas, list) or any(schema.get("name") not in COMMON for schema in schemas):
+        raise RuntimeError("Gateway returned an unregistered common-tool manifest")
+    if manifest.get("scope") == "smoke" and any(schema["name"] in {"check", "submit"} for schema in schemas):
+        raise RuntimeError("A non-target smoke manifest must not expose target validation tools")
+    for schema in schemas:
         function = functions[schema["name"]]
         tool = Tool.from_function(function, name=schema["name"], description=schema["description"])
         tool.parameters = schema["parameters"]
@@ -267,14 +274,19 @@ def attach_common(app):
 
 
 def load_app(mode):
+    from fastmcp.server.middleware import Middleware
+
+    class NativeMiddleware(MeteredOriginalTools, Middleware):
+        pass
+
     if mode not in NATIVE:
         raise RuntimeError("Unknown original R MCP application")
     original = _load_module("four_harness_original_" + mode, ROOT / ("agents/" + mode + "/mcp/server.py"))
     if original.APP is None:
         raise RuntimeError("Pinned FastMCP dependency is missing")
     original.requests = OriginalServiceTransport(mode)
-    original.APP.add_middleware(MeteredOriginalTools(mode))
-    attach_common(original.APP)
+    original.APP.add_middleware(NativeMiddleware(mode))
+    attach_common(original.APP, mode)
     return original.APP
 
 

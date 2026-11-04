@@ -15,11 +15,13 @@ import json
 import os
 from pathlib import Path
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
 import threading
 import time
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -84,6 +86,40 @@ class ToolTests(Fixture):
         self.assertTrue(tail["eof"])
         for args in ({"id": "../public-toy.txt"}, {"id": str(self.material)}):
             self.error(self.call("materials.read", args), "unknown_material")
+
+    def test_cold_start_pristine_rejects_used_relabelled_or_preloaded_hosts(self):
+        self.assertTrue(self.host.pristine_for_cold_start())
+        self.host.material_inventory()
+        self.host.capabilities()
+        self.assertTrue(self.host.pristine_for_cold_start())
+        self.assertEqual(self.events, [])
+        self.error(self.call("unknown", {}), "unknown_tool")
+        self.assertFalse(self.host.pristine_for_cold_start())
+        relabelled = self.make_host("relabelled")
+        relabelled.run_id = "another-run"
+        self.assertFalse(relabelled.pristine_for_cold_start())
+        for name, area in (("workspace-data", "workspace"), ("receipt-data", "submissions"), ("control-data", "control")):
+            host = self.make_host(name)
+            (getattr(host, area).path / "old-run-data").write_text("synthetic old data")
+            self.assertFalse(host.pristine_for_cold_start())
+        changed = self.make_host("changed-identity")
+        identity = changed.control.path / "identity.json"
+        identity.chmod(0o600)  # synthetic host-owner tampering, outside tool APIs
+        identity.write_text('{"run_id":"other"}')
+        self.assertFalse(changed.pristine_for_cold_start())
+        linked = self.make_host("linked-workspace")
+        (linked.workspace.path / "linked").symlink_to(self.material)
+        self.assertFalse(linked.pristine_for_cold_start())
+
+    def test_readonly_material_inventory_rejects_drift_without_accounting(self):
+        expected = [{"id": "toy", "size": 5, "sha256": digest(self.material.read_bytes())}]
+        self.assertEqual(self.host.material_inventory(), expected)
+        self.assertEqual(self.events, [])
+        self.material.write_bytes(b"changed")
+        with self.assertRaises(tools.ToolError) as failure:
+            self.host.material_inventory()
+        self.assertEqual(failure.exception.code, "material_hash_drift")
+        self.assertEqual(self.events, [])
 
     def test_material_hash_drift_is_rejected_for_list_and_read(self):
         self.material.write_bytes(b"changed")
@@ -337,16 +373,31 @@ class SupervisorTests(Fixture):
                 "else:\n"
                 f"    open({str(pid_file)!r}, 'w').write(str(pid))\n"
                 "    time.sleep(10)\n")
-        cancel = threading.Event()
-        timer = threading.Timer(0.25, cancel.set)
-        timer.start()
+        cancel, ready = threading.Event(), threading.Event()
+
+        def cancel_after_fork():
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                try:
+                    if int(pid_file.read_text()) > 0:
+                        ready.set()
+                        break
+                except (OSError, ValueError):
+                    pass
+                cancel.wait(0.01)
+            cancel.set()
+
+        observer = threading.Thread(target=cancel_after_fork)
+        observer.start()
         try:
             result = self.trusted(code, cancel)
         finally:
-            timer.cancel()
-            timer.join()
+            cancel.set()
+            observer.join(timeout=3)
+        self.assertFalse(observer.is_alive())
+        self.assertTrue(ready.is_set(), result)
         self.assertEqual(result["status"], "cancelled")
-        self.assertLess(result["wall_seconds"], 2)
+        self.assertLess(result["wall_seconds"], 3)
         pid = int(pid_file.read_text())
         # A dead descendant can briefly remain a zombie awaiting OS adoption.
         observation = subprocess.run(["/bin/ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True)
@@ -369,7 +420,7 @@ class SupervisorTests(Fixture):
 class SandboxTests(Fixture):
     def qualified(self):
         reply = self.call("compute", {"code": "print(2)"})
-        if not reply["ok"] and reply["error"]["code"] == "unsupported_sandbox":
+        if not reply["ok"] and reply["error"]["code"] == "unsupported_sandbox" and sys.platform != "darwin":
             self.skipTest("real sandbox unavailable: " + json.dumps(self.host.capabilities()["probe"]))
         result = self.okay(reply)
         self.assertEqual(result["returncode"], 0, result)
@@ -412,14 +463,21 @@ class SandboxTests(Fixture):
 
     def test_sandbox_denies_processes_network_and_reexec(self):
         self.qualified()
-        code = ("import os,sys,socket,json\nresults=[]\n"
-                "for action in [lambda: os.fork(), lambda: socket.socket(), lambda: os.execv(sys.executable,[sys.executable,'-c','print(99)'])]:\n"
-                " try: action(); results.append(False)\n"
-                " except OSError: results.append(True)\n"
-                "print(json.dumps(results))")
-        result = self.okay(self.call("compute", {"code": code}))
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            listener.listen(1)
+            code = ("import os,sys,socket,json,errno\nresults=[]\n"
+                    "def connect():\n"
+                    f" with socket.create_connection({listener.getsockname()!r}, timeout=0.3): pass\n"
+                    "def bind():\n"
+                    " with socket.socket() as connection: connection.bind(('127.0.0.1',0))\n"
+                    "for action in [lambda: os.fork(), connect, bind, lambda: os.execv(sys.executable,[sys.executable,'-c','print(99)'])]:\n"
+                    " try: action(); results.append(False)\n"
+                    " except OSError as error: results.append(error.errno in (errno.EPERM,errno.EACCES))\n"
+                    "print(json.dumps(results))")
+            result = self.okay(self.call("compute", {"code": code}))
         self.assertEqual(result["returncode"], 0, result)
-        self.assertEqual(json.loads(result["stdout"]), [True] * 3)
+        self.assertEqual(json.loads(result["stdout"]), [True] * 4)
 
     def test_sandbox_timeout_and_cpu_limit(self):
         self.qualified()
@@ -431,13 +489,18 @@ class SandboxTests(Fixture):
         self.assertEqual(result["status"], "cpu_limit")
         self.assertGreater(result["cpu_seconds"], 0.5)
 
-    def test_sandbox_hard_memory_limit(self):
+    def test_sandbox_memory_guard_for_sustained_allocation(self):
         self.qualified()
-        self.host.limits = replace(self.limits, memory_bytes=256 * 1024 * 1024)
-        result = self.okay(self.call("compute", {"code": "x=bytearray(512*1024*1024); print('allocation passed')"}))
+        self.host.limits = replace(self.limits, memory_bytes=64 * 1024 * 1024)
+        result = self.okay(self.call("compute", {"code": "import time; x=bytearray(128*1024*1024); time.sleep(1); print('still alive')"}))
         self.assertNotEqual(result["returncode"], 0)
-        self.assertNotIn("allocation passed", result["stdout"])
+        self.assertNotIn("still alive", result["stdout"])
         self.assertTrue("MemoryError" in result["stderr"] or result["status"] == "memory_limit", result)
+        self.assertFalse(result["resource_policy"]["hard_memory_limit"])
+        if self.limits.resource_mode == "macos_monitored":
+            self.assertEqual(result["status"], "memory_limit")
+            self.assertGreater(result["peak_memory_bytes"], self.host.limits.memory_bytes)
+            self.assertFalse(result["rss_watchdog"]["hard_limit"])
 
     def test_sandbox_cancel(self):
         self.qualified()
@@ -452,6 +515,121 @@ class SandboxTests(Fixture):
         result = self.okay(reply)
         self.assertEqual(result["status"], "cancelled")
         self.assertGreater(reply["metrics"]["child_cpu_seconds"], 0)
+
+
+@unittest.skipUnless(sys.platform == "darwin", "Mac monitored-resource contract")
+class MacResourceTests(Fixture):
+    def test_monitored_compute_is_qualified_without_hard_memory_or_core_claims(self):
+        self.assertEqual(self.limits.resource_mode, "macos_monitored")
+        self.assertIsNone(self.limits.cpu_cores)
+        with self.assertRaises(ValueError):
+            tools.ToolLimits(cpu_cores=1)
+        reply = self.call("compute", {"code": "print(2 + 3)"})
+        result = self.okay(reply)
+        self.assertEqual((result["returncode"], result["stdout"]), (0, "5\n"))
+        capabilities = self.host.capabilities()
+        self.assertTrue(capabilities["sandbox_verified"])
+        self.assertEqual(capabilities["probe"]["checks"], {
+            "private_read": True, "workspace_write": True, "network": True,
+            "network_bind": True, "process": True, "exec": True})
+        self.assertEqual(capabilities["probe"]["sandbox_initialization"], "trusted_bootstrap_before_user_code")
+        self.assertEqual(capabilities["resource_scope"], "host_protection")
+        self.assertEqual(capabilities["memory_enforcement"], "RSS_watchdog")
+        self.assertEqual(capabilities["cpu_placement"], "unconstrained")
+        for key in ("hard_memory_limit", "hard_resident_memory_limit", "hard_cpu_core_limit", "address_space_limit_required"):
+            self.assertFalse(capabilities[key])
+            self.assertFalse(result["resource_policy"][key])
+        self.assertGreater(result["cpu_seconds"], 0)
+        self.assertEqual(result["cpu_observation_source"], "wait4_rusage")
+        self.assertGreater(result["peak_memory_bytes"], 0)
+        self.assertIn("wait4_ru_maxrss", result["peak_memory_observation_sources"])
+        self.assertFalse(result["rss_watchdog"]["hard_limit"])
+        self.assertTrue(reply["metrics"]["cpu_accounting_complete"])
+        self.assertTrue(reply["metrics"]["memory_accounting_complete"])
+
+    def test_strict_rlimit_as_failure_remains_fail_closed(self):
+        host = self.make_host("strict", limits=replace(self.limits, resource_mode="strict"))
+        reply = self.call("compute", {"code": "print('submitted code must not run')"}, host)
+        self.error(reply, "unsupported_sandbox")
+        capabilities = host.capabilities()
+        self.assertFalse(capabilities["sandbox_verified"])
+        self.assertTrue(capabilities["address_space_limit_required"])
+        self.assertEqual(capabilities["resource_mode"], "strict")
+        self.assertFalse(capabilities["hard_memory_limit"])
+        self.assertIn("RLIMIT_AS", capabilities["probe"]["stderr"])
+        self.assertNotEqual(capabilities["probe"]["returncode"], 0)
+        self.assertGreater(reply["metrics"]["child_cpu_seconds"], 0)
+
+    def test_failed_seatbelt_install_does_not_read_submitted_code(self):
+        # Real bootstrap CLI; an invalid OS profile makes sandbox_init fail.
+        # Reading this FIFO before successful confinement would hang the test.
+        profile = self.root / "invalid.sb"
+        profile.write_text("(version 1) (unknown-synthetic-operation)\n")
+        code = self.root / "submitted-fifo.py"
+        os.mkfifo(code)
+        config = self.root / "bootstrap.json"
+        config.write_text(json.dumps({
+            "backend": "seatbelt", "resource_mode": "macos_monitored",
+            "cpu_seconds": 2, "memory_bytes": 4 * 1024 ** 3, "cpu_cores": None,
+            "lockdown_profile": str(profile), "code_path": str(code),
+            "workspace": str(self.root), "materials": {}}))
+        result = subprocess.run([sys.executable, "-I", "-S", "-B", str(TOOLS_PATH.with_name("compute_child.py")),
+                                 "seatbelt", str(config)], cwd=self.root,
+                                env={"PATH": "/nonexistent", "HOME": "/nonexistent", "LC_ALL": "C"},
+                                capture_output=True, text=True, timeout=3)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("cannot install macOS process sandbox:", result.stderr)
+
+    def test_sandbox_output_limit_remains_enforced(self):
+        host = self.make_host("small-output", limits=replace(self.limits, max_output_bytes=1024))
+        result = self.okay(self.call("compute", {"code": "print('x' * 10000)"}, host))
+        self.assertEqual(result["status"], "output_limit")
+        self.assertTrue(result["output_truncated"])
+        self.assertLessEqual(len(result["stdout"].encode()) + len(result["stderr"].encode()), 1024)
+        self.assertGreater(result["cpu_seconds"], 0)
+
+    def test_unknown_kernel_observations_preserve_known_subtotals_and_nulls(self):
+        import ctypes
+        real_wait4 = os.wait4
+        real_cdll = ctypes.CDLL
+        exits = []
+
+        def missing_last_receipt(pid, options):
+            waited, status, usage = real_wait4(pid, options)
+            if waited:
+                exits.append(usage)
+                if len(exits) == 2:
+                    usage = SimpleNamespace(ru_utime=None, ru_stime=None, ru_maxrss=0)
+            return waited, status, usage
+
+        def missing_rss(path, *args, **kwargs):
+            if path == "/usr/lib/libproc.dylib" and exits:
+                raise OSError("synthetic unavailable kernel RSS")
+            return real_cdll(path, *args, **kwargs)
+
+        with patch.object(os, "wait4", side_effect=missing_last_receipt), patch.object(ctypes, "CDLL", side_effect=missing_rss):
+            reply = self.call("compute", {"code": "print(2 + 3)"})
+        result = self.okay(reply)
+        self.assertEqual(result["stdout"], "5\n")
+        self.assertEqual(len(exits), 2)  # containment probe, then submitted code
+        self.assertIsNone(result["cpu_seconds"])
+        self.assertIsNone(result["peak_memory_bytes"])
+        self.assertFalse(result["cpu_accounting_complete"])
+        self.assertIsNone(result["cpu_observation_source"])
+        self.assertEqual(result["peak_memory_observation_sources"], [])
+        self.assertEqual(result["rss_watchdog"]["samples"], 0)
+        self.assertGreater(result["rss_watchdog"]["unavailable_samples"], 0)
+        metrics = reply["metrics"]
+        self.assertIsNone(metrics["child_cpu_seconds"])
+        self.assertIsNone(metrics["cpu_seconds"])
+        self.assertIsNone(metrics["peak_memory_bytes"])
+        self.assertFalse(metrics["cpu_accounting_complete"])
+        self.assertFalse(metrics["memory_accounting_complete"])
+        self.assertGreater(metrics["known_child_cpu_seconds"], 0)
+        self.assertGreater(metrics["known_cpu_seconds"], metrics["parent_cpu_seconds"])
+        self.assertGreater(metrics["known_peak_memory_bytes"], 0)
+        self.assertIsNone(self.events[-1]["cpu_seconds"])
 
 
 if __name__ == "__main__":
