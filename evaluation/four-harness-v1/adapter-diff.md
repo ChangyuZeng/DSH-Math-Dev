@@ -2,6 +2,12 @@
 
 全部新增运行接口位于隔离实验目录；产品入口、历史研究数据、旧审核包、第三方原 checkout 和日常模型配置未修改。第三方适配由 [native.py](</Users/zcy/Codes/Math Agent/harness/dsh-math/evaluation/four-harness-v1/native.py>) 的 prepare_source 导出固定提交的 tracked 文件到新目录，再执行精确 before/after 替换；匹配次数、源码 dirty、提交、完整副本哈希或原生核心哈希不符即拒绝。构建回执和日志留在忽略目录。
 
+## m04168 宿主兼容性修复
+
+HostTransport 请求 identity 编码，但也在 8 MiB 线上/解码双重上限内支持 gzip、zlib-deflate；根据正文识别 SSE 或严格 terminal Responses JSON。未知非终结事件不产生动作或成功回执，继续等最终对象；缺少最终对象仍保留未知费用。实际 X/M 已完成非标准 Content-Type SSE 的两请求工具往返。另补充私有宿主有长度限制、凭据脱敏的 HTTP JSON 错误字段；没有再次调用 R 验证此诊断。
+
+同一授权下仅可为从未启动的臂分配剩余名额，父冻结与 summary 哈希、配置、代数及独占 claim 决定是否允许继续。原 campaign/请求不重开，已启动臂不能再次进入；每臂预算不增加。本轮没有新增离线测试，不能将历史离线通过外推至新解码与续行代码。
+
 ## C：原生 CLI 包装
 
 没有重写 Codex 的 turn loop，也没有修改 Codex 源码。包装创建新的 HOME、CODEX_HOME、XDG 目录，清除继承的凭据／proxy／loader，调用安装的 0.166.0 原生 CLI。实验配置固定 Astra/max、65536 上下文、49152 自动压缩阈值、HTTP Responses 网关、request/stream/unbounded retries=0；共同工具通过 stdio MCP 提供，并从宿主 manifest 取得当前 scope 的声明。关闭内置 shell、web、apps、plugins。隔离 Astra catalog 只把 tool_mode 从 code_mode_only 改为 direct、apply_patch_tool_type 从 freeform 改为 null；模型身份、max、上下文及原生 turn loop 不变。原生 plan 与共同 MCP 保留；移除不开放的资源发现/时钟声明。适配按原生 schema 精确校验并记录前后哈希，未知工具仍拒绝。

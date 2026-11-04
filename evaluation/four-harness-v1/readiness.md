@@ -1,6 +1,6 @@
 # Mac 冷启动资格与接入契约
 
-核对日期：2026-11-04（Asia/Shanghai）。采用用户确认的 `four-harness-mac-cold-start-v2`。**最新授权 m04057 已直接执行 smoke，没有新增离线检查：C 在发送前触发 OUTPUT_CAP；X 发出 1 次 HTTP 请求，收到 200 后因 UPSTREAM_TYPE 无可解析 usage；campaign 关闭，R/M 未启动。四臂均未通过。旧 m02454 的 M 请求及本次 X 请求均保留未知费用，未重放。** 当前目标是固定模型与信息边界的完整 harness 比较；CPU／RSS 如实记录，不再要求统一的硬 CPU／内存环境。具体实测与剩余门槛见 [资格结果](</Users/zcy/Codes/Math Agent/harness/dsh-math/evaluation/four-harness-v1/qualification.md>)。
+核对日期：2026-11-04（Asia/Shanghai）。采用用户确认的 `four-harness-mac-cold-start-v2`。**最新授权 m04168 已实际启动四臂，共 6 次 HTTP 请求，没有新增离线检查。X/M 各两次请求完成公共 compute→原生结果提交，分别计 3096/2557 tokens；C 在 SSE_UNKNOWN 后停止，R 收到 HTTP 400，两者 usage 未知且未重放。X 的协调/验证全链未在两请求预算内完成；四臂正式资格仍未通过。旧未知请求记录保持不变。** 当前目标是固定模型与信息边界的完整 harness 比较；CPU／RSS 如实记录，不再要求统一的硬 CPU／内存环境。具体实测与剩余门槛见 [资格结果](</Users/zcy/Codes/Math Agent/harness/dsh-math/evaluation/four-harness-v1/qualification.md>)。
 
 ## 四臂状态
 

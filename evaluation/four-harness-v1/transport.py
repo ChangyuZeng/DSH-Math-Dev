@@ -19,6 +19,7 @@ import ssl
 import stat
 import threading
 import time
+import zlib
 
 from ledger import GateError, POLICY, canonical, digest, require, normalize_usage
 
@@ -49,7 +50,8 @@ def rejected_parameter(value, request_fields):
 
 
 TERMINALS = {'response.' + status: status for status in ('completed', 'incomplete', 'failed', 'cancelled')}
-# Explicit Responses protocol vocabulary: unfamiliar protocol extensions fail closed.
+# Known Responses vocabulary; nonterminal extensions are drained without actions.
+# Only TERMINALS can produce a receipt; missing or invalid terminals still fail.
 EVENTS = set(TERMINALS) | {'response.created', 'response.in_progress',
     'response.output_item.added', 'response.output_item.done',
     'response.content_part.added', 'response.content_part.done',
@@ -228,7 +230,12 @@ def _parse_sse(source, *, max_bytes, max_events, max_event_bytes, cancel_event, 
             failed = True
         if failed:
             raise GateError('SSE_SCHEMA', 'Malformed upstream event')
-        require(isinstance(event, dict) and event.get('type') in EVENTS, 'SSE_UNKNOWN', 'Unknown upstream event')
+        require(isinstance(event, dict) and isinstance(event.get('type'), str) and
+                re.fullmatch(r'[A-Za-z0-9_.-]{1,128}', event['type']),
+                'SSE_SCHEMA', 'Invalid upstream event type')
+        # Nonterminal protocol extensions (including rate-limit telemetry) do not
+        # execute tools or constitute receipts. Drain them until a known terminal
+        # Responses object; EOF without that object still fails with unknown cost.
         kind = event['type']
         if kind in TERMINALS and isinstance(event.get('response'),dict):
             observed.append(event['response'])
@@ -239,6 +246,99 @@ def _parse_sse(source, *, max_bytes, max_events, max_event_bytes, cancel_event, 
             require(isinstance(response, dict) and response.get('status') == TERMINALS[kind],
                     'SSE_SCHEMA', 'Terminal event lacks a matching Responses object')
             terminal = response
+
+
+class _BoundedBody:
+    """Decode incrementally, bounding both wire and decoded bytes independently."""
+    def __init__(self, source, encoding, limit, evidence):
+        require(encoding in {'identity', 'gzip', 'deflate'},
+                'UPSTREAM_TYPE', 'Unsupported upstream content encoding')
+        self.source, self.limit, self.evidence = source, limit, evidence
+        self.decoder = (zlib.decompressobj(31 if encoding == 'gzip' else 15)
+                        if encoding != 'identity' else None)
+        self.buffer = b''
+        self.ended = False
+        self.wire_bytes = self.decoded_bytes = 0
+        self.wire_hash, self.decoded_hash = hashlib.sha256(), hashlib.sha256()
+
+    def _fill(self):
+        if self.ended:
+            return
+        chunk = getattr(self.source, 'read1', self.source.read)(
+            min(65536, self.limit - self.wire_bytes + 1))
+        self.wire_bytes += len(chunk)
+        self.wire_hash.update(chunk)
+        self.evidence['response_body_bytes_observed'] = self.wire_bytes
+        self.evidence['response_body_sha256'] = self.wire_hash.hexdigest()
+        require(self.wire_bytes <= self.limit, 'SSE_LIMIT', 'Upstream wire body exceeded its byte bound')
+        if not chunk:
+            self.ended = True
+            require(self.decoder is None or self.decoder.eof,
+                    'UPSTREAM_DECODE', 'Encoded upstream body was truncated')
+            return
+        try:
+            decoded = (self.decoder.decompress(chunk, self.limit - self.decoded_bytes + 1)
+                       if self.decoder is not None else chunk)
+        except zlib.error:
+            raise GateError('UPSTREAM_DECODE', 'Invalid upstream content encoding') from None
+        self.decoded_bytes += len(decoded)
+        self.decoded_hash.update(decoded)
+        self.evidence['response_decoded_bytes_observed'] = self.decoded_bytes
+        self.evidence['response_decoded_sha256'] = self.decoded_hash.hexdigest()
+        require(self.decoded_bytes <= self.limit, 'SSE_LIMIT', 'Decoded upstream body exceeded its byte bound')
+        require(self.decoder is None or not self.decoder.unused_data,
+                'UPSTREAM_DECODE', 'Trailing encoded upstream data')
+        self.buffer += decoded
+
+    def peek(self):
+        while not self.buffer and not self.ended:
+            self._fill()
+        return self.buffer
+
+    def readline(self, size):
+        while b'\n' not in self.buffer and len(self.buffer) < size and not self.ended:
+            self._fill()
+        newline = self.buffer.find(b'\n')
+        count = min(size, newline + 1 if newline >= 0 else len(self.buffer))
+        result, self.buffer = self.buffer[:count], self.buffer[count:]
+        return result
+
+
+def _observed_usage(candidate):
+    if not isinstance(candidate, dict) or not isinstance(candidate.get('usage'), dict):
+        return None
+    usage = normalize_usage(candidate['usage'], terminal=False)
+    return {'usage': {**{key: usage[key] for key in ('input_tokens', 'output_tokens', 'total_tokens')},
+                      'input_tokens_details': {'cached_tokens': usage['cached_input_tokens']},
+                      'output_tokens_details': {'reasoning_tokens': usage['reasoning_tokens']}},
+            'model': candidate.get('model') if candidate.get('model') == POLICY['model'] else None}
+
+
+def _parse_terminal_json(raw):
+    try:
+        value = json.loads(raw)
+    except (ValueError, UnicodeError):
+        raise GateError('UPSTREAM_JSON', 'Malformed upstream JSON') from None
+    response = value.get('response', value) if isinstance(value, dict) else None
+    observed = _observed_usage(response)
+    try:
+        require(isinstance(value, dict) and isinstance(response, dict),
+                'UPSTREAM_JSON', 'Upstream JSON lacks a Responses object')
+        require(response.get('object') == 'response' and
+                isinstance(response.get('id'), str) and bool(response['id']) and
+                response.get('status') in TERMINALS.values() and
+                isinstance(response.get('model'), str) and bool(response['model']) and
+                isinstance(response.get('output'), list),
+                'UPSTREAM_JSON', 'Upstream JSON is not a terminal Responses object')
+        if response is not value:
+            require(isinstance(value.get('type'), str) and value['type'] in TERMINALS and
+                    response['status'] == TERMINALS[value['type']],
+                    'UPSTREAM_JSON', 'Terminal JSON event disagrees with its response')
+        return response
+    except GateError as error:
+        if observed is not None:
+            error.observed_response = observed
+        raise
 
 
 class HostTransport:
@@ -319,6 +419,7 @@ class HostTransport:
             require(not cancel.is_set(), 'STOPPED', 'Transport cancelled before request send')
             headers = {'Authorization': 'Bearer ' + credential.access, 'chatgpt-account-id': credential.account_id,
                        'OpenAI-Beta': 'responses=experimental', 'originator': 'pi', 'accept': 'text/event-stream',
+                       'Accept-Encoding': 'identity',
                        'content-type': 'application/json', 'x-client-request-id': request_id, 'Connection': 'close'}
             connection.request('POST', '/backend-api/codex/responses', body=body, headers=headers)
         except GateError as error:
@@ -348,7 +449,7 @@ class HostTransport:
                 upstream = connection.getresponse()
                 evidence['http_status'] = upstream.status
                 media_type = upstream.getheader('Content-Type', '').split(';')[0].strip().lower()
-                encoding = upstream.getheader('Content-Encoding', 'identity').lower()
+                encoding = upstream.getheader('Content-Encoding', 'identity').strip().lower()
                 # Static classifications only; never persist arbitrary header text.
                 evidence['response_media_type'] = media_type if media_type in {
                     'text/event-stream', 'application/json', 'text/html', 'text/plain'} else 'other'
@@ -367,6 +468,20 @@ class HostTransport:
                         value = json.loads(error_body)
                         if not evidence['error_body_truncated']:
                             rejected = rejected_parameter(value, set(payload) | set(wire))
+                            # Private host receipt only (never included in source or
+                            # child responses): preserve actionable bounded JSON
+                            # errors instead of irrecoverable hashes alone.
+                            diagnostic = value.get('error', value) if isinstance(value, dict) else {}
+                            if isinstance(diagnostic, dict):
+                                fields = {}
+                                for key in ('code', 'param', 'message', 'detail'):
+                                    text = diagnostic.get(key)
+                                    if isinstance(text, str):
+                                        for secret in (credential.access, credential.account_id):
+                                            if secret:
+                                                text = text.replace(secret, '<REDACTED>')
+                                        fields[key] = text[:2048]
+                                evidence['upstream_error'] = fields
                         candidate = value.get('response', value) if isinstance(value, dict) else {}
                         if isinstance(candidate, dict) and isinstance(candidate.get('usage'), dict):
                             usage = normalize_usage(candidate['usage'], terminal=False)
@@ -381,11 +496,40 @@ class HostTransport:
                     evidence['rejected_parameter'] = rejected
                     evidence['unsupported_output_limit_reported'] = rejected == 'max_output_tokens'
                     raise GateError('UPSTREAM_HTTP', 'Upstream rejected HTTP request; no retry or redirect')
-                require(upstream.getheader('Content-Type', '').split(';')[0].strip().lower() == 'text/event-stream',
-                        'UPSTREAM_TYPE', 'Upstream did not return SSE')
-                require(upstream.getheader('Content-Encoding', 'identity').lower() == 'identity',
-                        'UPSTREAM_TYPE', 'Encoded upstream streams are not qualified')
-                result = parse_sse(upstream, max_bytes=self.max_bytes, max_events=self.max_events, cancel_event=cancel)
+                source = _BoundedBody(upstream, encoding, self.max_bytes, evidence)
+                if media_type == 'text/event-stream':
+                    result = parse_sse(source, max_bytes=self.max_bytes, max_events=self.max_events, cancel_event=cancel)
+                else:
+                    # Sniff bounded actual framing, including mislabelled responses.
+                    prefix = source.readline(min(4096, self.max_bytes + 1))
+                    while prefix and not prefix.strip() and not source.ended:
+                        prefix += source.readline(min(4096, self.max_bytes - len(prefix) + 1))
+                    source.buffer = prefix + source.buffer
+                    sniff = prefix.lstrip()
+                    if sniff.startswith((b'data:', b'event:', b':', b'id:', b'retry:')):
+                        evidence['response_body_format'] = 'sse'
+                        result = parse_sse(source, max_bytes=self.max_bytes, max_events=self.max_events, cancel_event=cancel)
+                    else:
+                        require(sniff.startswith(b'{'), 'UPSTREAM_TYPE', 'Upstream body is neither SSE nor Responses JSON')
+                        evidence['response_body_format'] = 'json'
+                        chunks = []
+                        try:
+                            while True:
+                                chunk = source.readline(self.max_bytes + 1)
+                                if not chunk:
+                                    break
+                                chunks.append(chunk)
+                        except (GateError, OSError, http.client.HTTPException):
+                            # A complete JSON object already buffered can still
+                            # carry charge evidence when framing/decode later fails.
+                            try:
+                                partial = json.loads(b''.join(chunks) + source.buffer)
+                                candidate = partial.get('response', partial) if isinstance(partial, dict) else None
+                                observed_response = _observed_usage(candidate)
+                            except (ValueError, TypeError, GateError):
+                                pass
+                            raise
+                        result = _parse_terminal_json(b''.join(chunks))
             except GateError as error:
                 error_code = error.code
                 observed_response = getattr(error,'observed_response',observed_response)

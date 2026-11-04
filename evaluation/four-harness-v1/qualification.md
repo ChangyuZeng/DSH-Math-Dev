@@ -85,6 +85,27 @@ X 保留 13952 token 预留量，total_tokens=null，不能当成实际消耗或
 
 运行后仅补齐宿主 inject_output_cap=True（仍注入批准的 2048，不抬高限制），以及静态白名单 Content-Type/Content-Encoding 分类诊断；没有新增离线测试或真实请求。本次 X 原回执没有留存具体类型/编码值，因此不能回溯断言是压缩、HTML 或 JSON，也不能归因于其他 Codex 会话。新增两项改动尚未通过后续 smoke；原始冻结记录继续对应本次运行前代码，不被新源码替换。
 
+## m04168：真实工具往返已在 X/M 跑通
+
+用户要求修复并立即测试。沿用 Astra/max、每臂最多 2 请求、合计 8 请求及原 token 额度；本轮实际发送 **6 次**。没有新增离线工程测试，旧完整验证仅是历史证据，不覆盖本轮新增实现。
+
+| 臂 | 实际 HTTP | 结果 | usage |
+|---|---:|---|---:|
+| C | 1 | 已越过 OUTPUT_CAP；非标准 Content-Type 的 SSE 被识别，但旧事件白名单在中途触发 SSE_UNKNOWN。随后修复解析器，没有重放 C | 未知，保留 29585 预留 |
+| X | 2 | 原 Explorer 调用公共 compute 得到 5，第二请求通过原 submit_notes 提交 n1；工具往返与算术结果已核对 | 3096 |
+| R | 1 | 原 generator/原 Codex 已启动；提供方 HTTP 400，无 usage；未重试 | 未知，保留 64604 预留 |
+| M | 2 | 原 workflow worker 调用公共 compute 得到 5，第二请求在 action result.summary 报告 2 + 3 = 5；往返与结果已核对 | 2557 |
+
+R 静态请求核对：其工具位于 input[0].type=additional_tools，含 functions/collaboration/mcp__reasoning_agent namespaces；没有顶层 tools。reasoning 还包含 context=all_turns，另有 client_metadata。X 的成功请求使用顶层 function tools。现有桥接收集原生声明但不转换这套 wire dialect；这些是后续排查点，不是已证实的 400 根因。C 同样使用原生 Codex，曾收到 SSE，因此不能笼统宣称所有原生工具声明都不受支持。R 缺失 instructions 已由宿主填充，不应再归因为缺少 instructions。
+
+已知 token 合计 5653，不能把它当成本轮完整实际消耗。X 的 Coordinator 在第三次请求发送前被两请求预算拒绝，因此这只证明 Explorer 的真实工具与笔记往返，不证明协调/验证全链通过。M 通过的是非目标工程检查，也不构成正式数学资格。
+
+运行报告保留原始 awaiting_result_review 状态，另存本机 `dist/four-harness-m04168-result-review.json` 记录助手工程核对；不是人工数学 Review。三个实际启动入口及逐阶段冻结清单位于本机 dist，原 claim、旧未知费用、原报告均不修改。
+
+本轮加入 bounded identity/gzip/zlib-deflate 解码、SSE/terminal Responses JSON 正文识别，并将未知中间事件作为不执行动作的消息继续读取；成功仍须有效最终回执，EOF 不构成成功。HTTP 错误增加私有宿主的有长度限制、凭据脱敏 JSON 诊断；R 本次 215 字节错误体只有哈希，无法回溯恢复，新增诊断没有经过另一请求验证。
+
+若一臂未知费用关闭原 campaign，仅允许同一授权下从未启动过的臂消费各自原有名额：逐代父冻结/summary 哈希、配置一致性、未启动状态和一次性 claim 都须核对；最多三代且臂集合严格缩小。原账本不重开，已启动臂不重跑，每臂 2 请求/131072 token 的分配总和仍不超过原 8 请求/524288 token。
+
 ## 验证与尚待事项
 
 在 m04057 本轮之前，修复后完整 `npm run build && npm test` 已通过：JavaScript 388/388，Python 395 项中 366 通过、29 显式跳过。需要安装原生运行时的 opt-in 路径另行执行：C/R 全状态及宿主审计看门狗回归 10/10，X/M 共用宿主策略的同入口回归 10/10，StateGuard 6/6，transport 28/28。X/M 首轮回归曾被 Bun 可选缓存的快速临时重命名拦截，关闭该缓存后完整重跑通过；没有把失败跳过或换成假通过。所有这些修复后回归均为离线或假 HTTP，不是新增真实模型请求。

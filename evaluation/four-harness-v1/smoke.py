@@ -35,7 +35,9 @@ def claim_authorization(manifest, output):
     AUTHORIZATION_ROOT.mkdir(parents=True,exist_ok=True)
     require(not any(p.is_symlink() for p in [AUTHORIZATION_ROOT,*AUTHORIZATION_ROOT.parents]),
             'ISOLATION','Authorization registry must not contain symlink ancestors')
-    path=AUTHORIZATION_ROOT/(AUTHORIZATION+'.json')
+    generation = manifest.get('unstarted_continuation', {}).get('generation', 1)
+    suffix = ('.unstarted' + (str(generation) if generation > 1 else '')) if manifest.get('unstarted_continuation') else ''
+    path=AUTHORIZATION_ROOT/(AUTHORIZATION+suffix+'.json')
     try:
         fd=os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
     except FileExistsError:
@@ -108,13 +110,53 @@ def freeze(*, offline_evidence, configuration):
             'source_hashes':source_hashes(),'execution_inventory':execution_inventory(configuration)}
 
 
+def validate_unstarted_continuation(manifest):
+    """Allocate only never-started arms of the same grant; never reopen a run.
+
+    Every arm retains its original two-request/131072-token slot. The parent
+    claim stays immutable, and a second exclusive marker prevents another child.
+    """
+    continuation = manifest['unstarted_continuation']
+    generation = continuation.get('generation', 1)
+    require(type(generation) is int and 1 <= generation <= 3, 'NO_REPLAY', 'At most four disjoint arm allocations')
+    parent_suffix = '' if generation == 1 else '.unstarted' + (str(generation-1) if generation > 2 else '')
+    marker = json.loads((AUTHORIZATION_ROOT/(AUTHORIZATION+parent_suffix+'.json')).read_text())
+    parent = Path(marker['output'])
+    frozen = json.loads((parent/'frozen.json').read_text())
+    summary_bytes = (parent/'summary.json').read_bytes()
+    summary = json.loads(summary_bytes)
+    expected = {'parent_output':str(parent), 'summary_sha256':hashlib.sha256(summary_bytes).hexdigest()}
+    if 'generation' in continuation:
+        expected['generation'] = generation
+    require(continuation == expected,
+            'NO_REPLAY','Parent evidence changed')
+    require(frozen.get('authorization') == AUTHORIZATION and
+            (frozen.get('unstarted_continuation', {}).get('generation', 1)
+             if frozen.get('unstarted_continuation') else 0) == generation-1 and
+            marker['manifest_sha256'] == hashlib.sha256(canonical(frozen).encode()).hexdigest() and
+            frozen['per_run_budget'] == SMOKE_BUDGET and frozen['max_requests'] == 8 and
+            frozen['max_tokens'] == 524288 and frozen['configuration'] == manifest['configuration'],
+            'NO_REPLAY','Continuation must retain the original grant and allocations')
+    entries = summary['arms']
+    require([entry['arm'] for entry in entries] == frozen['arm_order'],
+            'NO_REPLAY','Incomplete parent campaign evidence')
+    remaining = [entry['arm'] for entry in entries if entry['status'] == 'not_started']
+    require(remaining and len(remaining) < len(entries) and manifest['arm_order'] == remaining and
+            all(not (parent/(arm+'.json')).exists() for arm in remaining) and
+            CAMPAIGN == marker['campaign_id']+'-unstarted',
+            'NO_REPLAY','Only previously unstarted arms may consume their untouched slots')
+
+
 def validate(manifest):
+    continuation = manifest.get('unstarted_continuation')
+    if continuation:
+        validate_unstarted_continuation(manifest)
     require(manifest.get('format') == 'four-harness-authorized-smoke-v1' and
             manifest.get('scope') == 'smoke' and manifest.get('authorization') == AUTHORIZATION and
             manifest.get('campaign_id') == CAMPAIGN and manifest.get('model_policy') == POLICY and
             manifest.get('per_run_budget') == SMOKE_BUDGET and manifest.get('max_requests') == 8 and
             manifest.get('token_budget_authorization') == 'smoke_token_ceiling_revision:explicitly_approved' and
-            manifest.get('max_tokens') == 524288 and manifest.get('arm_order') == ['C','X','R','M'] and
+            manifest.get('max_tokens') == 524288 and (bool(continuation) or manifest.get('arm_order') == ['C','X','R','M']) and
             manifest.get('replacement_runs') is False and manifest.get('formal_execution_authorized') is False,
             'SMOKE_FREEZE', 'Only the approved bounded smoke campaign is executable')
     require(manifest.get('cold_input') == input_manifest('smoke'), 'COLD_INPUT', 'Frozen smoke input changed')
