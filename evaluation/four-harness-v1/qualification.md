@@ -1,85 +1,77 @@
-# Mac 冷启动四臂资格结果
+# 四臂运行适配与资格记录
 
-核对日期：2026-11-04（Asia/Shanghai）。本轮执行用户确认的 `four-harness-mac-cold-start-v2`：**Mac 优先、冷启动、外部信息严格隔离、模型预算统一、计算资源如实记录**。它修订了此前要求相同硬 CPU／内存额度的方案。比较对象是固定模型和信息条件下的完整 harness 表现；不能据此单独识别某个机制的因果收益。
+本轮沿用用户确认的 Mac 优先修订：固定 GPT-6 Astra / max、模型与工具预算、冷启动信息边界；计算资源如实观测，不宣称 CPU、RSS、操作系统或内部机制完全相同。比较对象是完整适配 harness。没有启动 daoshi-root，也没有修改日常模型配置、历史研究数据或生产插件。
 
-**真实模型请求 0，正式运行 0。** 本轮没有连接或停止备用服务器的实验，没有调用模型求解 Ring15。共同计算与冷启动边界已有实际离线证据；C/R 的原生模型工具兼容仍未通过，四臂真实 smoke／正式启动保持关闭。
+正式题目仍为 Ring15，D=1048576、15 对整数、目标 H≥1179649，五次/臂、7200 秒/次、共二十次。开放状态与“中等难度”仍未确认。正式运行没有授权。
 
-## 逐臂资格
+## 源码与实际入口
 
-| 臂 | 固定来源 | 实际证据 | 当前未通过的门槛 |
+| 臂 | 固定版本 | 保留的机制与本轮离线证据 | 边界 |
 |---|---|---|---|
-| C | Codex 0.166.0；`6ff1e1ca3b30fc8b914720681fcf5fe62e95f856` | 原生 CLI 已越过 managed-preferences 和代理错误，thread/turn 启动并到达网关；外部凭据及额外本机端口探针仍被拒绝 | 固定 Astra catalog 强制 code-mode-only，原生请求含尚未资格化的 `additional_tools` namespace；网关在派发前拒绝 `TOOL_NOT_ALLOWED`，0 次模型请求；共同工具往返、真实后代与压缩未资格化 |
-| X | Xean 4.5.0；`26669ebb071f8fc13e8a51f66a474d7ce9af387a`；Pi 1.5.0 | 已核对 build6；原 public host、Explorer、Coordinator、六段验证、笔记重建：9 假请求、1080 fixture tokens、8 条原生父关系；五工具 smoke 夹具另通过 2 假请求／240 fixture tokens | fork/resume、并行后代、压缩、可选 Codex source-search 和原生状态产物约束未完整覆盖；真实提供方回执未验证 |
-| R | 官方 frenzymath/Rethlas；`887cc46427636bbdd235160a112f9a30ae81d040` | 原 shell exec/resume、原 FastMCP memory/BM25/branch、原 verify API/subprocess、报告校验路径；基础扩展夹具 3 次假请求／19 次工具 | 真正 Codex 生成器／验证器遇到 C 相同的工具兼容门槛；显式子进程夹具不证明真实 Rust spawn、递归、repair、压缩或完整验证技能 |
-| M | dsh-math 0.11.0；原 workflow 基线 `ffc582c52585d958bcb3198259ea27c69ee6f8bb` | 原 executeLoop/executeStep 和实际 Python context/store/service；精确 Note/Obligation 版本；五工具冷 smoke 夹具以 2 假请求完成工具往返；取消、未知恢复与目标工具拒绝通过 | 尚无已授权且经离线验证的真实输送器；提供方模型／effort／usage／输出约束、原生状态产物和完整冷启动执行配置仍待核验 |
+| C | Codex 0.166.0；`6ff1e1ca3b30fc8b914720681fcf5fe62e95f856` | 实际安装的 Rust CLI、正常多轮循环、真实 MCP 计算结果进入下一次物理请求 | 工具元数据、不可用工具说明有明确适配；没有另写聊天循环 |
+| X | Xean `26669ebb071f8fc13e8a51f66a474d7ce9af387a`；Pi 1.5.0 | 原始公开 host、Explorer/Coordinator、原生校验、原生分叉、长度续写、重建纠错；分叉 11 请求、长度续写 10 请求、纠错 11 请求均为假响应测试 | smoke 仍只有两次请求；不能把 Explorer 写出 Note 当成整个校验链 accepted |
+| R | 官方 Rethlas `887cc46427636bbdd235160a112f9a30ae81d040` | 原始运行脚本、生成器、策略技能、记忆/BM25/分支、原始验证 MCP/API；真实 Codex 两轮计算夹具 | 原脚本达到 MAX_ITERATIONS 且没有 verified blueprint 时退出 1；单独用原始脚本哈希、真实 CLI 退出码、执行回执证明 bounded stop，绝不伪造通过标记 |
+| M | dsh-math 0.11.0，核心基线 `ffc582c52585d958bcb3198259ea27c69ee6f8bb` | 实际 executeLoop/executeStep、Python 持久服务、Note/Obligation 精确引用；24 项原生工作流回归及同入口计算回路 | 没有把模型自评或程序计算升级为人工 Review 或全局证明 |
 
-R 使用官方上游，未替换成本地 Rethlas-V2 分叉。来源、角色与提示清单见 [源码审计](</Users/zcy/Codes/Math Agent/harness/dsh-math/evaluation/four-harness-v1/source-audit.md>)；逐项适配见 [适配差异](</Users/zcy/Codes/Math Agent/harness/dsh-math/evaluation/four-harness-v1/adapter-diff.md>)。源码审计保留取得源码时的历史运行时快照，后续实测以本文及当前冻结草案为准。
+R 不使用本地 Rethlas-V2 fork 冒充官方版本。所有第三方原 checkout 保持不变，适配仅在隔离副本。X 的当前不可变 build、依赖文件树、C 原生二进制、Python/Node/Bun、R 的 69 个隔离依赖和 M 实际运行文件均由启动冻结清单重新核对，不能只相信版本字符串。
 
-## 冷启动信息边界
+## 冷启动与共同接口
 
-正式模型材料只含统一题面与提交格式两个固定字节文件。材料清单不含公开基线证书、既有解法、检索链接、历史 run、旧笔记或路线提示。`prepare-cold` 建立四臂独立且全新的 home/workspace/state/cache/tmp；拒绝复用已有目录。它只准备输入，不启动研究，也不单凭空目录声称操作系统隔离已经合格。
+每个运行使用新的 HOME、CODEX_HOME、工作文件、工具状态、原生持久状态。模型只得到 canonical smoke 的 2+3 非目标题，或未来正式题干与提交结构；没有公开 baseline 证书、旧答案、既有 frontier、运行历史、其他臂状态。原生同一次运行的记忆允许保留。模型训练暴露和服务端缓存不能据此宣称消除。
 
-smoke 使用另一套固定材料，只含 `2+3` 与答复要求。其 manifest、MCP 工具列表和网关执行入口仅提供材料、工作文件及 compute 五个工具；不声明、不执行 Ring15 check/submit。四臂原生机制工具须另行列举、计量并限制在当前 run，不得扩展为外部检索。
+共同接口为 materials.list/read、workspace.read/write、compute；正式范围额外开放 check/submit。smoke 不提供 Ring15 精确检查或候选提交。原生协调、技能读取、记忆与验证工具按白名单保留并计量，不给任意 shell、网络检索或任意源码读取能力。
 
-网关为正式／smoke scope 核对材料 ID／大小／SHA、CommonTools 类型及 run 身份、初始状态未使用、工具超时／产物配额，并自行绑定正确账本的强制计量回调；每次请求重查材料及绑定。共同文件接口使用目录描述符、O_NOFOLLOW 和硬链接检查，阻断跨 run 和宿主路径。外部浏览／搜索、旧会话／旧缓存读取关闭；本次 run 内自行产生的笔记和状态可以使用。
+计算在实际 macOS Seatbelt 下运行；网络、宿主私有文件、宿主控制目录均有真实拒绝测试。CPU、RSS、采样缺失及来源保留为观测，缺失不是 0。运行看门狗只清理经出生身份和祖先关系核对的本次进程；不宣称捕获了所有极短寿命后代，也不按进程名称清理宿主应用。
 
-无法证明模型训练中从未见过题目；也未宣称控制了提供方内部缓存。这两项限制明确记录。公开基线复算与正式前沿核对只供操作者和独立评审使用，不放回模型材料。共享中间状态续跑及各臂自身续跑是未来独立设计，本轮不混入冷启动比较。
+共同工具的模型回执统一精简：保留 ok/error，计算保留 status、returncode、stdout、stderr、output_bytes、output_truncated；CPU、RSS、runtime、资源保护细节保留在完整宿主审计。模型回执 result_sha256 对应实际发送的结果。`common_reply_projection` 精确绑定完整执行回执 SHA 与发送 SHA，C/R 原生 MCP 的墙钟前缀不影响实际结果验证。
 
-## Mac 计算和资源记录
+## 请求、停止与计量
 
-Darwin 默认 `macos_monitored`：可信 Python bootstrap 在读取用户代码之前安装一次 Seatbelt；策略失败则停止，绝不退回宿主直接执行。文件／网络、fork/re-exec、工作目录写入等限制已用真实子进程验证。保留工具墙钟、CPU、文件／输出限制、RSS watchdog 和进程组取消清理作为宿主保护；不再要求 RLIMIT_AS 成功，也不把核心数或 RSS watchdog 说成硬内存保证。可选 strict 模式仍保持原有失败关闭语义。
+SQLite 在物理调用前完成全角色、全后代、全臂的事务预留。实际 transport.start 在写事务中再次核对 campaign 状态并立即发起发送，防止并行未知请求关闭后仍发送已预留请求。所有重试关闭；未知结果禁止自动重放，也不能换输出目录获得新的八次授权。
 
-共同工具记录 wait4 CPU、峰值 RSS、观测来源、已知小计和完整性；无法取得的值保留 null。即使 CPU 小计非空，只要子进程观察不全，完整性也保持 false。原生进程包装另外采样进程组／后代的 CPU、RSS、墙钟；采样可能漏掉短进程和瞬时峰值，CPU 时钟也有精度限制。它不与嵌套工具 CPU 相加，不伪造全树精确总量。清理使用已经观察到的祖先关系与进程出生身份，覆盖另建 session 的已知后代；正常退出、超时及 PID 重用回归已通过，未观察到的短命父进程仍是明确缺口。
+原始 usage 保留 input、cached input、output、reasoning、total 的语义；cached/reasoning 是子集。缺失和矛盾保留 null，已知下界不会被迟到或较弱回执覆盖。错误 HTTP、已收到 terminal 后 SSE 损坏、取消以及迟到回执均保留已知费用。失败状态不会转换成成功状态。
 
-统一的请求、token、墙钟、工具次数、单工具超时和产物预算仍保留；CPU 核数、累计 CPU 和内存不再作为公平预算或淘汰依据。配置中的保护阈值与观测缺口随运行记录。Linux／cgroup 不再是本方案的先决条件；本次没有启动 Docker daemon 或备用服务器。
+上下文第一次按完整 UTF-8 字节加 4096 framing 预留。仅当同一运行、同一角色、同一原生 thread/turn 的已完成父请求有完整实测 usage，固定输入字段完全一致、整个旧 input 前缀逐字节不变时，后续请求可使用实测旧前缀 input_tokens，加父 output_tokens、全部新增序列化 UTF-8、正向 metadata 差额与 4096 framing。新增 encrypted_content 的所有字节仍计入，并绑定原始提供方回执；没有选用猜测的 Astra tokenizer、截断上下文或抬高 65536 上限。分叉、压缩、缺失回执、字段变化或前缀变化均回到完整字节上界。每个估计方法、父回执和前缀/固定字段哈希均留痕；真实回执超界仍立即停止。
 
-## 计量与停止
+所有模型可写运行状态和完整请求/响应审计由 16 MiB 观察看门狗检查。原生运行目录不能访问宿主 common/.host、中央 ledger、认证文件或其他臂。临时文件原子重命名只允许有界整树重扫；扫描不明不能估计为 0。该观察看门狗不是文件系统硬配额或完整瞬时峰值证明。
 
-- 所有角色／后代／压缩调用必须通过同一 run/campaign 的 SQLite 事务预留：正式每臂五个槽位，smoke 每臂一个槽位且至多 2 请求、总计 8 请求；失败不自动替补。
-- Codex 原生 body 元数据与 header 投影须一致；MCP 传播 thread/turn，复用 child 的新 turn 可绑定新 parent turn。多物理请求对应同一 parent turn 时，缺少已证明的精确父 ID便拒绝，不猜测最近请求。
-- 每个请求保留原始 usage、输入／缓存／输出／reasoning／total、请求身份、角色、父请求和 payload 哈希。缓存／reasoning 是子项，不重复累计。缺核心 usage 立即停止；未知成本保留预留或已知下界，不能计零或自动重放。
-- 关闭与实际 transport.start 同锁排序；取消后的晚到 usage 可补记，不能重开 run、弱化已知成本或交付可提交的成功响应。当前没有真实 transport。
-- 当前输入上界仍采用序列化 UTF-8 字节数加 4096 裕量；提供方 tokenizer／framing 与原生不透明上下文尚需资格化。实际 Codex 请求曾达到 52617 字节，连同裕量和 16384 输出预留为 73097，超过现有 65536 总上下文上限；没有为通过夹具而提高预算或删改 catalog。
-- 原生 `additional_tools` 被明确拒绝，避免绕过顶层函数白名单。未覆盖的路径保留不合格状态，不静默换模型、改为自制循环或宣称账本覆盖全部原生行为。
+## 已批准 smoke 与启动入口
 
-## 离线验证
+用户已授权工程门槛通过后启动一次非目标题 smoke，并明确批准统一提高 token 上限。当前授权固定为：
 
-本轮共同 Mac 工具测试 41/41 通过，无跳过；冷启动／网关／账本新增回归覆盖：额外／篡改材料、预装状态、跨 run 绑定、计量回调替换、smoke 目标工具声明与直接调用、原生 additional_tools 旁路、CPU 小计不等于完整记录。独立只读审查复核了相关修复。实际进程采样测试也已通过。
+| 项目 | 限制 |
+|---|---|
+| 模型 | `openai-codex/gpt-6-astra`，effort=`max`，没有 fallback |
+| 物理请求 | 每臂最多 2 次，四臂合计最多 8 次，失败不补跑 |
+| token | 每臂最多 131072，总计最多 524288，包含输入与输出，缓存输入不豁免 |
+| 单次输出 / 上下文 | 2048 / 65536 |
+| 时间 / 工具 | 每臂 180 秒，8 次工具，单工具 10 秒 |
+| 运行状态与审计 | 每臂 16 MiB；资源实际观测 |
+| 任务 | canonical 2+3，读取材料或实际计算并继续原生循环；不调用 Ring15 |
 
-本轮 `npm run build && npm test` 已通过：JavaScript 387/387；Python 317 项中 304 通过、13 个显式跳过。12 个可选原生夹具已在本轮单独运行；另一项为需显式材料路径的旧公开基线测试。共同 Mac 计算测试不再因 RLIMIT_AS 被跳过。原始日志、隔离构建与 fixture 回执保留在忽略目录，不提交到仓库。本次仅变更实验适配及测试，没有产品 UI／正常 runtime 更新，也没有 Desktop 安装或重启。
+`smoke.py` 冻结当前源码、外部运行时实际字节、原生 build、冷输入和离线证据后，由 `qualify.py launch --scope smoke --arm all --manifest FROZEN --output FRESH` 启动同一个 campaign。宿主 transport 仅使用固定官方 Codex HTTPS endpoint，认证不传给模型子进程，禁止重定向、自动重试和自动刷新认证。TLS/认证预检不发送模型请求。
 
-本轮 [M 冷 smoke 夹具](</Users/zcy/Codes/Math Agent/harness/dsh-math/dist/four-harness-mac-M-smoke-v2/report.json>) 已通过，scope 为 smoke、2 次假请求、0 次真实请求；另有 [Mac 进程观察回执](</Users/zcy/Codes/Math Agent/harness/dsh-math/dist/four-harness-mac-M-v2/report.json>)。X build6 的 8 项原生回归、M 的 23 项原生 workflow 回归均通过；R 原生 15 个用例分批通过。R 正向 MCP 曾被夹具自设的 25 秒客户端期限中断，改为经认证 manifest 的单工具期限（offline/formal 60 秒、smoke 10 秒）后重跑通过；整个扩展夹具限 75 秒。原服务器、beartype 与报告 schema 校验未关闭，冷导入开销保留。
+独立于输出目录的一次性授权标记阻止 crash、未知结果或更换目录后的重放。原始请求和回执只写被忽略的宿主验收目录；可提交源码中没有认证值或本次模型日志。`formal`、单臂独立启动和未冻结/变化的配置一律拒绝。
 
-此前的 [X host](</Users/zcy/Codes/Math Agent/harness/dsh-math/dist/four-harness-offline-X-host-final/report.json>)、[R MCP](</Users/zcy/Codes/Math Agent/harness/dsh-math/dist/four-harness-offline-R-mcp-final/report.json>) 和 [M workflow](</Users/zcy/Codes/Math Agent/harness/dsh-math/dist/four-harness-offline-M-final/report.json>) 保留作历史证据。这些都是确定性夹具，不是数学成绩，也不消耗真实 smoke 的授权额度。
+兼容性通过要求实际物理回执完整、工具真正执行、其精确结果进入下一次真实原生请求、运行状态与退出符合原生契约。算术结果必须从保留的原生 Note、proposal、报告或最终文本独立核对；不能由退出码 0、mock 的数字或 metadata 推断。两次请求不足以完成 X/R 全验证链时报告 incomplete，不增加调用。
 
-此前仅重放 [公开基线 thread 274](https://einsteinarena.com/problems/ring-loading-15/threads/274)，独立整数枚举得到 `D=1048576, H=1179648, target_met=false`。未搜索目标、未用成绩挑题。该证书现在明确位于模型材料边界之外；开放状态与“中等难度”仍未确认。
+## 本次真实 smoke 结果与离线修复
 
-## 真实运行前的门槛
+授权 campaign `authorized-smoke-m02454` 已执行并关闭，四臂均未通过。原始冻结清单、逐臂记录、usage 未知状态和一次性授权标记均保留在被忽略的 `dist/`，未重写、删除或补跑；宿主命令正常写出报告不等于 smoke 成功。
 
-真实 smoke 前还需：解决 C/R 固定 Astra 原生工具路径及上下文兼容；完成采用路径的后代／压缩／故障计量覆盖；验证四臂实际冷启动执行配置和原生状态产物约束；实现并离线验证无重试的真实 transport、解析与凭据边界；冻结确切版本、工具、提示和输入，然后取得用户单独授权。
+| 臂 | 确认实际 HTTP 请求 | 本次结果 | 后续仅离线修复 |
+|---|---:|---|---|
+| C | 0 | STATE_LINK，发送前停止 | 原生 Codex 的可选 PATH 别名创建 apply_patch/applypatch 符号链接；将精确别名目录设为 OS 只读，保留原生继续执行行为和全目录 StateGuard |
+| X | 0 | TOOL_NOT_ALLOWED，原生 submit_notes/read_notes 声明被拒 | 宿主启动与夹具共同使用逐角色原生工具白名单；另关闭可选 Bun transpilation cache，避免快速临时重命名导致扫描不明，SQLite 状态继续计量 |
+| R | 0 | STATE_LINK，发送前停止 | 同 C；原始运行脚本、策略技能和协调机制保留 |
+| M | 1 | HTTP 400，没有任何 usage | 离线由 46 字节错误体的精确 SHA-256 匹配确认 Unsupported parameter: truncation；仅对 disabled 做明确的 native Codex framing 省略，并保留 max_output_tokens=2048 |
 
-正式 20 次运行前还需：smoke 通过；操作者侧 24 小时内前沿刷新和开放状态／难度核对；独立 checker 评审；两名盲审者与仲裁者；20 个固定槽位和顺序种子；冻结材料 SHA 与各臂提示／运行配置；再提交正式方案单独确认。共同题面材料已有可复算哈希，真实 resolved model、评审安排和顺序未知的字段保持未填。
+M 的未知请求保留 11430 token 预留量，total_tokens=null；这不是已知实际消耗 11430，更不是零费用。原始请求没有自动重放。错误体原始 SHA-256 为 `3ff2fba08b30fc4400c615241d0f7aae409846e6ab7cfd2ea6e84edc9bac5c73`。省略 disabled 的依据是已安装原生 Pi builder 不发送该字段，以及 OpenAI Responses 请求声明的默认 disabled 契约；这不证明真实后端已接受修复，也不证明指定模型、effort 或 2048 输出上限已经通过真实验证。
 
-## 非目标题 smoke 提案，尚未授权
+当前代码的修复不追溯改变本次冻结版本或失败结果。下一轮真实请求须另有明确授权与新的冻结清单，未知费用记录继续保留。当前四臂正式资格仍为不合格，二十次正式研究运行保持关闭。
 
-任务仅为冷材料中的 `2+3`，要求原生 harness 调用共同材料或 compute 并消费结果。保留原生多轮决策；两次请求不足以走完整个多角色链就报告未完成，不追加、不替补。
+## 验证与尚待事项
 
-| 项目 | 单臂上限 | 四臂总上限 |
-|---|---:|---:|
-| 所有角色的物理请求 | 2 | 8 |
-| input+output tokens，含缓存计数 | 32768 | 131072 |
-| 单请求输出 | 2048 | 每次相同 |
-| 墙钟 | 180 秒 | 顺序执行 720 秒，teardown 单列 |
-| 工具次数 | 8 | 32 |
-| 单工具超时／产物 | 10 秒／16 MiB | 各 run 独立 |
-| CPU／RSS | 观察并记录宿主保护阈值和缺口 | 不设相同公平额度、不汇总重叠观测 |
+修复后完整 `npm run build && npm test` 已通过：JavaScript 388/388，Python 395 项中 366 通过、29 显式跳过。需要安装原生运行时的 opt-in 路径另行执行：C/R 全状态及宿主审计看门狗回归 10/10，X/M 共用宿主策略的同入口回归 10/10，StateGuard 6/6，transport 28/28。X/M 首轮回归曾被 Bun 可选缓存的快速临时重命名拦截，关闭该缓存后完整重跑通过；没有把失败跳过或换成假通过。所有这些修复后回归均为离线或假 HTTP，不是新增真实模型请求。
 
-模型固定 `openai-codex / gpt-6-astra / max`，无 fallback。共同工具是材料、工作文件、计算五项；Ring15 checker／submission 不可用。成功要求原始请求与回执证明模型／effort／usage、工具结果进入后续原生请求以及总上限有效。
-
-```bash
-python3 -B evaluation/four-harness-v1/qualify.py smoke-plan
-python3 -B evaluation/four-harness-v1/qualify.py launch --scope smoke --arm C --manifest <approved-frozen-manifest>
-# X/R/M 同入口，共享同一个最多 8 请求 campaign。
-```
-
-当前 launch 一律返回 LIVE_NOT_AUTHORIZED；改文件权限或布尔字段不会启用模型。待工程门槛满足后，向用户展示可执行冻结版本并另行请求授权。本次修订授权不包含真实 smoke 或正式研究运行。
+正式二十次实验仍须在 smoke 之后另行确认冻结方案：真实提供方模型/effort 与输出上限、四臂实际启动配置、统一冷输入、前沿刷新与材料冻结、随机顺序、两位独立匿名评审与第三仲裁者、独立精确检查，以及可审计的成本与失败口径。公开 baseline 的 9D/8 重放只属于宿主检查器验收，不能送入冷启动模型，也不证明题目当前开放或中等难度。

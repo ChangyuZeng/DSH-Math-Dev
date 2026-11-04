@@ -10,7 +10,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "evaluation/four-harness-v1"))
 from native import NativeBlocked, PINS, copied_fixture
-from x_full import CORE, INTRINSIC, STAGES, fixture_responses, prepare_host_fixture, xean_full_fixture
+from x_full import CORE, INTRINSIC, STAGES, expected_stages, fixture_responses, prepare_host_fixture, xean_full_fixture
 
 
 class XHostBoundaryTests(unittest.TestCase):
@@ -45,7 +45,7 @@ class XHostBoundaryTests(unittest.TestCase):
 class XNativeHostTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.source = Path(os.environ.get("FOUR_HARNESS_XEAN_BUILD", ROOT / "dist/four-harness-builds/xean-native-6"))
+        cls.source = Path(os.environ.get("FOUR_HARNESS_XEAN_BUILD", ROOT / "dist/four-harness-builds/xean-native-10"))
         cls.bun = Path(os.environ.get("FOUR_HARNESS_BUN", ROOT / "dist/four-harness-builds/runtime/node_modules/@oven/bun-darwin-aarch64/bin/bun"))
         if not cls.source.is_dir() or not cls.bun.is_file():
             raise RuntimeError("Explicit native qualification requires the installed pinned X build and Bun")
@@ -66,7 +66,7 @@ class XNativeHostTests(unittest.TestCase):
         root = Path(temporary.name).resolve()
         self.addCleanup(temporary.cleanup)
         ledger = Ledger(root / "ledger.sqlite")
-        ledger.create_campaign("smoke", max_requests=2, max_tokens=32768, scope="smoke")
+        ledger.create_campaign("smoke", max_requests=2, max_tokens=SMOKE_BUDGET["total_tokens"], scope="smoke")
         ledger.create_run("X-smoke", "smoke", "X", budget=SMOKE_BUDGET)
         common = CommonTools("X-smoke", root / "tools", write_materials(root / "materials", "smoke"),
                              limits=ToolLimits(timeout_seconds=10, artifact_bytes=16 * 1024 * 1024))
@@ -148,8 +148,9 @@ class XNativeHostTests(unittest.TestCase):
                 self.assertEqual(result["observed_stages"], list(STAGES))
                 self.assertFalse(result["live_ready"])
                 self.assertFalse(result["native_qualified"])
-                self.assertIn("NATIVE_FORK_RESUME_NOT_EXERCISED", result["qualification_blockers"])
-                self.assertIn("NATIVE_COMPACTION_NOT_EXERCISED", result["qualification_blockers"])
+                self.assertIn("ADOPTED_X_PATHS_REQUIRE_COMBINED_OFFLINE_EVIDENCE", result["qualification_blockers"])
+                self.assertIn("compaction", result["disabled_paths"])
+                self.assertIn("resume_dispatch", result["disabled_paths"])
                 snapshot = result["snapshot"]
                 self.assertEqual(snapshot["requests"], 9)
                 self.assertEqual(snapshot["total_tokens"], 1080)
@@ -210,6 +211,54 @@ class XNativeHostTests(unittest.TestCase):
                                     tool["wall_seconds"] >= 0 for tool in tool_receipts))
                 self.assertIn("## n1", result["output"]["accepted_argument"])
                 self.assertIn("## n2", result["output"]["accepted_argument"])
+
+    def assert_adopted_path(self, result, scenario):
+        self.assertEqual(result["native"]["returncode"], 0, result["native"])
+        self.assertTrue(result["native_host_path_qualified"], result["qualification_blockers"])
+        self.assertTrue(result["parent_linkage_qualified"])
+        self.assertEqual(result["observed_stages"], list(expected_stages(scenario)))
+        self.assertEqual(result["snapshot"]["requests"], len(expected_stages(scenario)))
+        self.assertEqual(result["snapshot"]["total_tokens"], 120 * len(expected_stages(scenario)))
+        physical = result["output"]["physical_requests"]
+        request_ids = {request["request_id"] for request in physical}
+        receipts = [event["tool"] for event in result["events"] if event["type"] == "tool_finished"]
+        contexts = {event["tool_request_id"]: event["parent_request_id"] for event in result["events"]
+                    if event["type"] == "native_tool_context"}
+        self.assertTrue(all(tool.get("parent_request_id", contexts.get(tool["request_id"])) in request_ids
+                            for tool in receipts), [(tool.get("name", tool.get("tool")), tool["request_id"]) for tool in receipts])
+        self.assertEqual(result["output"]["report"]["status"]["accepted"], "n2")
+        self.assertFalse(result["output"]["mechanisms"]["compaction"])
+        self.assertFalse(result["output"]["mechanisms"]["parallel_dispatch"])
+        self.assertFalse(result["output"]["mechanisms"]["resume_dispatch"])
+        return physical
+
+    def test_adopted_native_fork_has_durable_prefix_parent(self):
+        result = self.fixture("fork")
+        physical = self.assert_adopted_path(result, "fork")
+        first, second = [request for request in physical if request["native"]["stage"] == "coordinator"]
+        self.assertEqual(second["native"]["conversation"]["parent"]["conversationId"], first["native"]["conversation"]["id"])
+        self.assertEqual(second["parent_reason"], "native_coordinator_prefix_fork")
+        self.assertEqual(second["parent_request_id"], first["request_id"])
+        self.assertNotEqual(second["parent_request_id"], second["sequence_previous_request"])
+        self.assertEqual(sum(task["kind"] == "xean.worker" for task in result["output"]["tasks"]), 5)
+
+    def test_adopted_native_length_continuation_is_separately_metered(self):
+        result = self.fixture("length")
+        physical = self.assert_adopted_path(result, "length")
+        self.assertEqual(physical[0]["stop_reason"], "length")
+        self.assertEqual(physical[1]["parent_reason"], "native_length_continuation")
+        self.assertEqual(physical[0]["native"]["conversation"]["id"], physical[1]["native"]["conversation"]["id"])
+        self.assertIn("Continue exactly where you left off", json.dumps(result["requests"][1]["payload"]))
+
+    def test_adopted_native_reconstruction_correction_repeats_blind_proof(self):
+        result = self.fixture("correction")
+        physical = self.assert_adopted_path(result, "correction")
+        proofs = [request for request in physical if request["native"]["stage"] == "proof"]
+        self.assertEqual(len(proofs), 2)
+        self.assertEqual(proofs[1]["parent_reason"], "native_statement_correction_to_blind_proof")
+        self.assertIn("Integer successor arithmetic", json.dumps(proofs[1]["request"]))
+        self.assertNotIn("Synthetic note A", json.dumps(proofs[1]["request"]))
+        self.assertEqual(set(result["output"]["report"]["reconstructed"]), {"n1", "n2"})
 
     def test_missing_receipt_usage_stops_native_host_without_replay(self):
         result = self.fixture("missing_usage")

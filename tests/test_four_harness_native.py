@@ -132,6 +132,26 @@ class NativeContracts(unittest.TestCase):
                 self.assertGreaterEqual(result["cleanup"]["known_processes"], 2)
                 self.assertFalse(result["cleanup"]["whole_process_tree_complete"])
 
+    def test_cancellation_cleans_detached_child_without_reporting_timeout(self):
+        import threading
+        with tempfile.TemporaryDirectory() as directory:
+            cancel = threading.Event()
+            timer = threading.Timer(0.8, cancel.set)
+            timer.start()
+            try:
+                code = ("import subprocess,sys,time; child=subprocess.Popen([sys.executable,'-I','-c',"
+                        "'import time;time.sleep(60)'],start_new_session=True); "
+                        "print(child.pid,flush=True);time.sleep(60)")
+                result = native.run_process([sys.executable, "-I", "-c", code],
+                    env={"PATH": "/usr/bin:/bin"}, cwd=directory, timeout=20, cancel_event=cancel)
+            finally:
+                timer.cancel()
+                timer.join()
+            self.assertTrue(result["cancelled"])
+            self.assertFalse(result["timed_out"])
+            self.assertIsNone(native.process_identity(int(result["stdout"].strip())))
+            self.assertTrue(result["cleanup_complete_for_known_processes"])
+
     def test_x_all_six_native_profiles_have_exact_effort_and_role_route(self):
         settings = native.xean_settings()
         for role in ("coordinator", "explorer", "correctness", "source", "requirements", "reconstruction"):
@@ -142,6 +162,48 @@ class NativeContracts(unittest.TestCase):
 
 @unittest.skipUnless(os.environ.get("FOUR_HARNESS_NATIVE_FIXTURES") == "1", "explicit offline native fixture opt-in")
 class InstalledCodexFixture(unittest.TestCase):
+    def test_actual_direct_cli_common_and_intrinsic_continuation(self):
+        from codex_bridge import NativeDirectBridge
+        from gateway import responses_tools
+        with tempfile.TemporaryDirectory(prefix="four-harness-direct-test-") as directory:
+            root = Path(directory).resolve()
+            ledger = Ledger(root / "host" / "ledger.sqlite")
+            ledger.create_campaign("offline-direct", max_requests=2, max_tokens=120000, scope="offline")
+            ledger.create_run("C-direct", "offline-direct", "C", budget={**FORMAL_BUDGET,
+                "model_requests": 2, "total_tokens": 120000})
+            common = CommonTools(run_id="C-direct", run_root=root / "tools", materials={},
+                accounting=lambda event: ledger.tool_event("C-direct", event))
+            token = capability()
+            bridge = NativeDirectBridge("C", "agent", responses_tools(), tool_timeout_seconds=60)
+            transport = FixtureTransport([
+                response(1, [
+                    {"type": "function_call", "id": "fc_materials", "call_id": "call_materials",
+                     "namespace": "mcp__common", "name": "materials_list", "arguments": "{}", "status": "completed"},
+                    {"type": "function_call", "id": "fc_plan", "call_id": "call_plan", "namespace": "functions",
+                     "name": "update_plan", "arguments": json.dumps({"plan": [{"step": "Read frozen fixture materials", "status": "completed"}]}), "status": "completed"}]),
+                response(2, [{"type": "message", "id": "msg_done", "role": "assistant", "status": "completed",
+                    "content": [{"type": "output_text", "text": "fixture complete", "annotations": []}]}])])
+            with Gateway(ledger, transport=transport,
+                bindings={token: {"run_id": "C-direct", "arm": "C", "role": "agent", "require_native_metadata": True}},
+                tools={"C-direct": common}, allowed_tools={"C-direct": set(native.TOOLS)},
+                request_adapters={("C-direct", "agent"): bridge}, inject_output_cap=True) as gateway:
+                result = native.codex_fixture(root / "native", gateway=gateway, token=token,
+                    mcp_command=(str(Path(sys.executable).resolve()), "-I", str(HERE / "mcp.py")), timeout=35,
+                    direct_source=ROOT / "dist/four-harness-sources/codex-0.166.0")
+                snapshot = ledger.snapshot("C-direct")
+            self.assertEqual(result["returncode"], 0, json.dumps({"native": result, "events": ledger.events()}, indent=2))
+            self.assertEqual(snapshot["requests"], 2)
+            self.assertTrue(snapshot["accounting_complete"])
+            self.assertEqual(len(transport.requests), 2)
+            self.assertTrue(all(request["payload"]["reasoning"]["effort"] == "max" for request in transport.requests))
+            starts = [event for event in ledger.events() if event["type"] == "tool_started"]
+            finishes = [event for event in ledger.events() if event["type"] == "tool_finished"]
+            self.assertEqual(len(starts), 2, json.dumps({"native": result, "events": ledger.events()}, indent=2))
+            self.assertEqual(len(finishes), 2)
+            self.assertEqual(set(bridge.outputs), {"call_materials", "call_plan"})
+            self.assertTrue(result["cleanup_complete_for_known_processes"])
+            self.assertFalse(result["live_ready"])
+
     def test_actual_cli_starts_then_rejects_unqualified_code_mode_tools(self):
         with tempfile.TemporaryDirectory(prefix="four-harness-native-test-") as directory:
             root = Path(directory).resolve()

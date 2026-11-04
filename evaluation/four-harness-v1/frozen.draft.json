@@ -37,8 +37,8 @@
       "id": "C",
       "name": "Codex plain",
       "commit": "6ff1e1ca3b30fc8b914720681fcf5fe62e95f856",
-      "adapter_sha256": "10c2a1dcf3a08d5f29c58a0782e68b22488377941530d2462dcf5ef1189997e1",
-      "prompt_sha256": "a8b2623f0f15f39824294a53697f48c6eeb7080cbf6d99532c46cf1a6822a79c",
+      "adapter_sha256": "eb8ea502636a61a03c66f5b8b1eb8be8876b3d4bbf8e9aa00d3c2f9a2b945353",
+      "prompt_sha256": "46aaa1cd0dc86d781250ca1fa874853c7c5ff7886367bc7f1bfd85de243f2e62",
       "qualification": "offline_evidence_required_live_blocked",
       "source": {
         "repository": "https://github.com/openai/codex",
@@ -105,8 +105,8 @@
       "id": "X",
       "name": "Xean-adapted",
       "commit": "26669ebb071f8fc13e8a51f66a474d7ce9af387a",
-      "adapter_sha256": "46f17da28a70eebafd6141a325dc668196060fbb49fa7a279b8e75974e1ef880",
-      "prompt_sha256": "bdbc2893dfabd3b19b72a59450281c7cbefd37d9af6a44d19345f022f65718a8",
+      "adapter_sha256": "e401095c2392eea2fbea5dd2a1e5f824ad01713957b440531d6ce4abfa8b7e35",
+      "prompt_sha256": "dc9ade9953b0b931fe46e3b4431a4e017f8c79deba8c6b86c1a8e9c1dde13a8c",
       "qualification": "offline_evidence_required_live_blocked",
       "source": {
         "repository": "https://github.com/chaoxu/xean",
@@ -174,8 +174,8 @@
       "id": "R",
       "name": "Rethlas-adapted",
       "commit": "887cc46427636bbdd235160a112f9a30ae81d040",
-      "adapter_sha256": "dfcbafa4417bd581e2b2405a8bc4b1a3134e0839f0f65f6ee70526f80d06aa7b",
-      "prompt_sha256": "4696e63d85480a25b06be4ce40d997f9aea99442d6815ba8b630d88d464f21d7",
+      "adapter_sha256": "6f661dd27edcc22c4280e006fc221ca51de68c4713c983d5c9014ec46c9b4f6d",
+      "prompt_sha256": "906d3aa317e7975796d2add4c42ba1874d9d7bcd9f2e2eaec17820afb1e8c703",
       "qualification": "offline_evidence_required_live_blocked",
       "source": {
         "repository": "https://github.com/frenzymath/Rethlas",
@@ -228,8 +228,8 @@
       "id": "M",
       "name": "dsh-math-adapted",
       "commit": "ffc582c52585d958bcb3198259ea27c69ee6f8bb",
-      "adapter_sha256": "74471dd6eed417a8cbef417de2001b405af80a7a79c30b720f79888ce9295495",
-      "prompt_sha256": "68bf184b2447d1b54d5d6c8cc958e8d4ec187ffd827257240f1098d209f70e40",
+      "adapter_sha256": "45795baafe2b688ce10fd5ceec3eb68984489da79382285622357005113da39b",
+      "prompt_sha256": "5d5901cc321d767a790e5ea1ef034f14515fa1b784c7303f67be952cc197d762",
       "qualification": "offline_evidence_required_live_blocked",
       "source": {
         "repository": "https://github.com/ChangyuZeng/DSH-Math-Dev",
@@ -318,7 +318,7 @@
       "effort": "max"
     },
     "fallback_allowed": false,
-    "prompt": "Non-target qualification only. Read the common material, compute 2 + 3 using the common compute tool, and report 5. Do not search or solve Ring15.",
+    "prompt": "Non-target qualification only. Read the common material, compute 2 + 3 using a common tool, and report the result through the native harness. Do not search or solve Ring15.",
     "protocol": "four-harness-mac-cold-start-v2",
     "information_policy": {
       "start": "cold",
@@ -473,7 +473,7 @@
     "per_run_budget": {
       "wall_seconds": 180,
       "model_requests": 2,
-      "total_tokens": 32768,
+      "total_tokens": 131072,
       "max_output_tokens": 2048,
       "context_tokens": 65536,
       "tool_calls": 8,
@@ -481,27 +481,24 @@
       "tool_timeout_seconds": 10
     },
     "max_requests_total": 8,
-    "max_tokens_total": 131072,
+    "max_tokens_total": 524288,
+    "entry": "qualify.py launch --scope smoke --arm all --manifest <authorized-smoke-freeze> --output <fresh-output>",
     "arms": [
       {
         "id": "C",
-        "max_requests": 2,
-        "entry": "qualify.py launch --scope smoke --arm C --manifest <approved-frozen-manifest>"
+        "max_requests": 2
       },
       {
         "id": "X",
-        "max_requests": 2,
-        "entry": "qualify.py launch --scope smoke --arm X --manifest <approved-frozen-manifest>"
+        "max_requests": 2
       },
       {
         "id": "R",
-        "max_requests": 2,
-        "entry": "qualify.py launch --scope smoke --arm R --manifest <approved-frozen-manifest>"
+        "max_requests": 2
       },
       {
         "id": "M",
-        "max_requests": 2,
-        "entry": "qualify.py launch --scope smoke --arm M --manifest <approved-frozen-manifest>"
+        "max_requests": 2
       }
     ],
     "acceptance": [
@@ -534,32 +531,39 @@
     "human_run_authorization": false
   },
   "adapter_sources_sha256": {
-    "ledger.py": "d6ef71ce707f506168e070a71057cba7ff4491f6e26fd2fbbc7c9141c4b8b5de",
-    "gateway.py": "15e5995ababaf7efec0d2f37cc393594619a2d525b63f5659a143c410ac1fc87",
-    "mcp.py": "41fdcaf909d5ae4d46b4d1bac0e2a9d3982b625c5133f612b4694b17d3a2879f",
-    "native.py": "1434e04cea8fef82a4080f14c5a5248965e1f551116dcd598d9558db0f9919f5",
+    "ledger.py": "29f76951ef86d4508abdf34aa301b24aae5c9e0c2adb0f3d47594244d2882862",
+    "gateway.py": "2aa09a5e7b9c3c9e02098d4fc93959f689a3ef179b210034c36a8e27b32378cf",
+    "mcp.py": "bdece30b47efe224875574312e74e362c1250c39c803c7906f14d5f6f9af88eb",
+    "native.py": "6e7a8b0299fe2b01bc6d32507703130d7df6b83b774d3af07187ea8b3f22fbc3",
     "tools.py": "28b677039b4fd1b645a4a44adb103c123ffa888d7a900b3ff14148661670bb7c",
     "compute_child.py": "ba4c3ae3e1c80cc95d5f379d50ef6e92b39bd936de90e079605d477c74a24a16",
     "cold_start.py": "453c3bf81362dc52d98234541a2831b5dfc4e9f2e17834b45f1338be2f9f2a26",
     "observation.py": "fa9465309cd213b109e45a8bdbbda6370697f41709912f8ab7f6b6e7c9e5f119",
-    "m_adapter.mjs": "0cf5089a0ec3261da003ffba395e5e57da6aeb5ca180e7d943b12a28b7857c14",
-    "m_service.py": "461d4a6bd159c6b3c059523aeb09674c3868204f0d4227ad78f22842ba701c45",
-    "qualify.py": "0d0ad213163199688f020937c764f451752441055329d283d14330b379bfb738",
-    "x_full.py": "ec0e228cd30f05c3f150f3af45cc297e941b1765cdf92ad24caf9dac628e5833",
-    "m_bridge.mjs": "c7061ed5f6206ffb5c77621f6b50c1a9ff407c7522b23189aac7af19746279d1",
+    "m_adapter.mjs": "67ed10d8b7c9a20baa154446b67878c94dcc9df9d02bc6be74284a10aacf8488",
+    "m_service.py": "0cba9a5793fd73f50c0418e6066c1060e3955add6bdd504fb3987b0d8278af9b",
+    "qualify.py": "9ede2a7bb6a8b1fe51780a24560187e46fb81efdb3eb780ac6aed54399898e30",
+    "x_full.py": "ba00eb13f669e943ece8c21873e0b9b0269c44b7f3baf8af1e07843c705980ef",
+    "state_guard.py": "48c76e5f6affeabdc9607418223cf9571990fb6c756f00c2f7133230849c4546",
+    "transport.py": "d117983671e1205df6d17038351961c029ef0a7a8aaf27e0b54b9dd20e1e832e",
+    "smoke.py": "e3c87be9e24f6ac90f1d1b9883215f745040d14c17d4b87092e218d6d61ffa7e",
+    "x_live.py": "615ea40a436f9dc072c1c00ceb7d84f22e64bae110b9d2268670f3c79d73b7c2",
+    "codex_bridge.py": "aeb758593126dff12293fe1464a30ded99e3020d3ae302953f28a4bca9e6fd3e",
+    "m_bridge.mjs": "53023d720e194aa3e6c010d8fe94e6974d5766a7991282d4269e3f416287de3e",
     "patches/rethlas-codex-fixture.py": "6230ff867ae4b264a68b3aa94d9cd93d2c7edd66211ccf8f2bf058550732f43f",
     "patches/rethlas-fixture-child.py": "a9f2bbd4c91245904aec29fe2a063f032eff365a72a843ed4fe9ea0f2492a8ee",
     "patches/rethlas-fixture.md": "9cdf6cfd19b16643e95d77723f818e2e5f9162a546ccbaa613cd227631654119",
     "patches/rethlas-mcp-fixture-child.py": "d0645172b07c68aecaee671628b6191f00c92927b8e88761e6d79dd364f6c17b",
-    "patches/rethlas-mcp-fixture.py": "5fcaa1d6ef71d9dc5e6b9787d716f660ce026fb5fa2386065cc30c45cc21d7c9",
+    "patches/rethlas-mcp-fixture.py": "d66096063d7d40b130020d947cd8f9bb684f17e206ef8f673ceb68fe02521d9c",
     "patches/rethlas-mcp-requirements.txt": "8e48e9b01ae17535d0f1cb71d2b870580474b1f76cd9c6efcc05328a487d5d96",
-    "patches/rethlas-mcp.py": "0319627844df2b9e0f1df31b0b5b916e55d22b718d34a1fe945f9b802a29cf29",
+    "patches/rethlas-mcp.py": "7331b31dcb8e95f06d41f24c85fec22097890ddb8573e9c2b16cacaea8c8730c",
     "patches/rethlas-verifier-fixture.py": "f9a6afe8f645af8ddbe32224d81a9ef790d3682cf56c879657f099b61f472a49",
-    "patches/rethlas.json": "2f31ba67d825d31e3f5bb442fd8e2becffaa525cc0ea5a9302e520fc66c56d13",
-    "patches/xean-fixture.ts": "5538ecf4bebba4d4b23f2535f35ed41ed24f17879cc3bcee6b6bd9d8ee09463c",
-    "patches/xean-host-fixture.ts": "9c67c92e3ca8ee2d672828e52ec3cbf34c120b085f0103583044b0ccb656ebea",
-    "patches/xean-native.ts": "1ab5243de299827626a941f3fdef0c3b378e7eab011d141ff1b4743b01e3a621",
-    "patches/xean.json": "54338f95b006feb15dc5fcae8a3bf893143d529ce036a1262449f01463a12d1c"
+    "patches/rethlas.json": "b39678c3946d44f5c8822ed48a07d8580afcff6d54f577d2f5dff6d1401f6c87",
+    "patches/xean-fixture.ts": "2d7c4e829ae5d6de13c47bd69d8ce48d93253abaab4bdf1e0c66c4f65e4e8505",
+    "patches/xean-host-entry.ts": "bc1a0440186e4aefe31bb04935475b0fab804e561343bf5e30d384a78c8d7a1f",
+    "patches/xean-host-fixture.ts": "1682b6c71b4d63248b171441e3042f9ad49763a32d6efea2db01871112a31e98",
+    "patches/xean-host-runtime.ts": "59a6a31fa59e8061fe1bc5e0e93c7b1cb934696a81a935903eb54ad1d27c2130",
+    "patches/xean-native.ts": "b56ce1f1542edd45ee27469c1c76b634eaea53311ffa5fd5338569d345073ea4",
+    "patches/xean.json": "5fbcce1685231ed89dc5a3096f0a8b05dd263f90c02de46e0e0ac65ca5e96473"
   },
   "tool_schema_sha256": "f490def33a107603b9de0be1984289d447d183656c39505152fb950ce086e256",
   "runtime": {

@@ -34,6 +34,50 @@ class LedgerTests(unittest.TestCase):
         self.budget = dict(SMOKE_BUDGET)
         self.ledger.create_run('C1', 'fixture', 'C', budget=self.budget)
 
+    def test_measured_prefix_preserves_large_encrypted_continuation_and_charges_output(self):
+        from ledger import canonical
+        first=request();first['input']=[{'role':'user','content':'x'*50000}]
+        rid=self.ledger.reserve_request('C1','agent',first)
+        self.ledger.start_request(rid);self.ledger.finish_request(rid,response(
+            output=[{'type':'reasoning','encrypted_content':'opaque'*4000}]))
+        second=deepcopy(first)
+        second['input'].append({'type':'reasoning','encrypted_content':'opaque'*4000})
+        # Any change to prior model-visible context rejects measured calibration.
+        for mutate in ('instructions','prefix','tools','opaque'):
+            changed=deepcopy(second)
+            if mutate=='instructions':changed['instructions']='different instructions'
+            elif mutate=='tools':changed['tools']=[{'type':'function','name':'different'}]
+            elif mutate=='opaque':changed['input'][1]['encrypted_content']+='unbound'
+            else:changed['input'][0]['content']='y'*50000
+            self.code('CONTEXT_BUDGET',self.ledger.reserve_request,'C1','agent',changed,parent_request_id=rid)
+        self.code('CONTEXT_BUDGET',self.ledger.reserve_request,'C1','agent',second,parent_request_id=rid,thread_id='fork')
+        self.code('CONTEXT_BUDGET',self.ledger.reserve_request,'C1','compaction',second,parent_request_id=rid)
+        follow=self.ledger.reserve_request('C1','agent',second,parent_request_id=rid)
+        event=next(e for e in self.ledger.events() if e.get('request_id')==follow and e['type']=='request_reserved')
+        evidence=event['context_bound_evidence']
+        self.assertEqual(evidence['method'],'measured_identical_prefix_plus_output_and_utf8_v1')
+        self.assertEqual(event['input_bound'],100+20+len(canonical(second['input'][1:]).encode())+4096)
+        self.assertGreater(evidence['full_utf8_bound'],65536)
+        # Stored prefix/usage evidence survives host reopening; no native content is dropped.
+        reopened=Ledger(self.ledger.path)
+        with reopened.connection() as db:
+            saved=__import__('json').loads(db.execute('SELECT payload FROM request_context WHERE request=?',(follow,)).fetchone()[0])
+        self.assertEqual(saved,second)
+
+    def test_measured_prefix_missing_details_cannot_shrink_reservation(self):
+        first=request();first['input']=[{'role':'user','content':'x'*50000}]
+        rid=self.ledger.reserve_request('C1','agent',first);self.ledger.start_request(rid)
+        self.ledger.finish_request(rid,response(usage={'input_tokens':100,'output_tokens':20,'total_tokens':120}))
+        second=deepcopy(first);second['input'].append({'type':'reasoning','encrypted_content':'opaque'*4000})
+        self.code('CONTEXT_BUDGET',self.ledger.reserve_request,'C1','agent',second,parent_request_id=rid)
+
+    def test_measured_prefix_corrupted_host_context_fails_closed(self):
+        first=request();rid=self.ledger.reserve_request('C1','agent',first)
+        self.ledger.start_request(rid);self.ledger.finish_request(rid,response())
+        with self.ledger.transaction() as db:db.execute('UPDATE request_context SET payload=? WHERE request=?',('{}',rid))
+        second=deepcopy(first);second['input'].append({'role':'user','content':'continue'})
+        self.code('CONTEXT_EVIDENCE_DRIFT',self.ledger.reserve_request,'C1','agent',second,parent_request_id=rid)
+
     def code(self, code, fn, *args, **kwargs):
         with self.assertRaises(GateError) as caught:
             fn(*args, **kwargs)
@@ -43,6 +87,24 @@ class LedgerTests(unittest.TestCase):
         rid = self.ledger.reserve_request(run, role, request(), **kwargs)
         self.ledger.start_request(rid)
         return rid
+
+    def test_campaign_closure_between_reservation_and_send_refuses_transport(self):
+        a=self.dispatched(); b=self.dispatched(); sent=[]
+        self.ledger.unknown_request(a)
+        self.code('STOPPED',self.ledger.dispatch_request,b,lambda:sent.append(1))
+        self.assertEqual(sent,[])
+
+    def test_dispatch_is_once_and_failed_start_remains_unknown(self):
+        rid=self.dispatched(); sent=[]
+        value=self.ledger.dispatch_request(rid,lambda:sent.append(1) or 'pending')
+        self.assertEqual(value,'pending')
+        self.code('NO_REPLAY',self.ledger.dispatch_request,rid,lambda:sent.append(2))
+        failed=self.dispatched()
+        def fail():raise GateError('SEND_UNKNOWN','Unknown synchronous send outcome')
+        self.code('SEND_UNKNOWN',self.ledger.dispatch_request,failed,fail)
+        self.code('STOPPED',self.ledger.dispatch_request,failed,lambda:sent.append(3))
+        self.assertEqual(sent,[1])
+        self.assertIsNone(self.ledger.snapshot('C1')['total_tokens'])
 
     def test_numeric_cpu_subtotal_does_not_erase_incomplete_observation(self):
         for tool, flags, expected in [
@@ -224,7 +286,7 @@ class LedgerTests(unittest.TestCase):
         self.code('ALREADY_EXISTS', self.ledger.create_run, 'C1', 'fixture', 'M', budget=self.budget)
 
     def test_scope_ceilings_and_failed_slots_cannot_be_replaced(self):
-        self.code('BUDGET', self.ledger.create_campaign, 'too-big-smoke', max_requests=8, max_tokens=131073, scope='smoke')
+        self.code('BUDGET', self.ledger.create_campaign, 'too-big-smoke', max_requests=8, max_tokens=524289, scope='smoke')
         self.code('BUDGET', self.ledger.create_campaign, 'too-big-formal', max_requests=2401, max_tokens=20000000, scope='formal')
         for key in SMOKE_BUDGET:
             self.code('BUDGET', self.ledger.create_run, 'bad-' + key, 'fixture', 'X',

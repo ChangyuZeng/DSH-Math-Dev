@@ -58,7 +58,8 @@ async def tool(client, name, arguments, call_id, metadata=ROOT_META):
     result = await client.call_tool(name, arguments, meta={"callId": call_id, "x-codex-turn-metadata": metadata})
     if result.isError:
         raise RuntimeError("Original MCP fixture tool failed: " + result.model_dump_json())
-    return result.structuredContent or json.loads(result.content[0].text)
+    value = result.structuredContent or json.loads(result.content[0].text)
+    return value["result"] if name in COMMON and value.get("ok") is True else value
 
 
 async def main():

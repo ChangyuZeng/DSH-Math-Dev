@@ -140,11 +140,35 @@ class Gateway:
     accounted. No retries. A live transport must separately qualify this contract,
     cancellation, provider framing and OS coverage before it can be installed.
     """
-    def __init__(self, ledger, *, transport, bindings, tools=None, allowed_tools=None, intrinsic_tools=None, inject_output_cap=False, drain_timeout=5.0):
+    def __init__(self, ledger, *, transport, bindings, tools=None, allowed_tools=None, intrinsic_tools=None, inject_output_cap=False, drain_timeout=5.0, execution=None, state_guards=None, request_adapters=None, audit_sink=None):
         require(callable(getattr(transport, 'start', None)), 'TRANSPORT_CONTRACT', 'Transport requires an atomic start returning a receipt Future')
         self.ledger, self.transport = ledger, transport
         self.is_offline = type(transport) is FixtureTransport
         self.bindings = deepcopy(bindings)
+        self.execution = deepcopy(execution)
+        self.state_guards = state_guards or {}
+        self.request_adapters = request_adapters or {}
+        self.audit_sink = audit_sink
+        self.is_live = type(transport).__module__ == 'transport' and type(transport).__name__ == 'HostTransport'
+        if self.is_live:
+            from transport import HostTransport
+            require(type(transport) is HostTransport and self.execution is not None,
+                    'LIVE_NOT_AUTHORIZED', 'Live transport requires a host-authorized smoke execution')
+        if self.execution is not None:
+            require(self.is_live, 'EXECUTION_MODE', 'Smoke execution requires the qualified live transport')
+            for binding in self.bindings.values():
+                with ledger.connection() as db:
+                    run = ledger._run(db, binding['run_id'])
+                    campaign = db.execute('SELECT spec FROM campaign WHERE id=?', (run['campaign'],)).fetchone()
+                    caps = json.loads(campaign['spec'])
+                    budget = json.loads(run['spec'])['budget']
+                expected = dict(mode='authorized_smoke', arm=binding['arm'], run_id=binding['run_id'],
+                                campaign_id=run['campaign'], model_requests=2, campaign_max_requests=8)
+                require(self.execution == expected and caps['scope'] == 'smoke' and
+                        caps['max_requests'] <= 8 and caps['max_tokens'] <= 524288 and
+                        budget == __import__('ledger').SMOKE_BUDGET,
+                        'EXECUTION_MODE', 'Only the exact authorized smoke budget may execute')
+                require(binding['run_id'] in self.state_guards, 'STATE_GUARD', 'Live native state watchdog required')
         self.tools = tools or {}
         self.allowed_tools = allowed_tools or {}
         self.intrinsic_tools = intrinsic_tools or {}  # (run_id, role) -> exact native state-tool names
@@ -237,6 +261,9 @@ class Gateway:
                     require(type(payload) is dict, 'SCHEMA', 'Expected request object')
                     require(not gateway.cancel_event.is_set(), 'STOPPED', 'Gateway has stopped')
                     gateway.check_cold_materials(run_id)
+                    guard = gateway.state_guards.get(run_id)
+                    if guard is not None:
+                        guard.check()
                     if path.path.endswith('/manifest'):
                         require(payload == {}, 'SCHEMA', 'Manifest request must be empty')
                         with gateway.ledger.connection() as db:
@@ -246,7 +273,8 @@ class Gateway:
                                          'context_window': frozen['budget']['context_tokens'],
                                          'budget': frozen['budget'], 'resource_policy': RESOURCE_POLICY,
                                          'information_policy': INFORMATION_POLICY,
-                                         'canonical_cold_input_checked': run_id in gateway.cold_scopes})
+                                         'canonical_cold_input_checked': run_id in gateway.cold_scopes,
+                                          **({'execution': gateway.execution} if gateway.execution is not None else {})})
                         return
                     metadata = codex_metadata(payload, self.headers.get('X-Codex-Turn-Metadata'),
                                               required=binding.get('require_native_metadata', False))
@@ -276,31 +304,61 @@ class Gateway:
                         require(gateway.cold_scopes.get(run_id) != 'smoke' or not target_tool(payload['name']),
                                 'TOOL_NOT_ALLOWED', 'Target checker/submission is unavailable in non-target smoke')
                         require(run_id in gateway.tools, 'TOOLS_UNAVAILABLE', 'Common tools not bound')
+                        native_call_id=self.headers.get('X-Four-Native-Call-Id')
+                        require(native_call_id is None or (0<len(native_call_id)<=200 and all(32<ord(c)<127 for c in native_call_id)),
+                                'NATIVE_TOOL_ID','Invalid native tool call identity')
                         result = gateway.tools[run_id].call(INTERNAL_NAMES[payload['name']], payload['arguments'],
                                                             cancel_event=gateway.cancel_event)
                         if native_tool_parent:
                             result['metrics']['model_request_id'] = native_tool_parent
                             gateway.ledger.record(run_id, 'native_tool_context', tool_request_id=result['metrics']['request_id'],
-                                                  parent_request_id=native_tool_parent, native_metadata=metadata)
+                                                  parent_request_id=native_tool_parent, native_metadata=metadata,
+                                                  native_call_id=native_call_id, tool_name=payload['name'],
+                                                  arguments_sha256=digest(payload['arguments']))
+                        if gateway.cold_scopes.get(run_id)=='smoke':
+                            # Every arm receives the same compact host receipt.
+                            # Mathematical results stay byte-for-byte in result;
+                            # full timing/isolation observations remain host-side.
+                            full=deepcopy(result)
+                            result={**result,'metrics':{key:value for key,value in result.get('metrics',{}).items()
+                                     if key in {'request_id','model_request_id','result_sha256'}}}
+                            if payload['name']=='compute' and type(result.get('result')) is dict:
+                                result['result']={key:value for key,value in result['result'].items() if key in
+                                    {'status','returncode','stdout','stderr','output_bytes','output_truncated'}}
+                            sent_result_sha=digest({key:value for key,value in result.items() if key!='metrics'})
+                            result['metrics']['result_sha256']=sent_result_sha
+                            if gateway.audit_sink is not None:
+                                gateway.audit_sink('tool_reply_full',full['metrics']['request_id'],full)
+                            gateway.ledger.record(run_id,'common_reply_projection',tool_request_id=full['metrics']['request_id'],
+                                full_sha256=digest(full),sent_sha256=digest(result),
+                                full_result_sha256=full['metrics']['result_sha256'],sent_result_sha256=sent_result_sha,
+                                omitted_result_fields=sorted(set(full.get('result',{}))-set(result.get('result',{})))
+                                    if isinstance(full.get('result'),dict) else [],
+                                omitted_metrics=sorted(set(full['metrics'])-set(result['metrics'])))
                         self.reply(200, result)
                         return
                     require('provider' not in payload or payload['provider'] == POLICY['provider'], 'MODEL_DRIFT', 'Provider drift')
                     payload.pop('provider', None)
                     request_input = payload.get('input', [])
-                    # Codex code-mode can place an additional_tools namespace in
-                    # input rather than the ordinary tools array. This route has
-                    # no qualified executor/accounting adaptation yet.
-                    require(not (isinstance(request_input, list) and any(
-                        isinstance(item, dict) and item.get('type') == 'additional_tools' for item in request_input)),
-                        'TOOL_NOT_ALLOWED', 'Native additional_tools/code-mode namespaces are not qualified')
+                    adapter = gateway.request_adapters.get((run_id, role))
                     declared = payload.get('tools', [])
-                    allowed = gateway.allowed_tools.get(run_id, TOOL_NAMES)
+                    allowed = set(gateway.allowed_tools.get(run_id, TOOL_NAMES))
+                    allowed.update(gateway.intrinsic_tools.get((run_id, role), set()))
                     if gateway.cold_scopes.get(run_id) == 'smoke':
                         allowed = {name for name in allowed if not target_tool(name)}
-                    require(type(declared) is list, 'TOOL_NOT_ALLOWED', 'Invalid tools declaration')
-                    for tool in declared:
-                        require(type(tool) is dict and tool.get('type') == 'function' and tool.get('name') in allowed,
-                                'TOOL_NOT_ALLOWED', 'Unmetered native or network tool in request')
+                    if adapter is not None:
+                        adapter.validate_request(payload, allowed_names=allowed, scope=gateway.cold_scopes.get(run_id, 'offline'))
+                        adapter.observe_inputs(payload, ledger=gateway.ledger, run_id=run_id)
+                    else:
+                        # Additional native namespaces stay fail-closed unless an
+                        # explicitly frozen direct-tool adapter validates them.
+                        require(not (isinstance(request_input, list) and any(
+                            isinstance(item, dict) and item.get('type') == 'additional_tools' for item in request_input)),
+                            'TOOL_NOT_ALLOWED', 'Native additional_tools/code-mode namespaces are not qualified')
+                        require(type(declared) is list, 'TOOL_NOT_ALLOWED', 'Invalid tools declaration')
+                        for tool in declared:
+                            require(type(tool) is dict and tool.get('type') == 'function' and tool.get('name') in allowed,
+                                    'TOOL_NOT_ALLOWED', 'Unmetered native or network tool in request')
                     if gateway.inject_output_cap and 'max_output_tokens' not in payload:
                         with gateway.ledger.connection() as db:
                             run = gateway.ledger._run(db, run_id)
@@ -316,11 +374,13 @@ class Gateway:
                     # Waiting for the response occurs outside it so shutdown can
                     # cancel active I/O without discarding a late receipt.
                     try:
+                        if gateway.audit_sink is not None:
+                            gateway.audit_sink('request', request_id, deepcopy(payload))
                         with gateway.lifecycle:
                             require(not gateway.closing and not gateway.cancel_event.is_set(), 'STOPPED', 'Gateway stopped before dispatch')
                             dispatched = True
-                            pending = gateway.transport.start(payload, dict(request_id=request_id, run_id=run_id, role=dispatch_role,
-                                                                           cancel_event=gateway.cancel_event))
+                            pending = gateway.ledger.dispatch_request(request_id,lambda:gateway.transport.start(
+                                payload,dict(request_id=request_id,run_id=run_id,role=dispatch_role,cancel_event=gateway.cancel_event)))
                             require(isinstance(pending, Future), 'TRANSPORT_CONTRACT', 'Transport start must return a receipt Future')
                         response = pending.result()
                     except GateError:
@@ -330,8 +390,18 @@ class Gateway:
                     require(isinstance(response, dict), 'RESPONSE_SCHEMA', 'Transport returned no Responses object')
                     usage = gateway.ledger.finish_request(request_id, response, late_receipt=True,
                         terminal=response.get('status') in {'completed', 'incomplete', 'failed', 'cancelled'})
+                    if gateway.audit_sink is not None:
+                        gateway.audit_sink('response', request_id, deepcopy(response))
                     require(usage['complete'], 'USAGE_UNKNOWN', 'Provider usage missing or inconsistent')
                     require(response.get('model') == POLICY['model'], 'MODEL_DRIFT', 'Response model differs from frozen model')
+                    if adapter is not None:
+                        adapter.validate_response(response, request_id=request_id, ledger=gateway.ledger, run_id=run_id)
+                    else:
+                        for item in response.get('output', []):
+                            if isinstance(item, dict) and item.get('type') == 'function_call':
+                                require(item.get('name') in allowed, 'TOOL_NOT_ALLOWED', 'Response requested an unadmitted tool')
+                            require(not (isinstance(item, dict) and item.get('type') == 'custom_tool_call'),
+                                    'TOOL_NOT_ALLOWED', 'Custom executable tool responses are not admitted')
                     if response.get('status') in {'failed', 'cancelled'}:
                         gateway.ledger.stop(run_id, 'provider_' + response['status'])
                     else:
@@ -347,7 +417,18 @@ class Gateway:
                         gateway.ledger.stop(binding['run_id'], 'client_disconnected')
                 except Exception as error:
                     if request_id:
-                        gateway.ledger.unknown_request(request_id, getattr(error, 'code', 'transport_error'))
+                        with gateway.lifecycle:
+                            gateway.cancel_event.set()
+                            partial=getattr(error,'observed_response',None)
+                            if isinstance(partial,dict):
+                                # Framing/HTTP failure does not erase counters already seen.
+                                response=partial
+                                gateway.ledger.finish_request(request_id,partial,terminal=False,source='transport.error.partial',late_receipt=True)
+                                if gateway.audit_sink is not None:
+                                    gateway.audit_sink('error_receipt',request_id,deepcopy(partial))
+                            gateway.ledger.unknown_request(request_id, getattr(error, 'code', 'transport_error'))
+                            if not gateway.closing:
+                                gateway.ledger.stop(binding['run_id'], getattr(error, 'code', 'transport_error'))
                     code = getattr(error, 'code', 'INVALID_REQUEST' if not dispatched else 'TRANSPORT_ERROR')
                     if not dispatched and binding:
                         names = [tool.get('name', tool.get('type')) for tool in payload.get('tools', []) if isinstance(tool, dict)] if isinstance(locals().get('payload'), dict) else []

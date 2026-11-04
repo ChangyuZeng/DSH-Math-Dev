@@ -56,6 +56,75 @@ class GatewayTests(unittest.TestCase):
             raw = result.read().decode()
             return result.status, raw if result.headers['Content-Type'] == 'text/event-stream' else json.loads(raw)
 
+    def test_other_unknown_between_reservation_and_send_prevents_dispatch(self):
+        a=self.ledger.reserve_request('M1','worker',self.payload)
+        self.ledger.start_request(a)
+        def audit(kind,request_id,value):
+            if kind=='request':self.ledger.unknown_request(a,'parallel_unknown')
+        gw=self.start(audit_sink=audit)
+        self.assertEqual(self.post(gw)[0],409)
+        self.assertEqual(self.transport.requests,[])
+        self.assertEqual(self.ledger.snapshot('M1')['requests'],2)
+
+    def test_http_error_preserves_observed_cost_without_replay(self):
+        class PartialFailure:
+            def start(self,payload,context):
+                from ledger import GateError
+                error=GateError('UPSTREAM_HTTP','Rejected HTTP response')
+                error.observed_response={'model':'gpt-6-astra','usage':{'input_tokens':20000}}
+                result=Future(); result.set_exception(error); return result
+        gw=self.start(transport=PartialFailure())
+        status,_=self.post(gw)
+        self.assertEqual(status,409)
+        state=self.ledger.snapshot('M1')
+        self.assertEqual(state['known_total_tokens'],20000)
+        self.assertIsNone(state['total_tokens'])
+        self.assertIsNotNone(state['terminal'])
+        self.assertEqual(self.post(gw)[0],409)
+        self.assertEqual(self.ledger.snapshot('M1')['requests'],1)
+
+    def test_payload_audit_records_actual_request_and_raw_provider_receipt(self):
+        entries=[]
+        gw=self.start(audit_sink=lambda kind,request_id,value:entries.append((kind,request_id,value)))
+        status,_=self.post(gw)
+        self.assertEqual(status,200)
+        self.assertEqual([entry[0] for entry in entries],['request','response'])
+        self.assertEqual(entries[0][1],entries[1][1])
+        self.assertEqual(entries[0][2],self.payload)
+        self.assertEqual(entries[1][2]['usage']['total_tokens'],21)
+
+    def test_host_transport_requires_explicit_exact_smoke_execution_before_auth(self):
+        from transport import HostTransport
+        def forbidden_auth():
+            self.fail('Admission must not read credentials')
+        transport=HostTransport(auth_loader=forbidden_auth)
+        bindings={self.token:{'run_id':'M1','arm':'M','role':'worker'}}
+        with self.assertRaises(Exception) as error:
+            Gateway(self.ledger,transport=transport,bindings=bindings)
+        self.assertEqual(error.exception.code,'LIVE_NOT_AUTHORIZED')
+        execution=dict(mode='authorized_smoke',arm='M',run_id='M1',campaign_id='offline',model_requests=2,campaign_max_requests=8)
+        with self.assertRaises(Exception) as error:
+            Gateway(self.ledger,transport=transport,bindings=bindings,execution=execution)
+        self.assertEqual(error.exception.code,'EXECUTION_MODE')
+        with self.assertRaises(Exception) as error:
+            Gateway(self.ledger,transport=FixtureTransport([]),bindings=bindings,execution=execution)
+        self.assertEqual(error.exception.code,'EXECUTION_MODE')
+
+    def test_unknown_response_tool_is_never_delivered_or_replayed(self):
+        reply = response()
+        reply['output'] = [{'type':'function_call', 'name':'shell', 'call_id':'bad', 'arguments':'{}'}]
+        gw = self.start(FixtureTransport([reply]))
+        status, body = self.post(gw)
+        self.assertEqual(status,409)
+        self.assertEqual(body['error']['code'],'TOOL_NOT_ALLOWED')
+        snapshot = self.ledger.snapshot('M1')
+        self.assertEqual(snapshot['known_total_tokens'],21)
+        self.assertEqual(snapshot['terminal'],'TOOL_NOT_ALLOWED')
+        self.assertEqual(len(self.transport.requests),1)
+        status, _ = self.post(gw)
+        self.assertEqual(status,409)
+        self.assertEqual(len(self.transport.requests),1)
+
     def test_native_compatible_sse_and_each_physical_request_is_charged(self):
         gw = self.start()
         payload = {**self.payload, 'stream': True}
@@ -140,12 +209,16 @@ class GatewayTests(unittest.TestCase):
         native = {'thread_id': 'mcp-root', 'turn_id': 'mcp-turn'}
         self.assertEqual(self.post(gw, {**self.payload, 'client_metadata': {'x-codex-turn-metadata': json.dumps(native)}})[0], 200)
         source = StringIO(json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': 'tools/call',
-                          'params': {'name': 'materials_list', 'arguments': {}, '_meta': {'x-codex-turn-metadata': native}}}) + '\n')
+                          'params': {'name': 'materials_list', 'arguments': {}, '_meta': {'x-codex-turn-metadata': native, 'callId':'native-call-1'}}}) + '\n')
         output = StringIO()
         mcp.serve(gw.url + '/M/worker/tools', self.token, source, output)
         result = json.loads(json.loads(output.getvalue())['result']['content'][0]['text'])
         self.assertTrue(result['ok'])
         self.assertEqual(result['metrics']['model_request_id'], self.transport.requests[0]['request_id'])
+        contexts=[event for event in self.ledger.events() if event['type']=='native_tool_context']
+        self.assertEqual(contexts[-1]['native_call_id'],'native-call-1')
+        self.assertEqual(contexts[-1]['tool_name'],'materials_list')
+        self.assertEqual(contexts[-1]['tool_request_id'],'native-tool')
 
     def test_native_metadata_conflict_and_unknown_tool_parent_never_dispatch(self):
         gw = self.start(intrinsic_tools={('M1', 'worker'): {'native_verify'}})

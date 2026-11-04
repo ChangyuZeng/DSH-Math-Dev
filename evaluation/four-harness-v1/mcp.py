@@ -48,6 +48,11 @@ def serve(url, token, input_stream=sys.stdin, output_stream=sys.stdout):
                     if not isinstance(meta['x-codex-turn-metadata'], dict):
                         raise ValueError('Native MCP turn metadata must be an object')
                     headers['X-Codex-Turn-Metadata'] = json.dumps(meta['x-codex-turn-metadata'], allow_nan=False)
+                if 'callId' in meta:
+                    call_id=meta['callId']
+                    if not isinstance(call_id,str) or not 0<len(call_id)<=200 or not all(32<ord(c)<127 for c in call_id):
+                        raise ValueError('Native MCP call identity is invalid')
+                    headers['X-Four-Native-Call-Id']=call_id
                 req = Request(url, data, headers)
                 try:
                     with opener.open(req, timeout=75) as response:

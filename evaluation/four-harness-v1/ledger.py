@@ -21,7 +21,7 @@ POLICY = {"provider": "openai-codex", "model": "gpt-6-astra", "effort": "max"}
 FORMAL_BUDGET = dict(wall_seconds=7200, model_requests=120, total_tokens=1000000,
                      max_output_tokens=16384, context_tokens=65536, tool_calls=500,
                      artifact_bytes=1073741824, tool_timeout_seconds=60)
-SMOKE_BUDGET = {**FORMAL_BUDGET, 'wall_seconds': 180, 'model_requests': 2, 'total_tokens': 32768,
+SMOKE_BUDGET = {**FORMAL_BUDGET, 'wall_seconds': 180, 'model_requests': 2, 'total_tokens': 131072,
                 'max_output_tokens': 2048, 'tool_calls': 8,
                 'tool_timeout_seconds': 10, 'artifact_bytes': 16777216}
 RESOURCE_POLICY = {'mode': 'observed', 'scope': 'per_tool_and_sampled_native_process_tree',
@@ -137,6 +137,9 @@ class Ledger:
                 CREATE TABLE IF NOT EXISTS native_turn_ancestry (run TEXT NOT NULL REFERENCES runs(id), thread TEXT NOT NULL,
                     turn TEXT NOT NULL, parent_thread TEXT, parent_turn TEXT, origin_parent TEXT,
                     PRIMARY KEY(run,thread,turn));
+                CREATE TABLE IF NOT EXISTS dispatches (request TEXT PRIMARY KEY REFERENCES requests(id));
+                CREATE TABLE IF NOT EXISTS request_context (request TEXT PRIMARY KEY REFERENCES requests(id), payload TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS response_opaque (request TEXT PRIMARY KEY REFERENCES requests(id), items TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS events (seq INTEGER PRIMARY KEY AUTOINCREMENT, event TEXT NOT NULL, hash TEXT NOT NULL);
             ''')
 
@@ -176,7 +179,7 @@ class Ledger:
         require(scope in {"offline", "smoke", "formal"} and integer(max_requests, 1) and integer(max_tokens, 1),
                 "INVALID_SPEC", "Invalid campaign limits")
         if scope == "smoke":
-            require(max_requests <= 8 and max_tokens <= 131072, "BUDGET", "Smoke campaign ceiling is eight requests and 131072 tokens")
+            require(max_requests <= 8 and max_tokens <= 524288, "BUDGET", "Smoke campaign ceiling is eight requests and 524288 tokens")
         if scope == "formal":
             require(max_requests <= 2400 and max_tokens <= 20000000, "BUDGET", "Formal campaign exceeds the frozen twenty-run ceiling")
         with self.transaction() as db:
@@ -267,6 +270,55 @@ class Ledger:
             self._run(db, run_id, active=False)
             return self._native_lookup(db, run_id, metadata["thread_id"], metadata.get("turn_id"))
 
+    @staticmethod
+    def _context_bound(db, run_id, role, payload, parent_request_id, thread_id, lineage_kind):
+        """Measured identical-prefix continuation; no tokenizer alias or truncation.
+
+        An opaque reasoning item can hide more tokens than its serialized bytes.
+        Charge the parent's entire measured output again in addition to every new
+        serialized byte. Missing/inexact prefix evidence retains the full-byte bound.
+        """
+        full = len(canonical(payload).encode()) + 4096
+        evidence = {'method':'full_utf8_plus4096','full_utf8_bound':full}
+        if not parent_request_id:
+            return full, evidence
+        parent = db.execute('SELECT * FROM requests WHERE id=? AND run=? AND role=? AND state=\'finished\'',
+                            (parent_request_id,run_id,role)).fetchone()
+        context = db.execute('SELECT payload FROM request_context WHERE request=?',(parent_request_id,)).fetchone()
+        if (parent is None or context is None or parent['usage'] is None or parent['thread']!=thread_id or
+                role=='compaction' or lineage_kind not in {None,'same_native_turn_continuation'}):
+            return full, evidence
+        usage = json.loads(parent['usage'])
+        if not usage.get('detail_complete'):
+            return full, evidence
+        previous = json.loads(context['payload'])
+        require(digest(previous)==parent['payload_hash'],'CONTEXT_EVIDENCE_DRIFT','Stored parent context changed')
+        fixed = lambda value:{key:item for key,item in value.items() if key not in {'input','client_metadata'}}
+        before, after = previous.get('input'), payload.get('input')
+        if (fixed(previous)!=fixed(payload) or type(before) is not list or not before or type(after) is not list or
+                len(after)<=len(before) or after[:len(before)]!=before):
+            return full, evidence
+        suffix = after[len(before):]
+        opaque = [{'id':item.get('id'),'encrypted_sha256':digest(item['encrypted_content'])}
+                  for item in suffix if isinstance(item,dict) and item.get('type')=='reasoning' and
+                  item.get('encrypted_content') is not None]
+        if opaque:
+            stored = db.execute('SELECT items FROM response_opaque WHERE request=?',(parent_request_id,)).fetchone()
+            if stored is None or any(item not in json.loads(stored['items']) for item in opaque):
+                return full, evidence
+        appended = len(canonical(suffix).encode())
+        metadata = (len(canonical(payload.get('client_metadata')).encode())
+                    if previous.get('client_metadata')!=payload.get('client_metadata') else 0)
+        bound = usage['input_tokens'] + usage['output_tokens'] + appended + metadata + 4096
+        if bound >= full:
+            return full, evidence
+        return bound, {'method':'measured_identical_prefix_plus_output_and_utf8_v1','parent_request_id':parent_request_id,
+            'parent_payload_sha256':parent['payload_hash'],'provider_input_tokens':usage['input_tokens'],
+            'provider_output_tokens':usage['output_tokens'],'appended_utf8_bytes':appended,
+            'appended_sha256':digest(suffix),'metadata_utf8_bytes':metadata,'framing_tokens_reserved':4096,
+            'fixed_fields_sha256':digest(fixed(previous)),'prefix_sha256':digest(before),
+            'provider_response_id':parent['response_id'],'opaque_item_bindings':opaque,'full_utf8_bound':full}
+
     def reserve_request(self, run_id, role, payload, *, parent_request_id=None, thread_id=None, native_metadata=None):
         require(isinstance(payload, dict), "INVALID_REQUEST", "Expected Responses request object")
         native = native_identity(native_metadata) if native_metadata is not None else None
@@ -281,10 +333,6 @@ class Ledger:
             require(integer(output_cap, 1) and output_cap <= budget["max_output_tokens"],
                     "OUTPUT_CAP", "Explicit bounded output is required")
             require(not payload.get("previous_response_id"), "HIDDEN_CONTEXT", "Full request context is required for reservation")
-            # Compatibility must establish tokenizer + provider framing semantics
-            # before live qualification. This is the frozen offline upper bound.
-            input_bound = len(canonical(payload).encode()) + 4096
-            require(input_bound + output_cap <= budget["context_tokens"], "CONTEXT_BUDGET", "Request exceeds context budget")
             lineage_kind = None
             if native:
                 require(thread_id is None or thread_id == native["thread_id"], "NATIVE_METADATA", "Explicit and native thread identities disagree")
@@ -324,6 +372,8 @@ class Ledger:
                 require(parent is not None and parent["run"] == run_id, "CROSS_RUN", "Parent request belongs to another run")
             rows = db.execute("SELECT * FROM requests WHERE run=?", (run_id,)).fetchall()
             require(len(rows) < budget["model_requests"], "REQUEST_BUDGET", "All-role request budget exhausted")
+            input_bound, context_evidence = self._context_bound(db,run_id,role,payload,parent_request_id,thread_id,lineage_kind)
+            require(input_bound + output_cap <= budget['context_tokens'], 'CONTEXT_BUDGET', 'Request exceeds context budget')
             reservation = input_bound + output_cap
             require(self._cost(rows) + reservation <= budget["total_tokens"], "TOKEN_BUDGET", "Cannot reserve next request")
             campaign = db.execute("SELECT * FROM campaign WHERE id=?", (run["campaign"],)).fetchone()
@@ -335,6 +385,7 @@ class Ledger:
             request_id = str(uuid.uuid4())
             db.execute("INSERT INTO requests VALUES(?,?,?,?,?,'reserved',?,?,?,?,NULL,NULL,NULL)",
                        (request_id, run_id, role, parent_request_id, thread_id, reservation, input_bound, output_cap, digest(payload)))
+            db.execute('INSERT INTO request_context VALUES(?,?)',(request_id,canonical(payload)))
             if native:
                 db.execute("INSERT INTO native_requests VALUES(?,?,?,?)", (request_id, run_id, thread_id, native["turn_id"] or ""))
                 if prior is None:
@@ -348,7 +399,7 @@ class Ledger:
             self._event(db, run_id, "request_reserved", request_id=request_id, role=role,
                         parent_request_id=parent_request_id, thread_id=thread_id, input_bound=input_bound,
                         output_cap=output_cap, reservation=reservation, payload_sha256=digest(payload), model=POLICY,
-                        native_metadata=native, lineage_kind=lineage_kind)
+                        native_metadata=native, lineage_kind=lineage_kind,context_bound_evidence=context_evidence)
             return request_id
 
     def start_request(self, request_id):
@@ -359,6 +410,37 @@ class Ledger:
             db.execute("UPDATE requests SET state='started' WHERE id=?", (request_id,))
             self._event(db, row["run"], "request_started", request_id=request_id, role=row["role"], model=POLICY,
                         parent_request_id=row["parent"], thread_id=row["thread"])
+
+    def dispatch_request(self,request_id,start):
+        """Serialize the real synchronous send with permanent campaign closure.
+
+        The starter must return promptly after initiating I/O, never wait for a
+        provider receipt or mutate this ledger synchronously. Reservation is
+        already durable; a send exception remains an unknown started request.
+        """
+        failure=None
+        with self.transaction() as db:
+            row=db.execute('SELECT * FROM requests WHERE id=?',(request_id,)).fetchone()
+            require(row is not None,'NOT_FOUND','Request not found')
+            self._run(db,row['run'])
+            require(row['state']=='started','NO_REPLAY','Only a started request may dispatch')
+            require(not db.execute('SELECT 1 FROM dispatches WHERE request=?',(request_id,)).fetchone(),
+                    'NO_REPLAY','Request dispatch was already admitted')
+            db.execute('INSERT INTO dispatches VALUES(?)',(request_id,))
+            try:
+                result=start()
+            except BaseException as error:
+                failure=error
+                db.execute("UPDATE requests SET state='unknown' WHERE id=?",(request_id,))
+                self._event(db,row['run'],'request_unknown',request_id=request_id,role=row['role'],
+                            reservation_retained=row['reservation'],reason=getattr(error,'code','transport_start_failed'))
+                self._close(db,row['run'],getattr(error,'code','transport_start_failed'),campaign=True)
+            else:
+                self._event(db,row['run'],'request_dispatched',request_id=request_id,
+                            boundary='synchronous_transport_start_under_campaign_write_lock')
+        if failure is not None:
+            raise failure
+        return result
 
     def finish_request(self, request_id, response, *, terminal=True, source="responses.completed", late_receipt=False):
         """Record a receipt without dispatch; late reconciliation never reopens a run."""
@@ -395,6 +477,11 @@ class Ledger:
             state = "finished" if usage["complete"] else "unknown"
             db.execute("UPDATE requests SET state=?,usage=?,raw_usage=?,response_id=? WHERE id=?",
                        (state, canonical(usage), canonical(response.get("usage")), response.get("id"), request_id))
+            if state=='finished' and reason is None:
+                opaque=[{'id':item.get('id'),'encrypted_sha256':digest(item['encrypted_content'])}
+                    for item in response.get('output',[]) if isinstance(item,dict) and item.get('type')=='reasoning' and
+                    item.get('encrypted_content') is not None] if isinstance(response.get('output'),list) else []
+                db.execute('INSERT OR REPLACE INTO response_opaque VALUES(?,?)',(request_id,canonical(opaque)))
             self._event(db, row["run"], "request_finished" if state == "finished" else "request_unknown",
                         request_id=request_id, role=row["role"], parent_request_id=row["parent"], thread_id=row["thread"],
                         usage=usage, raw_usage=response.get("usage"), actual_model=response.get("model"), actual_effort=actual_effort,

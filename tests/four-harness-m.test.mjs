@@ -440,6 +440,32 @@ test('M gateway bindings fail closed for live gateways and preserve unknown vers
   await assert.rejects(runBridge([]), {code: 'LIVE_DISABLED'});
 });
 
+test('M authorized smoke requires exact gateway execution binding and frozen cold policy', async () => {
+  const execution = {mode: 'authorized_smoke', arm: 'M', run_id: 'smoke-M', campaign_id: 'smoke-campaign',
+    model_requests: 2, campaign_max_requests: 8};
+  const manifest = {offline: false, scope: 'smoke', execution, canonical_cold_input_checked: true,
+    model_policy: {provider: 'openai-codex', model: 'gpt-6-astra', effort: 'max'}, context_window: 65536,
+    budget: {model_requests: 2, total_tokens: 131072, max_output_tokens: 2048, context_tokens: 65536,
+      wall_seconds: 180, tool_calls: 8, tool_timeout_seconds: 10, artifact_bytes: 16777216},
+    tools: schemas.filter(schema => !['check', 'submit'].includes(schema.name))};
+  let value = structuredClone(manifest), calls = 0;
+  const binding = createGatewayBindings({gateway: 'http://127.0.0.1:12345', token: 'synthetic', fetchImpl: async () => {
+    calls++;
+    return new Response(JSON.stringify(value));
+  }});
+  await assert.rejects(binding.preflight({requireOffline: false}), {code: 'SMOKE_AUTHORIZATION'});
+  await binding.preflight({requireOffline: false, execution});
+  for (const change of [v => { v.execution.run_id = 'other'; }, v => { v.scope = 'formal'; },
+    v => { v.budget.model_requests = 3; }, v => { v.budget.max_output_tokens = 16384; },
+    v => { v.model_policy.effort = 'high'; }, v => { v.canonical_cold_input_checked = false; },
+    v => { v.offline = true; }, v => { v.tools.push(schemas.find(s => s.name === 'check')); }]) {
+    value = structuredClone(manifest); change(value);
+    await assert.rejects(binding.preflight({requireOffline: false, execution}), {code: 'SMOKE_AUTHORIZATION'});
+    await assert.rejects(binding.transport({request: {}}), {code: 'PREFLIGHT_REQUIRED'});
+  }
+  assert.equal(calls, 10); // authentication attempts only, no model request
+});
+
 test('M exported synthetic fixture builders produce native model-only Note and Obligation commits', async t => {
   assert.deepEqual(syntheticProblem(), problem);
   const f = await fixture(t, {transport: async () => response(syntheticProposal())});

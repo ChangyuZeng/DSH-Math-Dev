@@ -1,15 +1,15 @@
 # Mac 冷启动资格与接入契约
 
-核对日期：2026-11-04（Asia/Shanghai）。采用用户确认的 `four-harness-mac-cold-start-v2`。**真实模型请求 0；真实启动仍关闭。** 当前目标是固定模型与信息边界的完整 harness 比较；CPU／RSS 如实记录，不再要求统一的硬 CPU／内存环境。具体实测与剩余门槛见 [资格结果](</Users/zcy/Codes/Math Agent/harness/dsh-math/evaluation/four-harness-v1/qualification.md>)。
+核对日期：2026-11-04（Asia/Shanghai）。采用用户确认的 `four-harness-mac-cold-start-v2`。**已执行本次获授权 smoke：确认实际 HTTP 请求共 1 次，M 收到 HTTP 400 且 usage 未知；C/X/R 在发送前停止，四臂均未通过。后续修复仅运行离线夹具，没有重放未知请求或补跑。** 当前目标是固定模型与信息边界的完整 harness 比较；CPU／RSS 如实记录，不再要求统一的硬 CPU／内存环境。具体实测与剩余门槛见 [资格结果](</Users/zcy/Codes/Math Agent/harness/dsh-math/evaluation/four-harness-v1/qualification.md>)。
 
 ## 四臂状态
 
 | 臂 | 固定版本／原生入口 | 已完成 | 尚待资格 |
 |---|---|---|---|
-| C | Codex 0.166.0，`6ff1e1ca3b30fc8b914720681fcf5fe62e95f856` | 新 HOME/CODEX_HOME、Astra/max、共同 MCP、无重试；Mac managed-preferences／代理问题修复，原生请求到达网关 | Astra code-mode-only 的 additional_tools 与现有函数网关不兼容，派发前拒绝；原生工具往返、压缩和上下文边界未通过 |
-| X | Xean 4.5.0，`26669ebb071f8fc13e8a51f66a474d7ce9af387a`；Pi 1.5.0 | 原 public host 协调、六段验证和笔记重建；9 次假请求／8 条原生因果父关系；显式 max→max；请求级故障停止 | fork/resume、并行后代、压缩、可选 Codex source-search、状态产物监督及真实提供方 |
-| R | 官方上游 `887cc46427636bbdd235160a112f9a30ae81d040` | 原 shell exec/resume、原 MCP memory/BM25/branch、原 verify API/subprocess 与报告校验；共同工具；依赖字节固定 | 真正 Codex 工具兼容、真实递归／repair／压缩／完整验证技能；显式协议子进程夹具不证明 Rust spawn |
-| M | 插件 0.11.0，原 workflow 基线 `ffc582c52585d958bcb3198259ea27c69ee6f8bb` | 原 executeLoop/executeStep、实际 store/service、精确版本、共同工具、多物理请求／取消／恢复 | 实际提供方回执、完整执行配置／状态产物监督与获准 transport |
+| C | Codex 0.166.0，`6ff1e1ca3b30fc8b914720681fcf5fe62e95f856` | 实际 Rust CLI 两轮共同计算；精确工具元数据适配、原生输入与执行回执校验、Mac 隔离修复 | 真正提供方兼容；压缩等未启用路径不能外推 |
+| X | Xean 4.5.0，`26669ebb071f8fc13e8a51f66a474d7ce9af387a`；Pi 1.5.0 | 原 public host、校验、分叉、续写与重建纠错；共同计算、故障停止和父关系均有真实原生假响应夹具 | 两请求 smoke 不等于完整 accepted 校验；resume/并行/压缩和外部 source-search 不在该入口启用 |
+| R | 官方上游 `887cc46427636bbdd235160a112f9a30ae81d040` | 原 shell、策略技能、memory/BM25/branch、verify API；实际 Codex 两轮计算、原生停止契约、opaque reasoning 压力夹具 | 两请求不证明完整递归/repair/验证链；真实提供方仍须 smoke |
+| M | 插件 0.11.0，原 workflow 基线 `ffc582c52585d958bcb3198259ea27c69ee6f8bb` | 原 executeLoop/executeStep、实际 store/service、精确引用、共同计算与故障恢复；隔离状态监督 | 真实提供方与实际输出内容仍须 smoke |
 
 DSH engine 0.2.1-rc.5、插件、原生 CLI、Node 24.21.0、Bun 1.4.2、Python 3.14.3 是不同版本域，分别记录版本及 SHA。新增逻辑局限于实验目录；第三方适配只写新导出副本，未修改原 checkout、产品入口、旧研究或日常模型配置。详见 [适配差异](</Users/zcy/Codes/Math Agent/harness/dsh-math/evaluation/four-harness-v1/adapter-diff.md>)。
 
@@ -67,4 +67,4 @@ CPU／RSS 是观测，不是本轮公平额度。工具 CPU 与采样进程树 C
 
 逐次表保留版本、匿名身份、状态／停止原因、最佳 H、首次有效提交时间／token、全部 usage／完整性、工具与进程观察、宿主保护事件、技术失败、审核结果及产物哈希。状态区分 not_run、not_solved、infra_failure。每臂五次的成功率和区间、全部成本、成功条件下成本、计量完整率、失败数均须完整报告；四臂零成功时明确写零，不用内部 verifier 通过率替代。
 
-真实启动仍需完善原生路径与 transport／解析、核对当前 frozen draft、取得最多 8 请求的非目标 smoke 授权。正式 20 次另需 smoke 通过、24 小时操作者前沿刷新、开放性／难度核对、独立 checker 与评审安排、顺序／输入冻结，以及新的正式授权。**当前没有真实模型成功率、耗时对照或 token 收益数据。**
+当前已批准的非目标 smoke 固定每臂 2 请求、四臂最多 8 请求、每臂 131072/全局 524288 tokens，其余 2048 输出、65536 上下文、180 秒、8 工具/10 秒、16 MiB 均不增加。一次性授权独立于输出目录，工程门槛及实际字节冻结通过后由宿主启动；未知请求不重放，失败不补跑。正式 20 次另需 smoke 通过、24 小时操作者前沿刷新、开放性／难度核对、独立 checker 与评审安排、顺序／输入冻结，以及新的正式授权。**当前没有真实模型成功率、耗时对照或 token 收益数据。**

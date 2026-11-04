@@ -100,7 +100,7 @@ def prepare_host_fixture(source_copy, destination):
 
 def fixture_responses(scenario="accepted"):
     """Nine bounded receipts drive original submission schemas and full closure."""
-    require(scenario in {"accepted", "missing_usage", "failed_response", "request_limit"},
+    require(scenario in {"accepted", "missing_usage", "failed_response", "request_limit", "fork", "length", "correction"},
             "SCENARIO", "Unknown offline host fixture scenario")
     note1 = "Synthetic note A: 2 + 2 = 4 by integer addition."
     note2 = "Synthetic note B: using note A, 2 + 3 = (2 + 2) + 1 = 5."
@@ -126,15 +126,62 @@ def fixture_responses(scenario="accepted"):
             verdict("n1", "The independent proof reconstructs n1."),
             verdict("n2", "The independent proof reconstructs n2 and its generated dependency.")]}),
     ]
+    if scenario == "fork":
+        calls[1] = ("submit_notes", {"notes": calls[1][1]["notes"][:1]})
+        second_note = {"text": note2, "support": ["n1"], "summary": None, "detailedSummary": None}
+        final_coordination = calls[2][1]
+        final_coordination["filings"] = final_coordination["filings"][1:]
+        calls[2:3] = [
+            ("submit_coordination", {"filings": [{"note": "n1", "summary": "Two plus two is four."}], "verify": []}),
+            ("submit_notes", {"notes": [second_note]}),
+            ("submit_coordination", final_coordination),
+        ]
+    elif scenario == "correction":
+        corrected = [{"note": "n1", "statement": "Integer successor arithmetic gives 2 + 2 = 4."},
+                     {"note": "n2", "statement": "Integer successor arithmetic gives 2 + 3 = 5 using n1."}]
+        calls[8:8] = [("submit_verdict", {"statements": corrected, "verdicts": []}), calls[7]]
     responses = [_fixture_response(index, [{"type": "function_call", "id": f"fc_x_host_{index}",
         "call_id": f"call_x_host_{index}", "name": name, "arguments": json.dumps(arguments), "status": "completed"}])
         for index, (name, arguments) in enumerate(calls, 1)]
+    if scenario == "length":
+        interrupted = _fixture_response(0, [])
+        interrupted.update(status="incomplete", incomplete_details={"reason": "max_output_tokens"})
+        responses.insert(0, interrupted)
     if scenario == "missing_usage":
         responses[3]["usage"] = None
     elif scenario == "failed_response":
         responses[3]["status"] = "failed"
         responses[3]["error"] = {"code": "fixture_failure", "message": "Synthetic provider failure"}
     return responses
+
+
+def _verified_host_build(source_copy):
+    # Reuse only immutable verified code; every campaign database and cache remains fresh.
+    from x_live import verify_x_build
+    source, receipt, receipt_sha = verify_x_build(source_copy)
+    files = receipt["files"]
+    relation = {}
+    for name in CORE:
+        changes = [change for change in receipt.get("changes", []) if change["path"] == name]
+        relation[name] = {"upstream_relation": "inherited_adapter_patch" if changes else "byte_identical",
+                         "upstream_sha256": changes[0]["before_sha256"] if changes else files[name],
+                         "copy_sha256": files[name], "adaptation": INHERITED_ADAPTATIONS.get(name)}
+    dependencies = receipt["dependency_files"]
+    return source, {**receipt, "parent_receipt_sha256": receipt_sha,
+        "preserved_core": {name: files[name] for name in CORE}, "native_source_relationship": relation,
+        "core_preservation_basis": "Verified frozen source build reused read-only; state and cache are fresh",
+        "dependency_file_count": len(dependencies),
+        "dependency_tree_sha256": hashlib.sha256(json.dumps(dependencies, sort_keys=True, separators=(",", ":")).encode()).hexdigest()}
+
+
+def expected_stages(scenario):
+    if scenario == "fork":
+        return (*STAGES[:3], "explorer", "coordinator", *STAGES[3:])
+    if scenario == "length":
+        return ("explorer", *STAGES)
+    if scenario == "correction":
+        return (*STAGES, "proof", "reconstruction")
+    return STAGES
 
 
 def xean_full_fixture(root, *, source_copy, bun, max_output_tokens=MAX_OUTPUT, scenario="accepted"):
@@ -144,8 +191,7 @@ def xean_full_fixture(root, *, source_copy, bun, max_output_tokens=MAX_OUTPUT, s
     responses = fixture_responses(scenario)
     count = 8 if scenario == "request_limit" else len(responses)
     root, ledger, run_id = _fixture_ledger(root, "X", count, max_output_tokens)
-    build = root / "source-copy"
-    receipt = prepare_host_fixture(source_copy, build)
+    build, receipt = _verified_host_build(source_copy)
     common = CommonTools(run_id=run_id, run_root=root / "tools", materials={},
                          accounting=lambda event: ledger.tool_event(run_id, event))
     tokens = {role: capability() for role in ("explorer", "coordinator", "verifier")}
@@ -155,7 +201,8 @@ def xean_full_fixture(root, *, source_copy, bun, max_output_tokens=MAX_OUTPUT, s
                  tools={run_id: common}, allowed_tools={run_id: set(TOOLS) | INTRINSIC},
                  intrinsic_tools={(run_id, role): INTRINSIC for role in tokens}, inject_output_cap=True) as gateway:
         native = copied_fixture(root / "native", gateway=gateway, arm="X", source_copy=build, executable=bun,
-                                entry=[ENTRY], role_tokens=tokens, timeout=60)
+                                entry=[ENTRY, *(["--two-explorer-turns"] if scenario == "fork" else [])],
+                                role_tokens=tokens, timeout=60)
         snapshot = ledger.snapshot(run_id)
     artifact = root / "native/workspace/synthetic-host-evidence.json"
     output = None
@@ -167,18 +214,18 @@ def xean_full_fixture(root, *, source_copy, bun, max_output_tokens=MAX_OUTPUT, s
     physical = output.get("physical_requests", []) if output else []
     stages = [request.get("native", {}).get("stage") for request in physical]
     rows = snapshot["request_states"]
-    complete_receipts = (snapshot["requests"] == len(STAGES) and snapshot["accounting_complete"] and
+    expected = expected_stages(scenario)
+    complete_receipts = (snapshot["requests"] == len(expected) and snapshot["accounting_complete"] and
                          snapshot["detail_complete"] and all(row["state"] == "finished" for row in rows) and
                          [row["id"] for row in rows] == [request.get("request_id") for request in physical])
     host_complete = bool(output and native["returncode"] == 0 and complete_receipts and
-                         output["report"]["status"]["outcome"] == "accepted" and stages == list(STAGES))
+                         output["report"]["status"]["outcome"] == "accepted" and stages == list(expected))
     parent_qualified = bool(host_complete and rows[0]["parent"] is None and
         all(request.get("parent_reason") and not request.get("ancestry_gap") and
-            row["parent"] == request["parent_request_id"] == rows[index - 1]["id"] and
+            row["parent"] == request["parent_request_id"] and row["parent"] in {earlier["id"] for earlier in rows[:index]} and
             row["thread"] == str(request["native"]["conversation"]["id"])
             for index, (row, request) in enumerate(zip(rows, physical)) if index))
-    blockers = ["NATIVE_FORK_RESUME_NOT_EXERCISED", "NATIVE_PARALLEL_DESCENDANTS_NOT_EXERCISED", "NATIVE_COMPACTION_NOT_EXERCISED",
-                "NATIVE_CODEX_SOURCE_SEARCH_BRANCH_NOT_EXERCISED", "NATIVE_STATE_ARTIFACT_LIMITS_NOT_QUALIFIED"]
+    blockers = ["ADOPTED_X_PATHS_REQUIRE_COMBINED_OFFLINE_EVIDENCE", "NATIVE_STATE_LIMITS_REQUIRE_SMOKE_ENTRY_EVIDENCE"]
     if not host_complete:
         blockers.insert(0, "FULL_X_HOST_PATH_INCOMPLETE")
     if not parent_qualified:
@@ -194,6 +241,8 @@ def xean_full_fixture(root, *, source_copy, bun, max_output_tokens=MAX_OUTPUT, s
                           "bun_sha256": sha256(Path(bun).resolve()),
                           "fixture_sha256": receipt["files"][ENTRY]},
                 "scenario": scenario, "observed_stages": stages,
+                "adopted_path": {"scenario": scenario, "qualified": host_complete and parent_qualified},
+                "disabled_paths": ["resume_dispatch", "parallel_dispatch", "compaction", "external_codex_source"],
                 "native_host_path_qualified": host_complete, "parent_linkage_qualified": parent_qualified,
                 "qualification_scope": "public native X host, Explorer, Coordinator, source/correctness/requirements, joint generated-closure statement/blind-proof/comparison",
                 "qualification_blockers": blockers, "native_qualified": False, "live_ready": False}

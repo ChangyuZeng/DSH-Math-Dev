@@ -7,6 +7,7 @@ workflow action. No research authority, model transport, or compute is added.
 """
 from copy import deepcopy
 import hashlib
+import importlib.util
 import json
 from pathlib import Path
 import sys
@@ -14,7 +15,14 @@ import tempfile
 import uuid
 
 REPO = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO))
+# Load only the declared native modules by exact filename. Python's directory
+# finder would need permission to enumerate the whole repository in the OS jail.
+# Native source bytes, classes and service calls remain unchanged.
+for _name in ('schema', 'backend', 'workflow_store', 'workflow_context', 'workflow_strategy', 'workflow_service'):
+    _spec = importlib.util.spec_from_file_location(_name, REPO / (_name + '.py'))
+    _module = importlib.util.module_from_spec(_spec)
+    sys.modules[_name] = _module
+    _spec.loader.exec_module(_module)
 
 SOURCE_PINS = {
     'workflow_runner.mjs': '9dc11c4f63c7bff9c9ece539331bf10f9007eb5f27f694e005caae7c76399410',

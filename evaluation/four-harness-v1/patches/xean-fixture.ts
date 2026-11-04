@@ -8,7 +8,8 @@ import { normalizeContext } from "@earendil-works/pi-ai/utils/transcript";
 import { createRegistry, defineExtension, defineTask, Harness, MemoryStorage } from "@earendil-works/pi-durable";
 import { createRoleRuntime, roleGenerationPolicy } from "./src/role-runtime.ts";
 import { initializeNotebook } from "./src/state.ts";
-import { outputCap } from "./src/four-harness-native.ts";
+import { outputCap, rememberPhysicalRequest, physicalRequestFor } from "./src/four-harness-native.ts";
+if (process.env.FOUR_HARNESS_OFFLINE_FIXTURE !== "1") throw new Error("Offline role fixture only");
 
 const routes = JSON.parse(process.env.FOUR_HARNESS_ROUTES ?? "null");
 const models = createModels();
@@ -23,9 +24,18 @@ for (const role of ["explorer", "coordinator", "verifier"]) {
 models.streamSimple = (model: any, transcript: any, options: any) => {
   const role = model.provider.replace("four-harness-", ""), route = routes[role];
   if (!route) throw new Error("Unknown native role");
+  const linkedFetch = async (input: any, init?: any) => {
+    const headers = new Headers(init?.headers), thread = Number(headers.get("X-Four-Thread-Id"));
+    if (!Number.isSafeInteger(thread) || thread < 1) throw new Error("Actual native conversation header required");
+    const parent = physicalRequestFor(thread);
+    if (parent) headers.set("X-Four-Parent-Request-Id", parent);
+    const response = await fetch(input, { ...init, headers, redirect: "error" });
+    if (response.ok) rememberPhysicalRequest(thread, response.headers.get("X-Four-Request-Id"));
+    return response;
+  };
   return responsesStream({ ...model, api: "openai-responses", baseUrl: route.url + "/v1",
     contextWindow: 65536, maxTokens: outputCap }, normalizeContext(transcript),
-    { ...options, apiKey: route.token, maxTokens: outputCap, maxRetries: 0, reasoning: "max", transport: "sse" });
+    { ...options, apiKey: route.token, maxTokens: outputCap, maxRetries: 0, reasoning: "max", transport: "sse", fetch: linkedFetch });
 };
 const role = createRoleRuntime();
 const Invoke = defineTask({ name: "four-harness.offline-role", version: 1, initial: () => ({ phase: "run" }),

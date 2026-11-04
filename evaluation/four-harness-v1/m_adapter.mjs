@@ -40,7 +40,7 @@ export async function loadBenchmarkWorkflow({sourcePath = join(REPO, 'workflow_r
 export async function createPythonWorkflowService({root, python = process.env.DSH_MATH_PYTHON ?? 'python3'} = {}) {
   root = await realpath(root ?? await mkdtemp(join(await realpath(tmpdir()), 'four-harness-m-')));
   const call = (action, args) => new Promise((resolve, reject) => {
-    const child = spawn(python, ['-B', SERVICE, root], {cwd: REPO, stdio: ['pipe', 'pipe', 'pipe']});
+    const child = spawn(python, ['-I', '-S', '-B', SERVICE, root], {cwd: REPO, stdio: ['pipe', 'pipe', 'pipe']});
     let stdout = '', stderr = '', overflow = false;
     const timer = setTimeout(() => child.kill('SIGTERM'), 30_000);
     child.stdout.setEncoding('utf8'); child.stderr.setEncoding('utf8');

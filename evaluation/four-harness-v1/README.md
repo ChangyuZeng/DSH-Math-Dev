@@ -92,4 +92,4 @@ R 的 `--coverage full` 使用原 MCP／验证机制与显式假子进程；`--c
 
 prepare-cold 只生成题面、哈希和空状态，不证明 OS 隔离已通过，也不运行研究。正式／smoke 网关额外核对材料清单及字节；离线故障夹具可以使用明确标注的合成材料。[独立 checker](</Users/zcy/Codes/Math Agent/harness/dsh-math/evaluation/four-harness-v1/audit.py>) 和 [测试](</Users/zcy/Codes/Math Agent/harness/dsh-math/tests/test_four_harness_audit.py>) 只核验给定证书，不搜索目标或授予人工审核。
 
-[冻结草案](</Users/zcy/Codes/Math Agent/harness/dsh-math/evaluation/four-harness-v1/frozen.draft.json>) 中模型 resolved version、评审人及顺序仍未伪造，execution_authorized=false。`launch --scope smoke|formal` 始终返回 LIVE_NOT_AUTHORIZED。完成工程门槛后须再次展示具体可执行版本，等待真实 smoke 的明确授权；通过后再确认正式 20 次运行。
+[冻结草案](</Users/zcy/Codes/Math Agent/harness/dsh-math/evaluation/four-harness-v1/frozen.draft.json>) 中模型 resolved version、评审人及顺序仍未伪造，execution_authorized=false。正式入口保持关闭。用户已明确授权本轮工程通过后执行一次非目标 smoke，并批准统一每臂 131072、全局 524288 tokens；最多两请求/臂、八请求合计以及其他额度不变。实际入口为 `launch --scope smoke --arm all --manifest FROZEN --output FRESH`，仅接受当前源码、外部运行时与离线证据的不可变冻结配置及一次性宿主授权标记；不能分别启动单臂或换目录重置预算。smoke 通过后仍须另行确认正式 20 次运行。

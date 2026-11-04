@@ -99,7 +99,7 @@ def isolated_environment(root, *, token, path_entries=()):
             "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull}
 
 
-def codex_config(url, *, arm="C", role="agent", mcp_command=(), tools_url=None):
+def codex_config(url, *, arm="C", role="agent", mcp_command=(), tools_url=None, direct_catalog=None):
     """Pin routing/effort and request tool restrictions; qualify the actual wire."""
     url = localhost_url(url, arm=arm, role=role)
     lines = [f'model = {json.dumps(MODEL["model"])}', 'model_provider = "four_harness"',
@@ -128,7 +128,11 @@ def codex_config(url, *, arm="C", role="agent", mcp_command=(), tools_url=None):
                   f"args = {json.dumps([str(a) for a in mcp_command[1:]] + ['--url', tools_url, '--token-env', 'FOUR_HARNESS_TOKEN'])}",
                   'env_vars = ["FOUR_HARNESS_TOKEN"]', 'required = true',
                   f"enabled_tools = {json.dumps(TOOLS)}"]
-    return "\n".join(lines) + "\n"
+    config = "\n".join(lines) + "\n"
+    if direct_catalog is not None:
+        from codex_bridge import direct_config
+        config = direct_config(config, catalog=direct_catalog, arm=arm)
+    return config
 
 
 def rethlas_config(gateway_url, role_tokens):
@@ -172,7 +176,7 @@ def source_identity(root, arm):
     return {**PINS[arm], "path": str(root), "dirty": False}
 
 
-def macos_fixture_profile(root, *, readable=(), writable=(), gateway_url):
+def macos_fixture_profile(root, *, readable=(), writable=(), gateway_url, root_writable=True):
     """Deny credential reads, external networking and inherited host IPC.
 
     Only the supplied runtime/library paths, system runtime files and this fresh
@@ -184,7 +188,7 @@ def macos_fixture_profile(root, *, readable=(), writable=(), gateway_url):
     paths = [root, *[Path(p).resolve() for p in readable], Path("/System"), Path("/usr/lib"),
              Path("/usr/share"), Path("/dev"), Path("/private/var/db/dyld")]
     reads = " ".join(f"(subpath {quote(p)})" for p in paths)
-    writes = " ".join(f"(subpath {quote(Path(p).resolve())})" for p in (root, *writable))
+    writes = " ".join(f"(subpath {quote(Path(p).resolve())})" for p in ((*([root] if root_writable else []), *writable)))
     return ("(version 1)\n(deny default)\n(allow process*)\n(allow sysctl-read)\n"
             "(allow file-read-metadata)\n"
             '(allow mach-lookup (global-name "com.apple.cfprefsd.agent") (global-name "com.apple.cfprefsd.daemon"))\n'
@@ -305,14 +309,15 @@ class OwnedProcessTree:
                 "whole_process_tree_complete": False, "unobserved_short_lived_parents_possible": True}
 
 
-def run_process(command, *, env, cwd, timeout=30):
-    """One attempt; clean identity-verified children, including new sessions."""
+def run_process(command, *, env, cwd, timeout=30, cancel_event=None):
+    """One attempt; promptly cancel only identity-verified owned descendants."""
     from observation import ProcessObserver
     process = subprocess.Popen([str(x) for x in command], cwd=cwd, env=env, stdin=subprocess.DEVNULL,
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
     owned = OwnedProcessTree(process.pid)
     observer = ProcessObserver(process.pid, sampler=owned.sample).start()
     timed_out = False
+    cancelled = False
     deadline = time.monotonic() + timeout
     stdout = stderr = ""
     try:
@@ -321,8 +326,9 @@ def run_process(command, *, env, cwd, timeout=30):
                 stdout, stderr = process.communicate(timeout=max(0.001, min(0.2, deadline - time.monotonic())))
                 break
             except subprocess.TimeoutExpired:
-                timed_out = time.monotonic() >= deadline
-                if not timed_out and process.poll() is None:
+                cancelled = cancel_event is not None and cancel_event.is_set()
+                timed_out = not cancelled and time.monotonic() >= deadline
+                if not cancelled and not timed_out and process.poll() is None:
                     continue
                 cleanup = owned.cleanup()
                 try:
@@ -340,7 +346,7 @@ def run_process(command, *, env, cwd, timeout=30):
     require(not cleanup["remaining_known_pids"] and not cleanup["errors"], "PROCESS_CLEANUP",
             "Owned native process cleanup was incomplete: " + json.dumps(cleanup, sort_keys=True))
     return {"returncode": process.poll(), "stdout": stdout, "stderr": stderr, "timed_out": timed_out,
-            "cleanup": cleanup, "resource_observations": resource_observations,
+            "cancelled": cancelled, "cleanup": cleanup, "resource_observations": resource_observations,
             "cleanup_complete_for_known_processes": not cleanup["remaining_known_pids"] and not cleanup["errors"]}
 
 
@@ -399,7 +405,7 @@ print(json.dumps({"forced": forced, "synchronized": synchronized, "preference_va
 
 
 def codex_fixture(root, *, gateway, token, mcp_command, prompt="Call materials_list once, then say fixture complete.",
-                  node=DEFAULT_NODE, codex=DEFAULT_CODEX, timeout=30):
+                  node=DEFAULT_NODE, codex=DEFAULT_CODEX, timeout=30, direct_source=None):
     """Run the installed native CLI only behind a local fake gateway and OS jail.
 
     The caller supplies a fake-only gateway, which must reject non-common tools,
@@ -423,7 +429,12 @@ def codex_fixture(root, *, gateway, token, mcp_command, prompt="Call materials_l
             "BINARY_VERSION", "Installed Codex package differs from pinned version")
     env = isolated_environment(root, token=token, path_entries=[node.parent])
     tools_url = gateway_url.removesuffix("/v1") + "/tools"
-    _new_file(Path(env["CODEX_HOME"]) / "config.toml", codex_config(gateway_url, mcp_command=mcp_command, tools_url=tools_url))
+    catalog = None
+    if direct_source is not None:
+        from codex_bridge import prepare_catalog
+        catalog = prepare_catalog(direct_source, root / "native-catalog.json")
+    _new_file(Path(env["CODEX_HOME"]) / "config.toml", codex_config(gateway_url, mcp_command=mcp_command,
+        tools_url=tools_url, direct_catalog=catalog["path"] if catalog else None))
     work = root / "workspace"
     work.mkdir(mode=0o700)
     readable = [node.parent.parent, codex.parent.parent, Path(sys.prefix).resolve(),
@@ -457,7 +468,8 @@ def codex_fixture(root, *, gateway, token, mcp_command, prompt="Call materials_l
             "source_pin": PINS["C"], "runtime_version": version["stdout"].strip(),
             "entrypoint_sha256": sha256(codex), "node_sha256": sha256(node),
             "config_sha256": sha256(Path(env["CODEX_HOME"]) / "config.toml"),
-            "sandbox_sha256": sha256(profile), "mode": "offline_native_fixture", "live_ready": False}
+            "sandbox_sha256": sha256(profile), "catalog": catalog,
+            "mode": "offline_native_direct_fixture" if catalog else "offline_native_fixture", "live_ready": False}
 
 
 def prepare_source(root, destination, arm):

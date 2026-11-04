@@ -11,8 +11,18 @@ export const outputCap = Number(process.env.FOUR_HARNESS_MAX_OUTPUT);
 if (!Number.isSafeInteger(outputCap) || outputCap <= 0 || outputCap > 16384)
   throw new Error("Missing frozen gateway output cap");
 const routes = JSON.parse(process.env.FOUR_HARNESS_ROUTES ?? "null");
-if (!routes || process.env.FOUR_HARNESS_OFFLINE_FIXTURE !== "1")
-  throw new Error("Native X requires explicit isolated offline gateway routes");
+export const executionMode = process.env.FOUR_HARNESS_MODE ??
+  (process.env.FOUR_HARNESS_OFFLINE_FIXTURE === "1" ? "offline_fixture" : "");
+export const executionBinding = JSON.parse(process.env.FOUR_HARNESS_EXECUTION ?? "null");
+if (!routes || !["offline_fixture", "authorized_smoke"].includes(executionMode))
+  throw new Error("Native X requires explicit isolated gateway execution");
+const physicalByConversation = new Map<string, string>();
+export function rememberPhysicalRequest(conversation: string | number, requestId: string | null) {
+  if (requestId) physicalByConversation.set(String(conversation), requestId);
+}
+export function physicalRequestFor(conversation: string | number) {
+  return physicalByConversation.get(String(conversation)) ?? null;
+}
 const roles = ["explorer", "coordinator", "verifier"] as const;
 for (const role of roles) {
   const route = routes[role], url = new URL(route?.url ?? "about:blank");
@@ -23,16 +33,20 @@ for (const role of roles) {
 async function roleRoute(api: any, context: any) {
   const assignment = await api.snapshot(Assignment, api.conversationId, context);
   if (!assignment?.descriptor) throw new Error("Missing native X role assignment");
-  return routes[resolveCall(assignment.descriptor).role];
+  const parent = physicalRequestFor(api.conversationId);
+  if (!parent) throw new Error("Missing native X physical tool parent");
+  return { ...routes[resolveCall(assignment.descriptor).role], parent, thread: String(api.conversationId) };
 }
-async function post(route: any, suffix: string, body: unknown) {
+async function post(route: any, suffix: string, body: unknown, allowToolError = false) {
   const response = await fetch(route.url + suffix, {
     method: "POST", redirect: "error", signal: AbortSignal.timeout(65000),
-    headers: { Authorization: `Bearer ${route.token}`, "Content-Type": "application/json" },
+    headers: { Authorization: `Bearer ${route.token}`, "Content-Type": "application/json",
+      ...(route.parent ? { "X-Four-Parent-Request-Id": route.parent, "X-Four-Thread-Id": route.thread } : {}) },
     body: JSON.stringify(body),
   });
   const value = await response.json();
-  if (!response.ok || value.ok === false) throw new Error(`Gateway refused native operation: ${JSON.stringify(value)}`);
+  if (!response.ok || (value.ok === false && !(allowToolError && suffix === "/tools")))
+    throw new Error(`Gateway refused native operation: ${JSON.stringify(value)}`);
   return value;
 }
 export const meteredTool: typeof defineTool = (options) => {
@@ -66,11 +80,24 @@ async function admittedDeclarations() {
   let admission: string | undefined;
   let names: string[] = [];
   for (const manifest of manifests) {
-    if (manifest.offline !== true || !["offline", "smoke", "formal"].includes(manifest.scope) ||
+    if (manifest.offline !== (executionMode === "offline_fixture") || !["offline", "smoke", "formal"].includes(manifest.scope) ||
         canonical(manifest.model_policy) !== canonical({ provider: "openai-codex", model: "gpt-6-astra", effort: "max" }) ||
         manifest.context_window !== 65536 || manifest.budget?.max_output_tokens !== outputCap ||
         !Array.isArray(manifest.tools) || manifest.tools.length === 0)
       throw new Error("Native X manifest policy differs from the frozen gateway");
+    if (executionMode === "authorized_smoke" || executionBinding !== null) {
+      const expected = { mode: "authorized_smoke", arm: "X", run_id: executionBinding?.run_id,
+        campaign_id: executionBinding?.campaign_id, model_requests: 2, campaign_max_requests: 8 };
+      const budget = { model_requests: 2, total_tokens: 131072, max_output_tokens: 2048, context_tokens: 65536,
+        wall_seconds: 180, tool_calls: 8, tool_timeout_seconds: 10, artifact_bytes: 16777216 };
+      if (!executionBinding || typeof expected.run_id !== "string" || !expected.run_id ||
+          typeof expected.campaign_id !== "string" || !expected.campaign_id ||
+          canonical(executionBinding) !== canonical(expected) ||
+          (executionMode === "authorized_smoke" && canonical(manifest.execution) !== canonical(expected)) ||
+          manifest.scope !== "smoke" || manifest.canonical_cold_input_checked !== true ||
+          canonical(manifest.budget) !== canonical(budget))
+        throw new Error("Native X requires the exact authorized cold smoke binding");
+    }
     names = [];
     for (const tool of manifest.tools) {
       if (!tool || typeof tool.name !== "string" || names.includes(tool.name) || !frozen.has(tool.name) ||
@@ -79,6 +106,10 @@ async function admittedDeclarations() {
         throw new Error("Native X manifest contains an unknown, duplicate, or changed tool schema");
       names.push(tool.name);
     }
+    const expectedNames = declarations.filter((tool: any) => manifest.scope !== "smoke" || !["check", "submit"].includes(tool.name))
+      .map((tool: any) => tool.name).sort();
+    if (canonical([...names].sort()) !== canonical(expectedNames))
+      throw new Error("Native X manifest is missing a required common tool");
     const current = canonical({ scope: manifest.scope, names: [...names].sort() });
     if (admission !== undefined && admission !== current)
       throw new Error("Native X manifest tool admission differs between roles");
@@ -90,7 +121,8 @@ export const commonTools = (await admittedDeclarations()).map((tool: any) => def
   name: tool.name, description: tool.description, parameters: tool.parameters,
   callers: ["model"], replay: "unsafe", executionMode: "sequential",
   async execute(value: unknown, api: any, context: any) {
-    const result = await post(await roleRoute(api, context), "/tools", { name: tool.name, arguments: value });
+    // Application failures are common-tool receipts; Pi retains its native error flag.
+    const result = await post(await roleRoute(api, context), "/tools", { name: tool.name, arguments: value }, true);
     return { output: [{ type: "text", text: JSON.stringify(result) }], isError: result.ok !== true };
   },
 }));

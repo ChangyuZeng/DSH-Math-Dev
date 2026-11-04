@@ -25,8 +25,8 @@ from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_ope
 
 ROOT = Path(__file__).resolve().parent
 SITE = Path(os.environ["FOUR_HARNESS_PYTHON_SITE"]).resolve()
-if not SITE.is_dir() or os.environ.get("FOUR_HARNESS_OFFLINE_FIXTURE") != "1":
-    raise RuntimeError("R MCP currently requires the isolated offline qualification environment")
+if not SITE.is_dir() or os.environ.get("FOUR_HARNESS_OFFLINE_FIXTURE") not in {"0", "1"}:
+    raise RuntimeError("R MCP requires an explicit isolated execution environment")
 sys.path.insert(0, str(SITE))
 sys.modules.setdefault("four_harness_mcp", sys.modules[__name__])
 # FastMCP registers a Markdown MIME type at import. Use Python's built-in
@@ -57,7 +57,7 @@ class NoRedirect(HTTPRedirectHandler):
         raise RuntimeError("Gateway redirects are forbidden")
 
 
-def post(role, endpoint, payload, *, metadata=None, parent=None):
+def post(role, endpoint, payload, *, metadata=None, parent=None, call_id=None, allow_tool_error=False):
     routes = json.loads(os.environ["FOUR_HARNESS_ROUTES"])
     route = routes[role]
     parsed = urlsplit(route["url"])
@@ -69,6 +69,8 @@ def post(role, endpoint, payload, *, metadata=None, parent=None):
         headers["X-Codex-Turn-Metadata"] = encoded(metadata).decode()
     if parent is not None:
         headers["X-Four-Parent-Request-Id"] = parent
+    if call_id is not None:
+        headers["X-Four-Native-Call-Id"] = call_id
     request = Request(route["url"] + "/" + endpoint, data=encoded(payload), headers=headers)
     try:
         with build_opener(ProxyHandler({}), NoRedirect()).open(request, timeout=75) as response:
@@ -79,7 +81,9 @@ def post(role, endpoint, payload, *, metadata=None, parent=None):
     if not isinstance(result, dict):
         raise RuntimeError("Gateway returned an invalid response object")
     if result.get("error") or result.get("ok") is False:
-        raise RuntimeError("Gateway rejected the R MCP operation: " + str(result.get("error")))
+        if not (allow_tool_error and endpoint == "tools" and result.get("ok") is False and
+                isinstance(result.get("error"), dict) and isinstance(result.get("metrics"), dict)):
+            raise RuntimeError("Gateway rejected the R MCP operation: " + str(result.get("error")))
     return result
 
 
@@ -90,11 +94,18 @@ def active_call():
     return call
 
 
-def common_call(name, arguments):
+def common_call(name, arguments, *, full_receipt=False):
     call = active_call()
+    if full_receipt:
+        if call.get("tool_name") != name or name not in COMMON:
+            raise RuntimeError("Common receipt must belong to the current native tool call")
+        # Preserve exactly what Codex supplied. Function defaults must not change
+        # the argument digest used to bind its eventual native continuation.
+        arguments = call["arguments"]
     result = post(call["role"], "tools", {"name": name, "arguments": arguments},
-                  metadata=call["metadata"], parent=call.get("parent_request_id"))
-    return result["result"]
+                  metadata=call["metadata"], parent=call.get("parent_request_id"), call_id=call["call_id"],
+                  allow_tool_error=full_receipt)
+    return result if full_receipt else result["result"]
 
 
 def _cpu():
@@ -127,7 +138,8 @@ class MeteredOriginalTools:
         call_id = meta.get("callId")
         if not isinstance(call_id, str) or not call_id:
             raise RuntimeError("Native model tool callId is required")
-        current = {"role": role, "metadata": native, "call_id": call_id}
+        current = {"role": role, "metadata": native, "call_id": call_id,
+                   "tool_name": name, "arguments": context.message.arguments or {}}
         token = ACTIVE.set(current)
         try:
             if name in COMMON:
@@ -239,28 +251,38 @@ def attach_common(app, mode):
     from fastmcp.tools.tool import Tool
 
     def materials_list() -> dict:
-        return common_call("materials_list", {})
+        return common_call("materials_list", {}, full_receipt=True)
 
     def materials_read(id: str, offset: int = 0, length: int = 65536) -> dict:
-        return common_call("materials_read", {"id": id, "offset": offset, "length": length})
+        return common_call("materials_read", {"id": id, "offset": offset, "length": length}, full_receipt=True)
 
     def workspace_read(path: str, offset: int = 0, length: int = 65536) -> dict:
-        return common_call("workspace_read", {"path": path, "offset": offset, "length": length})
+        return common_call("workspace_read", {"path": path, "offset": offset, "length": length}, full_receipt=True)
 
     def workspace_write(path: str, text: str) -> dict:
-        return common_call("workspace_write", {"path": path, "text": text})
+        return common_call("workspace_write", {"path": path, "text": text}, full_receipt=True)
 
     def compute(code: str) -> dict:
-        return common_call("compute", {"code": code})
+        return common_call("compute", {"code": code}, full_receipt=True)
 
     def check(candidate: dict) -> dict:
-        return common_call("check", {"candidate": candidate})
+        return common_call("check", {"candidate": candidate}, full_receipt=True)
 
     def submit(candidate: dict) -> dict:
-        return common_call("submit", {"candidate": candidate})
+        return common_call("submit", {"candidate": candidate}, full_receipt=True)
 
     functions = {function.__name__: function for function in (materials_list, materials_read, workspace_read, workspace_write, compute, check, submit)}
     manifest = post("generator" if mode == "generation" else "verifier", "manifest", {})
+    offline = os.environ["FOUR_HARNESS_OFFLINE_FIXTURE"] == "1"
+    if manifest.get("offline") is not offline:
+        raise RuntimeError("R MCP execution mode differs from the authenticated manifest")
+    if not offline:
+        execution = json.loads(os.environ.get("FOUR_HARNESS_EXECUTION", "null"))
+        if (not isinstance(execution, dict) or execution.get("mode") != "authorized_smoke" or
+                manifest.get("execution") != execution or manifest.get("scope") != "smoke" or
+                manifest.get("budget", {}).get("model_requests") != 2 or
+                manifest.get("budget", {}).get("total_tokens") != 131072):
+            raise RuntimeError("R MCP has no matching bounded smoke execution")
     schemas = manifest.get("tools")
     if not isinstance(schemas, list) or any(schema.get("name") not in COMMON for schema in schemas):
         raise RuntimeError("Gateway returned an unregistered common-tool manifest")
@@ -271,6 +293,35 @@ def attach_common(app, mode):
         tool = Tool.from_function(function, name=schema["name"], description=schema["description"])
         tool.parameters = schema["parameters"]
         app.add_tool(tool)
+
+
+def attach_native_skill_reader(app, mode):
+    """Read only byte-frozen upstream strategy skills, never arbitrary source/data."""
+    from fastmcp.tools.tool import Tool
+    manifest_path = ROOT / "four-harness-skills.json"
+    if not manifest_path.is_file():
+        return
+    manifest = json.loads(manifest_path.read_text())
+    entries = manifest[mode]
+
+    def native_skill_read(skill: str) -> dict:
+        if skill not in entries:
+            raise RuntimeError("Skill is outside the frozen native strategy whitelist")
+        entry = entries[skill]
+        path = ROOT / entry["path"]
+        if path.is_symlink() or path.resolve() != path or not path.is_relative_to(ROOT / "agents" / mode / ".agents/skills"):
+            raise RuntimeError("Native skill path escaped its frozen source")
+        data = path.read_bytes()
+        if hashlib.sha256(data).hexdigest() != entry["sha256"]:
+            raise RuntimeError("Native skill changed after freezing")
+        return {"skill": skill, "sha256": entry["sha256"], "text": data.decode("utf-8")}
+
+    tool = Tool.from_function(native_skill_read, name="native_skill_read",
+        description="Read an unchanged native Rethlas strategy or verification SKILL.md by its skill directory name.")
+    tool.parameters = {"type": "object", "properties": {"skill": {"type": "string"}},
+                       "required": ["skill"], "additionalProperties": False}
+    NATIVE[mode].add("native_skill_read")
+    app.add_tool(tool)
 
 
 def load_app(mode):
@@ -287,6 +338,7 @@ def load_app(mode):
     original.requests = OriginalServiceTransport(mode)
     original.APP.add_middleware(NativeMiddleware(mode))
     attach_common(original.APP, mode)
+    attach_native_skill_reader(original.APP, mode)
     return original.APP
 
 

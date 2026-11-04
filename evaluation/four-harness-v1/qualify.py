@@ -1,9 +1,9 @@
 """Auditable offline entry point; this file contains no live model transport.
 
 Commands: inspect, baseline, fixture C|X|R|M, freeze-draft, smoke-plan, launch.
-`launch` always checks a frozen manifest then refuses: human authorization and
-qualified provider transport are deliberately separate delivery gates. Drafts
-and offline reports never grant permission to call a real model.
+`launch` admits only the separately authorized, frozen all-arm smoke campaign.
+Formal execution stays closed. Generic proposals, formal drafts and offline
+reports never grant permission to call a real model.
 """
 import argparse
 from datetime import datetime, timezone
@@ -28,7 +28,7 @@ from tools import CommonTools, ToolLimits
 from audit import validate_witness
 
 # Public baseline replay requires the exact published certificate supplied by path.
-TOY = 'Non-target qualification only. Read the common material, compute 2 + 3 using the common compute tool, and report 5. Do not search or solve Ring15.'
+TOY = 'Non-target qualification only. Read the common material, compute 2 + 3 using a common tool, and report the result through the native harness. Do not search or solve Ring15.'
 
 
 def sha(path):
@@ -65,9 +65,9 @@ def smoke_plan():
             'prompt': TOY, 'protocol': PROTOCOL, 'information_policy': INFORMATION_POLICY,
             'cold_input': input_manifest('smoke'), 'resource_policy': RESOURCE_POLICY,
             'common_tools': responses_tools('smoke'), 'target_checker_and_submission_allowed': False,
-            'per_run_budget': SMOKE_BUDGET, 'max_requests_total': 8, 'max_tokens_total': 131072,
-            'arms': [{'id': arm, 'max_requests': 2, 'entry': f'qualify.py launch --scope smoke --arm {arm} --manifest <approved-frozen-manifest>'}
-                     for arm in 'CXRM'],
+            'per_run_budget': SMOKE_BUDGET, 'max_requests_total': 8, 'max_tokens_total': 524288,
+            'entry': 'qualify.py launch --scope smoke --arm all --manifest <authorized-smoke-freeze> --output <fresh-output>',
+             'arms': [{'id': arm, 'max_requests': 2} for arm in 'CXRM'],
             'acceptance': ['exact provider/model/effort and raw usage for every physical role request',
                            'one common compute or material interaction reaches a native continuation',
                            'two-request run and eight-request campaign ceiling, no retry/replacement',
@@ -125,7 +125,7 @@ def runtime_inventory():
     if r_site.is_dir():
         from native import rethlas_mcp_dependencies
         r_installed = rethlas_mcp_dependencies(r_site)
-    x_build = REPO / 'dist/four-harness-builds/xean-native-6'
+    x_build = REPO / 'dist/four-harness-builds/xean-native-10'
     x_installed = None
     if (x_build / 'node_modules').is_dir():
         from x_full import _tree_manifest
@@ -152,19 +152,24 @@ def draft(sources):
         'R': rethlas_config('http://127.0.0.1:1', {role: '<ephemeral-capability>' for role in ROLES['R']}),
         'M': {'model_policy': POLICY, 'budget': FORMAL_BUDGET, 'workflow_base': identities['M']['base_commit']}}
     source_files = ['ledger.py', 'gateway.py', 'mcp.py', 'native.py', 'tools.py', 'compute_child.py', 'cold_start.py', 'observation.py',
-                    'm_adapter.mjs', 'm_service.py', 'qualify.py', 'x_full.py']
+                    'm_adapter.mjs', 'm_service.py', 'qualify.py', 'x_full.py', 'state_guard.py', 'transport.py']
+    source_files += [name for name in ('smoke.py', 'x_live.py', 'codex_bridge.py') if (HERE / name).is_file()]
     if (HERE / 'm_bridge.mjs').is_file():
         source_files.append('m_bridge.mjs')
     source_files += [str(path.relative_to(HERE)) for path in sorted((HERE / 'patches').glob('*'))
                      if path.is_file() and path.suffix in {'.json', '.ts', '.py', '.md', '.txt'}]
     hashes = {name: sha(HERE / name) for name in source_files}
-    common = ['ledger.py', 'gateway.py', 'tools.py', 'compute_child.py', 'qualify.py', 'cold_start.py', 'observation.py']
+    common = ['ledger.py', 'gateway.py', 'tools.py', 'compute_child.py', 'qualify.py', 'cold_start.py', 'observation.py', 'state_guard.py', 'transport.py']
+    common += [name for name in ('smoke.py',) if name in hashes]
     for arm in manifest['arms']:
         arm.update(source=identities[arm['id']], qualification='offline_evidence_required_live_blocked')
         arm['commit'] = identities[arm['id']].get('commit', identities[arm['id']].get('base_commit'))
         names = common + (['m_adapter.mjs', 'm_service.py', 'm_bridge.mjs'] if arm['id'] == 'M' else ['native.py', 'mcp.py'])
         if arm['id'] == 'X':
             names.append('x_full.py')
+        helper = 'x_live.py' if arm['id'] in {'X','M'} else 'codex_bridge.py'
+        if helper in hashes:
+            names.append(helper)
         prefix = {'X': 'patches/xean', 'R': 'patches/rethlas'}.get(arm['id'])
         if prefix:
             names += [name for name in source_files if name.startswith(prefix)]
@@ -358,7 +363,7 @@ def main(argv=None):
     p = sub.add_parser('fixture'); p.add_argument('arm', choices=list('CXRM')); p.add_argument('--output', required=True)
     p.add_argument('--node', default=str(DEFAULT_NODE)); p.add_argument('--codex', default=str(DEFAULT_CODEX))
     p.add_argument('--sources', default=str(REPO / 'dist/four-harness-sources'))
-    p.add_argument('--xean-build', default=str(REPO / 'dist/four-harness-builds/xean-native-6'))
+    p.add_argument('--xean-build', default=str(REPO / 'dist/four-harness-builds/xean-native-10'))
     p.add_argument('--bun', default=str(REPO / 'dist/four-harness-builds/runtime/node_modules/@oven/bun-darwin-aarch64/bin/bun'))
     p.add_argument('--coverage', choices=['basic', 'full', 'native'], default='basic',
                    help='Full: original X host or R MCP paths; native: original R startup with installed Codex, still fake transport')
@@ -369,7 +374,8 @@ def main(argv=None):
     p = sub.add_parser('prepare-cold'); p.add_argument('--scope', choices=['formal', 'smoke'], default='formal')
     p.add_argument('--output', required=True)
     p = sub.add_parser('launch'); p.add_argument('--scope', choices=['smoke', 'formal'], required=True)
-    p.add_argument('--arm', choices=list('CXRM'), required=True); p.add_argument('--manifest', required=True)
+    p.add_argument('--arm', choices=list('CXRM')+['all'], required=True); p.add_argument('--manifest', required=True)
+    p.add_argument('--output', help='Fresh persistent output for the single authorized smoke campaign')
     args = parser.parse_args(argv)
     try:
         if args.command == 'inspect': result = inspect_sources(args.sources)
@@ -392,8 +398,10 @@ def main(argv=None):
                              coverage=args.coverage, tool_scope=args.tool_scope)
         else:
             manifest = json.loads(Path(args.manifest).read_text())
-            missing = [key for key, value in manifest.get('gates', {}).items() if value is not True]
-            raise GateError('LIVE_NOT_AUTHORIZED', 'No live transport is installed; approval and qualification required. Missing gates: ' + ', '.join(missing))
+            if args.scope != 'smoke' or args.arm != 'all' or not args.output:
+                raise GateError('LIVE_NOT_AUTHORIZED', 'Formal execution is closed. Smoke requires one frozen all-arm campaign and fresh output.')
+            from smoke import run_campaign
+            result = run_campaign(manifest,args.output)
         print(json.dumps(result, ensure_ascii=False, allow_nan=False, indent=2))
         return 2 if args.command == 'fixture' and not result['passed'] else 0
     except (GateError, NativeBlocked, OSError, ValueError, subprocess.TimeoutExpired) as error:

@@ -120,6 +120,11 @@
 !/evaluation/four-harness-v1/compute_child.py
 !/evaluation/four-harness-v1/cold_start.py
 !/evaluation/four-harness-v1/observation.py
+!/evaluation/four-harness-v1/state_guard.py
+!/evaluation/four-harness-v1/transport.py
+!/evaluation/four-harness-v1/smoke.py
+!/evaluation/four-harness-v1/x_live.py
+!/evaluation/four-harness-v1/codex_bridge.py
 !/evaluation/four-harness-v1/native.py
 !/evaluation/four-harness-v1/x_full.py
 !/evaluation/four-harness-v1/m_adapter.mjs
@@ -136,6 +141,8 @@
 !/evaluation/four-harness-v1/patches/xean-native.ts
 !/evaluation/four-harness-v1/patches/xean-fixture.ts
 !/evaluation/four-harness-v1/patches/xean-host-fixture.ts
+!/evaluation/four-harness-v1/patches/xean-host-entry.ts
+!/evaluation/four-harness-v1/patches/xean-host-runtime.ts
 !/evaluation/four-harness-v1/patches/rethlas.json
 !/evaluation/four-harness-v1/patches/rethlas-fixture.md
 !/evaluation/four-harness-v1/patches/rethlas-fixture-child.py

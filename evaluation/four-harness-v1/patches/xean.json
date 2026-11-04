@@ -12,6 +12,6 @@
     {"path":"src/role-runtime.ts","before":"          return { payload: request };","after":"          return { payload: pinnedPayload(request) };"},
     {"path":"src/role-runtime.ts","before":"                ...options,\n","after":"                ...options,\n                headers: { ...options?.headers, \"X-Four-Thread-Id\": String(api.conversationId) },\n"}
   ],
-  "copies": {"xean-native.ts":"src/four-harness-native.ts", "xean-fixture.ts":"four-harness-fixture.ts"},
+  "copies": {"xean-native.ts":"src/four-harness-native.ts", "xean-fixture.ts":"four-harness-fixture.ts", "xean-host-runtime.ts":"four-harness-host-runtime.ts", "xean-host-entry.ts":"four-harness-host-entry.ts", "xean-host-fixture.ts":"four-harness-host-fixture.ts"},
   "preserved": ["src/workflow.ts", "src/policy/prompts.ts", "src/policy/contracts.ts", "src/state.ts", "src/report.ts", "src/source-runtime.ts"]
 }
