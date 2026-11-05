@@ -38,14 +38,77 @@ def git(*args):return subprocess.check_output(['git',*args],cwd=SOURCE,text=True
 def inventory():
     names=git('ls-files').splitlines()
     return {n:digest(SOURCE/n) for n in names if (SOURCE/n).is_file()}
-def verify_freeze():
+def base_protocol():
     p=json.loads((ROOT/'protocol.json').read_text())
     receipt=json.loads((ROOT/'protocol-freeze.json').read_text())
     require(receipt['sha256']==digest(ROOT/'protocol.json'),'PROTOCOL_DRIFT','Frozen protocol bytes changed')
-    require(p['source_commit']==git('rev-parse','HEAD'),'SOURCE_DRIFT','Frozen source commit changed')
-    require(p['source_inventory']==inventory(),'SOURCE_DRIFT','Tracked source changed')
     require(p['cards_sha256']==digest(ROOT/'tasks.json'),'TASK_DRIFT','Task cards changed')
     return p
+
+def verify_freeze():
+    p=base_protocol()
+    addendum_path=ROOT/'precision-reliability-addendum.json'
+    if addendum_path.exists():
+        receipt=json.loads((ROOT/'precision-reliability-addendum-freeze.json').read_text())
+        a=json.loads(addendum_path.read_text())
+        require(receipt['sha256']==digest(addendum_path),'PROTOCOL_DRIFT','Reliability addendum bytes changed')
+        require(a['base_protocol_sha256']==digest(ROOT/'protocol.json') and a['old_source_commit']==p['source_commit'],
+            'PROTOCOL_DRIFT','Reliability addendum does not extend original frozen protocol')
+        require(a['kind']=='lossless_numeric_tool_transport' and a['completed_prefix_length']==8,
+            'PROTOCOL_DRIFT','Only the recorded precision repair at the complete paired boundary is admitted')
+        prefix=p['schedule'][:8]
+        require([r['run_id'] for r in a['completed_results']]==[r['run_id'] for r in prefix],
+            'PROTOCOL_DRIFT','Completed schedule prefix changed')
+        for row,old in zip(prefix,a['completed_results']):
+            path=ROOT/'runs'/row['run_id']/'result.json'
+            require(old['sha256']==digest(path),'RESULT_DRIFT','Preserved pre-repair result bytes changed')
+            require(json.loads(path.read_text())['source_commit']==a['old_source_commit'],
+                'SOURCE_DRIFT','Pre-repair result has another source version')
+        p={**p,'original_source_commit':p['source_commit'],'source_commit':a['source_commit'],
+            'source_inventory':a['source_inventory'],'source_addendum_sha256':receipt['sha256'],
+            'completed_prefix_length':8}
+    require(p['source_commit']==git('rev-parse','HEAD'),'SOURCE_DRIFT','Frozen source commit changed')
+    require(p['source_inventory']==inventory(),'SOURCE_DRIFT','Tracked source changed')
+    return p
+
+def freeze_precision_addendum():
+    p=base_protocol()
+    require(not git('status','--porcelain'),'DIRTY_SOURCE','Commit precision repair before freezing addendum')
+    permitted={'evaluation/four-harness-v1/m_adapter.mjs','evaluation/optimization-v1/experiment.py',
+        'tests/test_optimization_campaign.py','tests/optimization-integers.test.mjs'}
+    require(set(git('diff','--name-only',p['source_commit'],'HEAD').splitlines())==permitted,
+        'REPAIR_SCOPE','Only the shared numeric transport repair, boundary guard and regression tests are admitted')
+    require(subprocess.run(['git','merge-base','--is-ancestor',p['source_commit'],'HEAD'],cwd=SOURCE).returncode==0,
+        'SOURCE_DRIFT','Repair must descend from frozen source')
+    prefix=p['schedule'][:8]
+    for i in range(0,8,2):
+        x,y=prefix[i:i+2]
+        require((x['task'],x['repeat'])==(y['task'],y['repeat']) and x['config']!=y['config'],
+            'PAIR_BOUNDARY','Precision repair must not split a matched pair')
+    existing={d.name for d in (ROOT/'runs').iterdir() if d.is_dir()}
+    require(existing=={r['run_id'] for r in prefix},'PAIR_BOUNDARY','All and only the complete pre-repair prefix must exist')
+    preserved=[]
+    for row in prefix:
+        path=ROOT/'runs'/row['run_id']/'result.json';r=json.loads(path.read_text())
+        require(r['source_commit']==p['source_commit'] and r['ordinal']==row['ordinal'],
+            'SOURCE_DRIFT','Pre-repair identity mismatch')
+        preserved.append({'run_id':row['run_id'],'sha256':digest(path)})
+    a={'kind':'lossless_numeric_tool_transport','frozen_at_unix':time.time(),
+        'base_protocol_sha256':digest(ROOT/'protocol.json'),'old_source_commit':p['source_commit'],
+        'source_commit':git('rev-parse','HEAD'),'source_inventory':inventory(),
+        'completed_prefix_length':8,'completed_results':preserved,
+        'next_run_id':p['schedule'][8]['run_id'],'physical_requests_for_addendum':0,
+        'reason':'Non-target native fixture submitted 9007199254740993 but Python received 9007199254740992. Shared adapter precision repair before any affected task.',
+        'unchanged':['original protocol bytes','task cards and certificates','schedule and repetitions','A/B context policies',
+            'model and request limits','termination and promotion rules'],
+        'comparability':'Every matched pair uses one exact source version. Earlier small-integer runs are retained, not replayed. Report both versions.',
+        'measurement_correction':'First valid submission is candidate arrival (tool start), with check completion separate. Original eight raw values used check completion; retain raw bytes and derive corrected report times from saved candidate events.',
+        'red_log_sha256':digest(ROOT/'integer-roundtrip-red.log'),
+        'green_log_sha256':digest(ROOT/'integer-native-green.log')}
+    save(ROOT/'precision-reliability-addendum.json',a)
+    save(ROOT/'precision-reliability-addendum-freeze.json',{'sha256':digest(ROOT/'precision-reliability-addendum.json')})
+    verify_freeze()
+    emit(reliability_addendum_frozen=True,source_commit=a['source_commit'],next_run=a['next_run_id'])
 
 def freeze():
     require(not git('status','--porcelain'),'DIRTY_SOURCE','Commit all protocol and source code before freeze')
@@ -259,7 +322,8 @@ def execute(row,protocol, *, offline_responses=None):
         'checker_sha256':digest(checker),'model':POLICY,'started_at_unix':started_unix,'ended_at_unix':time.time(),
         'wall_seconds':time.monotonic()-started,'formal_success':bool(successes),'posthoc_success':bool(posthoc),
         'construction_valid':bool(successes or posthoc or any(c['check'].get('target_met') for c in candidates)),
-        'first_valid_submission_seconds':successes[0]['elapsed_seconds'] if successes else None,
+        'first_valid_submission_seconds':successes[0]['tool_started_elapsed_seconds'] if successes else None,
+        'first_valid_check_completed_seconds':successes[0]['elapsed_seconds'] if successes else None,
         'infrastructure_interruption':infra,'mathematically_unsolved':not bool(successes or posthoc) and not infra,
         'input_tokens':sum(u['input_tokens'] for u in usage) if full else None,
         'output_tokens':sum(u['output_tokens'] for u in usage) if full else None,'total_tokens':snap['total_tokens'],
@@ -321,8 +385,11 @@ def summarize():
     per_task={task:statistics.median(r['saving'] for r in paired if r['task']==task) for task in sorted({r['task'] for r in paired})}
     median=statistics.median(per_task.values()) if per_task else None
     benefit=sum(r['formal_success'] for r in b)>sum(r['formal_success'] for r in a) or (len(per_task)>=3 and median>=.15)
-    eligible=len(dev)==36 and all(r['fair_comparison_valid'] for r in dev) and sum(r['formal_success'] for r in b)>=sum(r['formal_success'] for r in a) and sum(r['infrastructure_interruption'] for r in b)<=sum(r['infrastructure_interruption'] for r in a) and any(r['module_triggers'] for r in b) and benefit
+    same_source_each_pair=all(x['source_commit']==y['source_commit'] for x in a for y in b if (x['task'],x['repeat'])==(y['task'],y['repeat']))
+    eligible=len(dev)==36 and same_source_each_pair and all(r['fair_comparison_valid'] for r in dev) and sum(r['formal_success'] for r in b)>=sum(r['formal_success'] for r in a) and sum(r['infrastructure_interruption'] for r in b)<=sum(r['infrastructure_interruption'] for r in a) and any(r['module_triggers'] for r in b) and benefit
     summary={'development_completed':len(dev),'holdout_completed':sum(r['split']=='holdout' for r in results),
+        'source_versions':{s:sum(r['source_commit']==s for r in results) for s in sorted({r['source_commit'] for r in results})},
+        'same_source_each_pair':same_source_each_pair,
         'A_formal_successes':sum(r['formal_success'] for r in a),'B_formal_successes':sum(r['formal_success'] for r in b),
         'A_infrastructure':sum(r['infrastructure_interruption'] for r in a),'B_infrastructure':sum(r['infrastructure_interruption'] for r in b),
         'paired_success_savings':paired,'task_median_savings':per_task,'median_task_saving':median,'promotion_eligible':eligible,
@@ -353,9 +420,10 @@ def campaign():
     s=summarize();emit(completed=s['development_completed'],holdout=s['holdout_completed'],promotion=s['promotion_eligible'])
 
 if __name__=='__main__':
-    parser=argparse.ArgumentParser();parser.add_argument('action',choices=['freeze','connectivity','campaign','summarize'])
+    parser=argparse.ArgumentParser();parser.add_argument('action',choices=['freeze','freeze-precision-addendum','connectivity','campaign','summarize'])
     action=parser.parse_args().action
     if action=='freeze':freeze()
+    elif action=='freeze-precision-addendum':freeze_precision_addendum()
     elif action=='connectivity':connectivity()
     elif action=='campaign':campaign()
     else:

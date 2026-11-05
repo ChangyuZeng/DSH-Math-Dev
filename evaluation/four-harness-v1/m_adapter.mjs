@@ -16,8 +16,20 @@ const NEW_SENTENCE = 'Only the supplied benchmark tools are available. Use their
 export const COMMON_TOOL_NAMES = Object.freeze({materials_list: 'materials.list', materials_read: 'materials.read',
   workspace_read: 'workspace.read', workspace_write: 'workspace.write', compute: 'compute', check: 'check', submit: 'submit'});
 const hash = value => createHash('sha256').update(value).digest('hex');
-const canonical = value => JSON.stringify(value, (_, item) => item && typeof item === 'object' && !Array.isArray(item)
+const canonical = value => JSON.stringify(value, (_, item) => item && typeof item === 'object' && !Array.isArray(item) && !JSON.isRawJSON?.(item)
   ? Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]])) : item);
+
+// Keep exact provider number tokens when JavaScript cannot represent them safely.
+// JSON.stringify emits these raw values unchanged to the Python tool gateway.
+export function parseToolArguments(text) {
+  return JSON.parse(text, (_key, value, context) => {
+    if (typeof value !== 'number' || Number.isSafeInteger(value)) return value;
+    if (typeof JSON.rawJSON !== 'function' || typeof context?.source !== 'string') {
+      throw fail('TOOL_ARGUMENTS_PRECISION', 'Runtime cannot preserve exact numeric tool arguments');
+    }
+    return JSON.rawJSON(context.source);
+  });
+}
 const fail = (code, message) => Object.assign(Error(message), {code});
 const checkAbort = signal => { if (signal?.aborted) throw fail('CANCELLED', 'Benchmark workflow cancelled'); };
 
@@ -216,7 +228,7 @@ export function createMAdapter({service, transport, tools, toolSchemas, resolved
                 throw fail('UNAUTHORIZED_TOOL', 'Responses requested an unknown tool or duplicate call id');
               }
               callIds.add(toolCall.call_id);
-              const args = JSON.parse(toolCall.arguments);
+              const args = parseToolArguments(toolCall.arguments);
               if (!args || typeof args !== 'object' || Array.isArray(args)) throw fail('TOOL_ARGUMENTS', 'Tool arguments must be a JSON object');
               const name = COMMON_TOOL_NAMES[toolCall.name], started = performance.now();
               await emit({type: 'tool_started', request_id: row.request_id, call_id: toolCall.call_id, name,
