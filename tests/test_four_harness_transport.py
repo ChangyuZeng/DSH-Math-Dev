@@ -219,6 +219,21 @@ class TransportTests(unittest.TestCase):
         self.assertNotIn('private', json.dumps(received))
         self.assertEqual(len(connection.sent), 1)
 
+    def test_optimization_transient_with_upstream_output_is_not_retryable(self):
+        rejected = FakeResponse(json.dumps({'response': {'status': 'failed',
+            'output': [{'type': 'message', 'content': [{'type': 'output_text', 'text': 'fixture-access-secret'}]}],
+            'error': {'code': 'server_error'}}}).encode())
+        rejected.status = 503
+        evidence = []
+        transport, connection = self.make(profile='optimization', max_output_tokens=128000, evidence_sink=evidence.append)
+        connection.getresponse = lambda: rejected
+        with self.assertRaises(GateError) as caught:
+            transport.start({**payload(), 'max_output_tokens': 128000}, self.context()).result(2)
+        self.assertEqual(caught.exception.code, 'UPSTREAM_HTTP')
+        self.assertTrue(evidence[0]['error_output_present'])
+        self.assertEqual(len(connection.sent), 1)
+        self.assertNotIn('fixture-access-secret', json.dumps(evidence))
+
     def test_actual_400_diagnostic_digest_and_no_replay(self):
         # Reconstructed offline from the known JSON diagnostic, verified against
         # the immutable smoke's recorded digest/length; no artifact is rewritten.

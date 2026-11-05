@@ -174,6 +174,15 @@ def bootstrap(card):
        'sources':[card['source']],'knowledge_status':'synthetic_fixture'}
     return {'problem':problem,'stageGoal':'Construct and explicitly submit the finite certificate; retain intermediate work in the isolated workspace.'}
 
+def projection_accounting(evidence):
+    events=evidence.get('module_events') if isinstance(evidence,dict) else None
+    if not isinstance(events,list):
+        return {'module_events_available':False,'module_triggers':None,'context_bytes_removed':None}
+    return {'module_events_available':True,
+        'module_triggers':sum(e['type']=='context_projection' for e in events),
+        'context_bytes_removed':sum(e.get('removed_bytes',0) for e in events if e['type']=='context_projection')}
+
+
 def execute(row,protocol, *, offline_responses=None):
     ident=row['run_id'];dest=ROOT/'runs'/ident
     require(not dest.exists(),'NO_REPLAY','Logical run already exists; do not reset or replay it')
@@ -315,7 +324,6 @@ def execute(row,protocol, *, offline_responses=None):
     save(dest/'posthoc.json',posthoc)
     usage=[json.loads(r['usage']) for r in snap['request_states'] if r['usage']]
     full=snap['accounting_complete'];tool_errors=sum(not r['reply'].get('ok') for r in tool_records)
-    module_events=(evidence or {}).get('module_events',[])
     successes=[c for c in candidates if c['source']=='submit' and c['check'].get('legal') is True and c['check'].get('target_met') is True]
     terminal=snap['terminal'];infra=bool(failure) or terminal not in ('first_independent_submit_success','native_finished','native_error','physical_request_limit') and not solved.is_set()
     result={**row,'source_commit':protocol['source_commit'],'task_sha256':card['sha256'],'family':card['family'],
@@ -339,8 +347,7 @@ def execute(row,protocol, *, offline_responses=None):
         'candidate_checks':len(candidates),'unique_candidates':len({c['raw_sha256'] for c in candidates}),
         'semantic_unique_candidates':len({c['semantic_sha256'] for c in candidates}),
         'exact_duplicate_candidates':len(candidates)-len({c['raw_sha256'] for c in candidates}),
-        'module_triggers':sum(e['type']=='context_projection' for e in module_events),
-        'context_bytes_removed':sum(e.get('removed_bytes',0) for e in module_events if e['type']=='context_projection'),
+        **projection_accounting(evidence),
         'retry_events':[e for e in events if e['type'] in ('retry_scheduled','retry_ready') or e['type']=='request_reserved' and e.get('retry_of')],
         'candidate_lineage':[{'raw_sha256':c['raw_sha256'],'tool_request_id':c['tool_request_id'],
             'parent_request_id':next((e['parent_request_id'] for e in events if e['type']=='native_tool_context' and e['tool_request_id']==c['tool_request_id']),None)} for c in candidates],

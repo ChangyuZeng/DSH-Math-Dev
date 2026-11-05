@@ -481,6 +481,9 @@ class HostTransport:
                             # Retain only allowlisted structure and hashes. Arbitrary
                             # upstream text can echo credentials or private inputs.
                         candidate = value.get('response', value) if isinstance(value, dict) else {}
+                        evidence['error_output_absent'] = (not evidence['error_body_truncated'] and
+                            isinstance(value, dict) and isinstance(candidate, dict) and candidate.get('output', []) == [])
+                        evidence['error_output_present'] = isinstance(candidate, dict) and bool(candidate.get('output'))
                         if isinstance(candidate, dict):
                             evidence['error_model_drift'] = candidate.get('model') not in (None, POLICY['model'])
                             reasoning = candidate.get('reasoning')
@@ -564,6 +567,7 @@ class HostTransport:
             if (self.profile == 'optimization' and error_code == 'UPSTREAM_HTTP'
                     and evidence.get('http_status') in {429, 500, 502, 503, 504}
                     and evidence.get('rejected_parameter') is None
+                    and evidence.get('error_output_absent') is True
                     and not evidence.get('error_model_drift') and not evidence.get('error_effort_drift')):
                 result = {'status': 'failed', 'output': [], 'model': POLICY['model'],
                           'reasoning': {'effort': POLICY['effort']},

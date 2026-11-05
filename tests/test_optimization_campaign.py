@@ -11,6 +11,18 @@ HERE=Path(__file__).resolve().parents[1]/'evaluation/optimization-v1'
 sys.path.insert(0,str(HERE))
 import experiment
 
+class ProjectionTelemetry(unittest.TestCase):
+    def test_absent_native_evidence_is_unknown_not_zero(self):
+        for evidence in (None, {}, {'unrelated': True}):
+            with self.subTest(evidence=evidence):
+                self.assertEqual(experiment.projection_accounting(evidence),
+                    {'module_events_available': False, 'module_triggers': None, 'context_bytes_removed': None})
+        self.assertEqual(experiment.projection_accounting({'module_events': []}),
+            {'module_events_available': True, 'module_triggers': 0, 'context_bytes_removed': 0})
+        self.assertEqual(experiment.projection_accounting({'module_events': [{'type': 'context_projection', 'removed_bytes': 17}]}),
+            {'module_events_available': True, 'module_triggers': 1, 'context_bytes_removed': 17})
+
+
 @unittest.skipUnless(os.environ.get('FOUR_HARNESS_NATIVE_FIXTURES')=='1','explicit isolated native fixture opt-in')
 class Campaign(unittest.TestCase):
     def test_native_both_policies_keep_formal_submit_and_separate_check(self):
