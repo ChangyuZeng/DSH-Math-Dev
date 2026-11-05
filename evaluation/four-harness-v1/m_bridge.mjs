@@ -13,6 +13,21 @@ const SMOKE_BUDGET = {model_requests: 2, total_tokens: 131072, max_output_tokens
 const SMOKE_TASK = 'Non-target arithmetic task: compute 2 + 3 using a common tool,\nthen report the result in the native harness. This is an engineering check.\n';
 const SMOKE_SUBMISSION = 'Report the arithmetic result through the native harness; no target construction is requested.\n';
 
+const OPTIMIZATION_BUDGET = {model_requests: 120, total_tokens: null, max_output_tokens: 128000, context_tokens: 272000,
+  wall_seconds: null, tool_calls: 1000000, tool_timeout_seconds: null, artifact_bytes: 1073741824};
+function requireOptimization(manifest, execution, offline) {
+  const expected = {mode: 'authorized_optimization', arm: 'M', run_id: execution?.run_id,
+    campaign_id: execution?.campaign_id, model_requests: 120, campaign_max_requests: 120};
+  if (manifest.offline !== offline || manifest.scope !== 'optimization' || manifest.canonical_cold_input_checked !== true ||
+      canonical(manifest.model_policy) !== canonical(SMOKE_POLICY) || manifest.context_window !== 272000 ||
+      canonical(manifest.budget) !== canonical(OPTIMIZATION_BUDGET) ||
+      canonical(manifest.tools?.map(tool => tool.name).sort()) !== canonical(Object.keys(COMMON_TOOL_NAMES).sort()) ||
+      (!offline && (!execution?.run_id || !execution?.campaign_id || canonical(execution) !== canonical(expected) ||
+      canonical(manifest.execution) !== canonical(execution)))) {
+    throw error('OPTIMIZATION_AUTHORIZATION', 'Exact frozen optimization model, budget, tools and execution required');
+  }
+}
+
 function requireSmoke(manifest, execution, offline) {
   const expected = {mode: 'authorized_smoke', arm: 'M', run_id: execution?.run_id,
     campaign_id: execution?.campaign_id, model_requests: 2, campaign_max_requests: 8};
@@ -66,13 +81,14 @@ export function createGatewayBindings({gateway, token, fetchImpl = globalThis.fe
     return {value, requestId: received.headers.get('X-Four-Request-Id')};
   };
   return Object.freeze({
-    async preflight({requireOffline = true, execution, smoke = false, signal} = {}) {
+    async preflight({requireOffline = true, execution, smoke = false, optimization = false, signal} = {}) {
       manifest = undefined; // A failed new preflight revokes the earlier admission.
       const {value} = await post('manifest', {}, {signal});
       if (requireOffline && value.offline !== true) throw error('LIVE_DISABLED', 'A verified offline fixture gateway is required');
-      if (!requireOffline || smoke) requireSmoke(value, execution, requireOffline);
+      if (optimization) requireOptimization(value, execution, requireOffline);
+      else if (!requireOffline || smoke) requireSmoke(value, execution, requireOffline);
       if (!value.model_policy || !Array.isArray(value.tools) || !Number.isSafeInteger(value.context_window)
-          || !['offline', 'formal', 'smoke'].includes(value.scope)) {
+          || !['offline', 'formal', 'smoke', 'optimization'].includes(value.scope)) {
         throw error('GATEWAY_MANIFEST', 'Gateway must declare exact model policy, tool scope, common tools, and context window');
       }
       manifest = structuredClone(value);
@@ -129,7 +145,7 @@ function parseArguments(argv) {
   const result = {};
   for (let index = 0; index < argv.length; index++) {
     const arg = argv[index];
-    if (['--offline', '--smoke'].includes(arg)) {
+    if (['--offline', '--smoke', '--optimization'].includes(arg)) {
       if (result[arg.slice(2)]) throw error('ARGUMENTS', 'Duplicate execution mode flag');
       result[arg.slice(2)] = true; continue;
     }
@@ -138,7 +154,8 @@ function parseArguments(argv) {
     }
     result[arg.slice(2)] = argv[++index];
   }
-  if (!result.offline && !result.smoke) throw error('LIVE_DISABLED', 'Explicit offline fixture or authorized smoke execution required');
+  if (result.smoke && result.optimization) throw error('ARGUMENTS', 'Choose one live profile');
+  if (!result.offline && !result.smoke && !result.optimization) throw error('LIVE_DISABLED', 'Explicit offline fixture or authorized smoke execution required');
   if (required.some(name => !result[name])) throw error('ARGUMENTS', 'All bridge arguments are required');
   for (const name of ['token-env', 'execution-env'])
     if (result[name] && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(result[name])) throw error('ARGUMENTS', 'Expected an environment variable name');
@@ -155,14 +172,16 @@ export async function runBridge(argv, {env = process.env, stdin = process.stdin,
     if (!execution || execution.run_id !== args['run-id']) throw error('SMOKE_AUTHORIZATION', 'CLI run must match its exact smoke execution binding');
   }
   const bindings = createGatewayBindings({gateway: args.gateway, token});
-  const manifest = await bindings.preflight({requireOffline: args.offline === true, execution, smoke: args.smoke === true, signal});
+  const manifest = await bindings.preflight({requireOffline: args.offline === true, execution, smoke: args.smoke === true, optimization: args.optimization === true, signal});
   let text = '';
   for await (const chunk of stdin) {
     text += chunk;
     if (Buffer.byteLength(text) > 1024 * 1024) throw error('BOOTSTRAP_LIMIT', 'Bootstrap JSON exceeds limit');
   }
   if (args.smoke && text.trim()) throw error('BOOTSTRAP_SCOPE', 'Smoke uses only the frozen canonical task; custom bootstrap is unavailable');
-  const bootstrap = args.smoke ? smokeBootstrap() : text.trim() ? JSON.parse(text) : {};
+  const bootstrap = args.optimization ? JSON.parse(env.FOUR_HARNESS_BOOTSTRAP ?? 'null')
+    : args.smoke ? smokeBootstrap() : text.trim() ? JSON.parse(text) : {};
+  if (args.optimization && (!bootstrap?.problem || text.trim())) throw error('COLD_INPUT', 'Optimization uses only the caller-bound frozen bootstrap');
   const service = await createPythonWorkflowService({root: args.root, python: args.python});
   const physicalRequests = [];
   const transport = async request => {
@@ -179,7 +198,7 @@ export async function runBridge(argv, {env = process.env, stdin = process.stdin,
     modelPolicy: manifest.model_policy, budget: bootstrap.budget ?? {
       requests: manifest.budget?.model_requests, total_tokens: manifest.budget?.total_tokens,
       max_output_tokens: manifest.budget?.max_output_tokens},
-    contextBudget: bootstrap.contextBudget ?? {max_tokens: manifest.context_window - manifest.budget?.max_output_tokens},
+    contextBudget: bootstrap.contextBudget ?? {max_tokens: args.optimization ? null : manifest.context_window - manifest.budget?.max_output_tokens},
     stageGoal: bootstrap.stageGoal ?? 'Record a candidate for 2 + 3 and its unreviewed obligation using only the synthetic fixture.'});
   let result, failure;
   try { result = await adapter.run({signal}); }

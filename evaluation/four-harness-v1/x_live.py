@@ -154,8 +154,24 @@ def _python_runtime(binary):
             tuple(dict.fromkeys(pathlib.Path(value).resolve() for value in paths["excluded"])))
 
 
-def prepare_m_smoke(root, *, node, python, gateway_url, token, execution, offline=False):
-    execution = _execution(execution, "M")
+def prepare_m_smoke(root, **kwargs):
+    return _prepare_m(root, **kwargs)
+
+
+def prepare_m_optimization(root, **kwargs):
+    return _prepare_m(root, profile='optimization', **kwargs)
+
+
+def _prepare_m(root, *, node, python, gateway_url, token, execution, offline=False, profile='smoke', bootstrap=None, context_policy='full'):
+    if profile == 'optimization':
+        expected = {'mode': 'authorized_optimization', 'arm': 'M', 'run_id': execution.get('run_id'),
+                    'campaign_id': execution.get('campaign_id'), 'model_requests': 120, 'campaign_max_requests': 120}
+        _require(execution == expected and bool(execution['run_id']) and bool(execution['campaign_id']),
+                 'OPTIMIZATION_AUTHORIZATION', 'Exact optimization binding required')
+        _require(type(bootstrap) is dict and type(bootstrap.get('problem')) is dict,
+                 'COLD_INPUT', 'Frozen optimization bootstrap required')
+    else:
+        execution = _execution(execution, 'M')
     gateway = _gateway(gateway_url)
     _require(type(offline) is bool and type(token) is str and token, "CAPABILITY", "M worker capability token required")
     node, python = _executable(node), _executable(python)
@@ -169,7 +185,11 @@ def prepare_m_smoke(root, *, node, python, gateway_url, token, execution, offlin
     workflow = root / "tmp" / "workflow"
     workflow.mkdir(mode=0o700)
     evidence = root / "workspace" / "native-evidence.json"
-    arguments = [HERE / "m_bridge.mjs", "--smoke", "--gateway", gateway, "--token-env", "FOUR_HARNESS_TOKEN",
+    if profile == 'optimization':
+        env['FOUR_HARNESS_MODE'] = 'offline_fixture' if offline else 'authorized_optimization'
+        env['FOUR_HARNESS_BOOTSTRAP'] = json.dumps(bootstrap, ensure_ascii=False)
+        env['FOUR_HARNESS_CONTEXT_POLICY'] = context_policy
+    arguments = [HERE / "m_bridge.mjs", '--' + profile, "--gateway", gateway, "--token-env", "FOUR_HARNESS_TOKEN",
                  "--execution-env", "FOUR_HARNESS_EXECUTION", "--root", workflow, "--run-id", execution["run_id"],
                  "--python", python, "--evidence", evidence]
     if offline:

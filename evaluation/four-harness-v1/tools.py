@@ -86,8 +86,8 @@ class ToolLimits:
     max_output_bytes: int = 1024 * 1024
     artifact_bytes: int = 1024 * 1024 * 1024
     max_files: int = 4096
-    cpu_seconds: float = 60.0
-    timeout_seconds: float = 60.0
+    cpu_seconds: float | None = 60.0
+    timeout_seconds: float | None = 60.0
     memory_bytes: int = 4 * 1024 * 1024 * 1024
     cpu_cores: int | None = None
 
@@ -97,7 +97,7 @@ class ToolLimits:
         if self.resource_mode == "macos_monitored" and sys.platform != "darwin":
             raise ValueError("macos_monitored requires Darwin")
         for key, value in asdict(self).items():
-            if key == "resource_mode" or key == "cpu_cores" and value is None:
+            if key == "resource_mode" or key in ("cpu_cores", "cpu_seconds", "timeout_seconds") and value is None:
                 continue
             expected = (int, float) if key in ("cpu_seconds", "timeout_seconds") else (int,)
             if type(value) not in expected or not math.isfinite(value) or value <= 0:
@@ -391,7 +391,7 @@ def _rss(pid):
 
 
 class CommonTools:
-    def __init__(self, run_id, run_root, materials=None, limits=None, accounting=None):
+    def __init__(self, run_id, run_root, materials=None, limits=None, accounting=None, checker_path=None):
         if type(run_id) is not str or not run_id or len(run_id) > 128:
             raise ValueError("run_id must be a nonempty string of at most 128 characters")
         if accounting is not None and not callable(accounting):
@@ -424,11 +424,12 @@ class CommonTools:
                 raise ValueError("material sha256 must be a lowercase SHA-256 digest")
             self._materials[name] = {"path": _absolute(entry["path"]), "sha256": digest}
             self._material(name)
-        self._checker_bytes = _read_absolute(AUDIT_PATH, 1024 * 1024)
+        self._checker_path = _absolute(checker_path) if checker_path is not None else AUDIT_PATH
+        self._checker_bytes = _read_absolute(self._checker_path, 1024 * 1024)
         self.checker_sha256 = _hash(self._checker_bytes)
         self._child_bytes = _read_absolute(CHILD_PATH, 1024 * 1024)
         self._child_sha256 = _hash(self._child_bytes)
-        spec = importlib.util.spec_from_file_location("four_harness_frozen_audit", AUDIT_PATH)
+        spec = importlib.util.spec_from_file_location("four_harness_frozen_audit", self._checker_path)
         self._audit = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(self._audit)
         self._sandbox = None
@@ -459,7 +460,8 @@ class CommonTools:
                 "address_space_limit_required": strict,
                 "hard_cpu_core_limit": sys.platform == "linux" and self.limits.cpu_cores is not None,
                 "cpu_placement": "affinity" if self.limits.cpu_cores is not None else "unconstrained",
-                "cpu_time_guard": "RLIMIT_CPU", "cpu_time_limit_seconds": math.ceil(self.limits.cpu_seconds),
+                "cpu_time_guard": "RLIMIT_CPU" if self.limits.cpu_seconds is not None else None,
+                "cpu_time_limit_seconds": math.ceil(self.limits.cpu_seconds) if self.limits.cpu_seconds is not None else None,
                 "cpu_observation_source": "wait4_rusage", "rss_observation_source": "kernel_rss+wait4_ru_maxrss",
                 "rss_sampling_interval_seconds": 0.01,
                 "rss_watchdog_is_hard_limit": False}
@@ -510,7 +512,7 @@ class CommonTools:
         return data
 
     def _frozen_checker(self):
-        if _hash(_read_absolute(AUDIT_PATH, 1024 * 1024)) != self.checker_sha256:
+        if _hash(_read_absolute(self._checker_path, 1024 * 1024)) != self.checker_sha256:
             raise ToolError("checker_hash_drift", "checker no longer matches its frozen hash")
 
     def _totals(self):
@@ -902,7 +904,7 @@ class CommonTools:
                     if cancel is not None and cancel.is_set() and status == "completed":
                         status = "cancelled"
                         kill()
-                    if time.monotonic() - start >= self.limits.timeout_seconds and status == "completed":
+                    if self.limits.timeout_seconds is not None and time.monotonic() - start >= self.limits.timeout_seconds and status == "completed":
                         status = "timeout"
                         kill()
                     resident = _observed_number(_rss(process.pid), positive=True)
@@ -940,7 +942,7 @@ class CommonTools:
             usage_recorded = True
             if returncode in (-signal.SIGXCPU, -signal.SIGKILL) and status == "completed":
                 status = ("cpu_limit" if returncode == -signal.SIGXCPU or
-                          child_cpu is not None and child_cpu >= self.limits.cpu_seconds else "killed")
+                          self.limits.cpu_seconds is not None and child_cpu is not None and child_cpu >= self.limits.cpu_seconds else "killed")
             return {"status": status, "returncode": returncode,
                     "stdout": streams["stdout"].decode("utf-8", errors="replace"),
                     "stderr": streams["stderr"].decode("utf-8", errors="replace"),

@@ -92,7 +92,8 @@ def main():
     _limit(resource.RLIMIT_CORE, 0)
     _limit(resource.RLIMIT_FSIZE, 0)  # all files are read-only; stdout uses pipes
     _limit(resource.RLIMIT_NOFILE, 64)
-    _limit(resource.RLIMIT_CPU, max(1, math.ceil(config["cpu_seconds"])))
+    if config["cpu_seconds"] is not None:
+        _limit(resource.RLIMIT_CPU, max(1, math.ceil(config["cpu_seconds"])))
     if mode == "strict":
         _limit(resource.RLIMIT_AS, config["memory_bytes"])
     if sys.platform == "linux" and sys.argv[1] == "bubblewrap":

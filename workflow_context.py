@@ -36,7 +36,8 @@ def build_snapshot(root, project_id, spec, kind, target_ref=None, dependency_ref
     require(type(dependency_refs) is list and len(dependency_refs) <= 32, 'INVALID_SCHEMA', 'Select at most 32 dependencies')
     blind = kind == 'reconstruct'
     require(not blind or not dependency_refs, 'INVALID_SCHEMA', 'Blind reconstruction forbids explicit dependency_refs')
-    integer(spec['context_budget']['max_tokens'], 1)
+    if spec['context_budget']['max_tokens'] is not None:
+        integer(spec['context_budget']['max_tokens'], 1)
     with Projects(root).open_project(project_id, require_writable=True) as (_, store):
         problem = exact(store.records, spec['problem_ref'])
         require(problem['kind'] == 'Problem', 'REFERENCE_KIND', 'Run requires a Problem')
@@ -121,7 +122,7 @@ def build_snapshot(root, project_id, spec, kind, target_ref=None, dependency_ref
         text = json.dumps(payload, ensure_ascii=False, separators=(',', ':'))
         # A conservative UTF-8 estimate, not an adapter tokenizer or billing receipt.
         token_bound = len(text.encode('utf-8')) + 2048
-        require(token_bound <= spec['context_budget']['max_tokens'], 'CONTEXT_LIMIT',
+        require(spec['context_budget']['max_tokens'] is None or token_bound <= spec['context_budget']['max_tokens'], 'CONTEXT_LIMIT',
                 'Full required context exceeds budget; narrow the action or raise its explicit budget; no assumptions were truncated')
         return {'format': 'dsh-math-context-v1', 'refs': [{'id': o['id'], 'rev': o['rev']} for o in included.values()],
                 'research_head': head(store), 'text': text, 'sha256': hashlib.sha256(text.encode()).hexdigest(),

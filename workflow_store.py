@@ -46,11 +46,13 @@ def validate_spec(spec):
     for value in spec["model_policy"].values():
         string(value)
     fields(spec["budget"], "requests total_tokens max_output_tokens")
-    for value in spec["budget"].values():
-        integer(value, 1)
-    require(spec["budget"]["max_output_tokens"] <= spec["budget"]["total_tokens"], "INVALID_SCHEMA", "Output cap exceeds total budget")
+    for key, value in spec["budget"].items():
+        if key != "total_tokens" or value is not None:
+            integer(value, 1)
+    require(spec["budget"]["total_tokens"] is None or spec["budget"]["max_output_tokens"] <= spec["budget"]["total_tokens"], "INVALID_SCHEMA", "Output cap exceeds total budget")
     fields(spec["context_budget"], "max_tokens")
-    integer(spec["context_budget"]["max_tokens"], 1)
+    if spec["context_budget"]["max_tokens"] is not None:
+        integer(spec["context_budget"]["max_tokens"], 1)
     string(spec["stage_goal"])
     require(type(spec["tools"]) is list, "INVALID_SCHEMA", "Expected selected tools")
     names = set()
@@ -209,7 +211,7 @@ class WorkflowStore:
     def _can_call(run):
         budget = run["spec"]["budget"]
         return (run["usage"]["complete"] and run["usage"]["requests"] < budget["requests"]
-                and run["usage"]["total_tokens"] < budget["total_tokens"]
+                and (budget["total_tokens"] is None or run["usage"]["total_tokens"] < budget["total_tokens"])
                 and all(a["usage"] is None or a["usage"]["output_tokens"] <= a["max_output_tokens"]
                         for a in run["actions"]))
 
@@ -264,12 +266,12 @@ class WorkflowStore:
                 self._resolve(research, [snapshot["action"]["target_ref"]])
             if snapshot["action"]["route_id"] is not None:
                 require(snapshot["action"]["route_id"] in {r["id"] for r in run["spec"].get("routes", [])}, "INVALID_SCHEMA", "Unknown route")
-            require(snapshot["input_token_bound"] <= run["spec"]["context_budget"]["max_tokens"], "CONTEXT_BUDGET", "Context exceeds budget")
+            require(run["spec"]["context_budget"]["max_tokens"] is None or snapshot["input_token_bound"] <= run["spec"]["context_budget"]["max_tokens"], "CONTEXT_BUDGET", "Context exceeds budget")
             integer(request["max_output_tokens"], 1)
             budget = run["spec"]["budget"]
             require(request["max_output_tokens"] <= budget["max_output_tokens"], "BUDGET", "Output reservation exceeds per-request cap")
             require(run["usage"]["requests"] < budget["requests"] and
-                    run["usage"]["total_tokens"] + snapshot["input_token_bound"] + request["max_output_tokens"] <= budget["total_tokens"],
+                    (budget["total_tokens"] is None or run["usage"]["total_tokens"] + snapshot["input_token_bound"] + request["max_output_tokens"] <= budget["total_tokens"]),
                     "BUDGET", "No budget for another request")
             item = {"action_id": request["operation_id"], "kind": request["kind"], "status": "queued",
                     "context_snapshot": deepcopy(snapshot), "max_output_tokens": request["max_output_tokens"],
@@ -315,9 +317,9 @@ class WorkflowStore:
             else:
                 run["usage"]["total_tokens"] += usage["total_tokens"]
                 budget = run["spec"]["budget"]
-                if usage["output_tokens"] > active["max_output_tokens"] or run["usage"]["total_tokens"] > budget["total_tokens"]:
+                if usage["output_tokens"] > active["max_output_tokens"] or (budget["total_tokens"] is not None and run["usage"]["total_tokens"] > budget["total_tokens"]):
                     run["status"], run["reason"] = "paused", "budget_exceeded"
-                elif run["usage"]["requests"] >= budget["requests"] or run["usage"]["total_tokens"] >= budget["total_tokens"]:
+                elif run["usage"]["requests"] >= budget["requests"] or (budget["total_tokens"] is not None and run["usage"]["total_tokens"] >= budget["total_tokens"]):
                     run["status"], run["reason"] = "paused", "budget_exhausted"
         elif action == "commit":
             require(active["status"] == "proposed", "INVALID_STATE", "Commit needs a recorded proposal")

@@ -344,12 +344,14 @@ def _parse_terminal_json(raw):
 class HostTransport:
     def __init__(self, *, auth_loader=load_host_credential, connection_factory=_DeadlineHTTPSConnection,
                  evidence_sink=None, dispatch_timeout=4.0, response_timeout=60.0,
-                 max_output_tokens=2048, max_bytes=8 * 1024 * 1024, max_events=100000):
+                 max_output_tokens=2048, max_bytes=8 * 1024 * 1024, max_events=100000, profile='smoke'):
         require(type(dispatch_timeout) in (int, float) and 0 < dispatch_timeout <= 4.5 and
                 type(response_timeout) in (int, float) and 0 < response_timeout <= 180,
                 'TRANSPORT_CONFIG', 'Transport timeouts must be positive and bounded')
-        require(type(max_output_tokens) is int and max_output_tokens == 2048,
-                'OUTPUT_CAP', 'This transport is frozen to the approved smoke output cap')
+        require(profile in {'smoke', 'optimization'} and type(max_output_tokens) is int and
+                max_output_tokens == (128000 if profile == 'optimization' else 2048),
+                'OUTPUT_CAP', 'Transport requires the exact approved profile output cap')
+        self.profile = profile
         require(type(max_bytes) is int and 0 < max_bytes <= 8 * 1024 * 1024 and
                 type(max_events) is int and 0 < max_events <= 100000,
                 'TRANSPORT_CONFIG', 'SSE bounds exceed approved transport limits')
@@ -468,21 +470,14 @@ class HostTransport:
                         value = json.loads(error_body)
                         if not evidence['error_body_truncated']:
                             rejected = rejected_parameter(value, set(payload) | set(wire))
-                            # Private host receipt only (never included in source or
-                            # child responses): preserve actionable bounded JSON
-                            # errors instead of irrecoverable hashes alone.
-                            diagnostic = value.get('error', value) if isinstance(value, dict) else {}
-                            if isinstance(diagnostic, dict):
-                                fields = {}
-                                for key in ('code', 'param', 'message', 'detail'):
-                                    text = diagnostic.get(key)
-                                    if isinstance(text, str):
-                                        for secret in (credential.access, credential.account_id):
-                                            if secret:
-                                                text = text.replace(secret, '<REDACTED>')
-                                        fields[key] = text[:2048]
-                                evidence['upstream_error'] = fields
+                            # Retain only allowlisted structure and hashes. Arbitrary
+                            # upstream text can echo credentials or private inputs.
                         candidate = value.get('response', value) if isinstance(value, dict) else {}
+                        if isinstance(candidate, dict):
+                            evidence['error_model_drift'] = candidate.get('model') not in (None, POLICY['model'])
+                            reasoning = candidate.get('reasoning')
+                            evidence['error_effort_drift'] = (isinstance(reasoning, dict) and
+                                reasoning.get('effort') not in (None, POLICY['effort']))
                         if isinstance(candidate, dict) and isinstance(candidate.get('usage'), dict):
                             usage = normalize_usage(candidate['usage'], terminal=False)
                             # Only numeric counters cross the error boundary; no
@@ -493,6 +488,13 @@ class HostTransport:
                             observed_response['usage']['output_tokens_details'] = {'reasoning_tokens':usage['reasoning_tokens']}
                     except (ValueError, TypeError):
                         pass
+                    if self.profile == 'optimization' and upstream.status in {429, 500, 502, 503, 504}:
+                        safe_headers = {}
+                        for key in ('retry-after', 'retry-after-ms'):
+                            value = upstream.getheader(key)
+                            if isinstance(value, str) and len(value) <= 128 and all(ord(c) < 127 and (c.isalnum() or c in ' ,:.-+') for c in value):
+                                safe_headers[key] = value
+                        evidence['retry_headers'] = safe_headers
                     evidence['rejected_parameter'] = rejected
                     evidence['unsupported_output_limit_reported'] = rejected == 'max_output_tokens'
                     raise GateError('UPSTREAM_HTTP', 'Upstream rejected HTTP request; no retry or redirect')
@@ -550,6 +552,16 @@ class HostTransport:
                     self._sink(deepcopy(evidence))
                 except Exception:
                     future.evidence['evidence_sink_failed'] = True
+            if (self.profile == 'optimization' and error_code == 'UPSTREAM_HTTP'
+                    and evidence.get('http_status') in {429, 500, 502, 503, 504}
+                    and evidence.get('rejected_parameter') is None
+                    and not evidence.get('error_model_drift') and not evidence.get('error_effort_drift')):
+                result = {'status': 'failed', 'output': [], 'model': POLICY['model'],
+                          'reasoning': {'effort': POLICY['effort']},
+                          'usage': observed_response.get('usage') if observed_response else None,
+                          'error': {'code': 'http_' + str(evidence['http_status']),
+                                    'headers': evidence.get('retry_headers', {})}}
+                error_code = None
             if error_code:
                 failure=GateError(error_code, 'Host receipt unavailable or invalid; no automatic retry')
                 if observed_response is not None:

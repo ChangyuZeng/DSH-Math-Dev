@@ -25,9 +25,9 @@ for _name in ('schema', 'backend', 'workflow_store', 'workflow_context', 'workfl
     _spec.loader.exec_module(_module)
 
 SOURCE_PINS = {
-    'workflow_runner.mjs': '9dc11c4f63c7bff9c9ece539331bf10f9007eb5f27f694e005caae7c76399410',
-    'workflow_store.py': 'abc254d9e742c0767354df1b82b33f66a6d4d6a49b69f112b0e5940157160585',
-    'workflow_context.py': 'd83c496f8a7b30172761ce5dd54be37dc62fb92259f48d602a241f63c2263dff',
+    'workflow_runner.mjs': 'af7beeac207c59eae4c0b1fa8a2712ade6a4d8afccb30b234e6b73a4e4feb061',
+    'workflow_store.py': '49e94ab7e0db5c46c43c020e95e4c340c20fc22003b1efb8be570f53541dbff0',
+    'workflow_context.py': 'a410b202124d51417eff42f738d88dc9db96d09a4de4d9f5f8b53168e7eec3b4',
     'workflow_service.py': 'bd9cc8d72be1715828983c0ac41a52ed08707cd5c53729cd07956c3f1cd7b3dd',
 }
 
@@ -106,7 +106,7 @@ class BenchmarkWorkflowStore(WorkflowStore):
             return all(row['usage'] is None or row['usage']['output_tokens'] is None or
                        row['usage']['output_tokens'] <= action['max_output_tokens'] for row in accounting['requests'])
         return (run['usage']['complete'] and run['usage']['requests'] < budget['requests'] and
-                run['usage']['total_tokens'] < budget['total_tokens'] and all(within_cap(a) for a in run['actions']))
+                (budget['total_tokens'] is None or run['usage']['total_tokens'] < budget['total_tokens']) and all(within_cap(a) for a in run['actions']))
 
     def _transition(self, run, request, base, research):
         accounting = request.get('benchmark_accounting')

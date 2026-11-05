@@ -85,6 +85,21 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual([a["status"] for a in run["actions"]], ["committed"] * 3)
         self.assertCode("INVALID_STATE", self.call, "start", run)
 
+    def test_optional_cumulative_budgets_keep_request_and_output_caps(self):
+        from workflow_context import build_snapshot
+        self.spec['budget']['total_tokens'] = None
+        self.spec['context_budget']['max_tokens'] = None
+        run = self.call('start', self.prepare())
+        snapshot = build_snapshot(self.root, self.project, self.spec, 'derive')
+        self.assertGreater(snapshot['input_token_bound'], 300)
+        for _ in range(3):
+            run = self.reserve(run)
+            run = self.propose(run, {'total_tokens': 1000000, 'output_tokens': 30})
+            run = self.commit(run)
+        self.assertEqual(run['usage']['total_tokens'], 3000000)
+        self.assertEqual(run['reason'], 'budget_exhausted')
+        self.assertCode('INVALID_STATE', self.reserve, run)
+
     def test_cas_and_persistent_operation_receipts(self):
         request = self.request("prepare", spec=self.spec)
         run = self.store.dispatch(request)

@@ -14,7 +14,8 @@ import secrets
 import threading
 from urllib.parse import urlsplit
 
-from ledger import GateError, POLICY, RESOURCE_POLICY, canonical, digest, require, native_identity
+from ledger import (GateError, POLICY, RESOURCE_POLICY, canonical, digest, require, native_identity,
+                    OPTIMIZATION_BUDGET, retryable_response, retry_delay)
 from cold_start import INFORMATION_POLICY, canonical_inputs
 
 # Tool contracts are shared by MCP, Pi and the workflow worker. Names use API-
@@ -140,7 +141,7 @@ class Gateway:
     accounted. No retries. A live transport must separately qualify this contract,
     cancellation, provider framing and OS coverage before it can be installed.
     """
-    def __init__(self, ledger, *, transport, bindings, tools=None, allowed_tools=None, intrinsic_tools=None, inject_output_cap=False, drain_timeout=5.0, execution=None, state_guards=None, request_adapters=None, audit_sink=None):
+    def __init__(self, ledger, *, transport, bindings, tools=None, allowed_tools=None, intrinsic_tools=None, inject_output_cap=False, drain_timeout=5.0, execution=None, state_guards=None, request_adapters=None, audit_sink=None, frozen_materials=None, candidate_schema=None):
         require(callable(getattr(transport, 'start', None)), 'TRANSPORT_CONTRACT', 'Transport requires an atomic start returning a receipt Future')
         self.ledger, self.transport = ledger, transport
         self.is_offline = type(transport) is FixtureTransport
@@ -149,6 +150,8 @@ class Gateway:
         self.state_guards = state_guards or {}
         self.request_adapters = request_adapters or {}
         self.audit_sink = audit_sink
+        self.frozen_materials = deepcopy(frozen_materials or {})
+        self.candidate_schema = deepcopy(candidate_schema)
         self.is_live = type(transport).__module__ == 'transport' and type(transport).__name__ == 'HostTransport'
         if self.is_live:
             from transport import HostTransport
@@ -164,10 +167,14 @@ class Gateway:
                     budget = json.loads(run['spec'])['budget']
                 expected = dict(mode='authorized_smoke', arm=binding['arm'], run_id=binding['run_id'],
                                 campaign_id=run['campaign'], model_requests=2, campaign_max_requests=8)
-                require(self.execution == expected and caps['scope'] == 'smoke' and
-                        caps['max_requests'] <= 8 and caps['max_tokens'] <= 524288 and
-                        budget == __import__('ledger').SMOKE_BUDGET,
-                        'EXECUTION_MODE', 'Only the exact authorized smoke budget may execute')
+                smoke = (self.execution == expected and caps['scope'] == 'smoke' and
+                         caps['max_requests'] <= 8 and caps['max_tokens'] <= 524288 and
+                         budget == __import__('ledger').SMOKE_BUDGET)
+                optimization = (self.execution == dict(mode='authorized_optimization', arm='M',
+                    run_id=binding['run_id'], campaign_id=run['campaign'], model_requests=120,
+                    campaign_max_requests=120) and binding['arm'] == 'M' and caps['scope'] == 'optimization'
+                    and caps['max_requests'] == 120 and caps['max_tokens'] is None and budget == OPTIMIZATION_BUDGET)
+                require(smoke or optimization, 'EXECUTION_MODE', 'Exact authorized execution profile required')
                 require(binding['run_id'] in self.state_guards, 'STATE_GUARD', 'Live native state watchdog required')
         self.tools = tools or {}
         self.allowed_tools = allowed_tools or {}
@@ -178,7 +185,7 @@ class Gateway:
                 run = ledger._run(db, run_id)
                 campaign = db.execute('SELECT spec FROM campaign WHERE id=?', (run['campaign'],)).fetchone()
                 scope = json.loads(campaign['spec'])['scope']
-                if scope in {'smoke', 'formal'}:
+                if scope in {'smoke', 'formal', 'optimization'}:
                     self.cold_scopes[run_id] = scope
         self.cold_accounting = {}
         for run_id in self.cold_scopes:
@@ -190,7 +197,8 @@ class Gateway:
             with ledger.connection() as db:
                 run = ledger._run(db, run_id)
                 budget = json.loads(run['spec'])['budget']
-            require(host.limits.timeout_seconds <= budget['tool_timeout_seconds'] and
+            require((host.limits.timeout_seconds is None if budget['tool_timeout_seconds'] is None else
+                     host.limits.timeout_seconds is not None and host.limits.timeout_seconds <= budget['tool_timeout_seconds']) and
                     host.limits.artifact_bytes <= budget['artifact_bytes'],
                     'TOOL_BUDGET', 'Common tool timeout/artifact limits exceed the run budget')
             def account(event, run_id=run_id):
@@ -269,7 +277,7 @@ class Gateway:
                         with gateway.ledger.connection() as db:
                             frozen = json.loads(gateway.ledger._run(db, run_id)['spec'])
                         self.reply(200, {'offline': gateway.is_offline, 'model_policy': POLICY,
-                                         'tools': responses_tools(gateway.cold_scopes.get(run_id)), 'scope': gateway.cold_scopes.get(run_id, 'offline'),
+                                         'tools': gateway.manifest_tools(run_id), 'scope': gateway.cold_scopes.get(run_id, 'offline'),
                                          'context_window': frozen['budget']['context_tokens'],
                                          'budget': frozen['budget'], 'resource_policy': RESOURCE_POLICY,
                                          'information_policy': INFORMATION_POLICY,
@@ -367,31 +375,44 @@ class Gateway:
                         gateway.ledger.record(run_id, 'transport_adaptation', field='max_output_tokens', value=cap,
                                               reason='frozen_explicit_output_cap')
                     dispatch_role = 'compaction' if metadata and metadata.get('request_kind') == 'compaction' else role
-                    request_id = gateway.ledger.reserve_request(run_id, dispatch_role, payload,
-                        parent_request_id=explicit_parent, thread_id=self.headers.get('X-Four-Thread-Id'), native_metadata=metadata)
-                    gateway.ledger.start_request(request_id)
-                    # Actual start and shutdown share a lock, not just admission.
-                    # Waiting for the response occurs outside it so shutdown can
-                    # cancel active I/O without discarding a late receipt.
-                    try:
+                    retry_of, attempts = None, 0
+                    while True:
+                        request_id = gateway.ledger.reserve_request(run_id, dispatch_role, payload,
+                            parent_request_id=explicit_parent, thread_id=self.headers.get('X-Four-Thread-Id'),
+                            native_metadata=metadata, retry_of=retry_of)
+                        gateway.ledger.start_request(request_id)
+                        attempts += 1
+                        try:
+                            if gateway.audit_sink is not None:
+                                gateway.audit_sink('request', request_id, deepcopy(payload))
+                            with gateway.lifecycle:
+                                require(not gateway.closing and not gateway.cancel_event.is_set(), 'STOPPED', 'Gateway stopped before dispatch')
+                                dispatched = True
+                                pending = gateway.ledger.dispatch_request(request_id, lambda: gateway.transport.start(
+                                    payload, dict(request_id=request_id, run_id=run_id, role=dispatch_role,
+                                                  cancel_event=gateway.cancel_event)))
+                                require(isinstance(pending, Future), 'TRANSPORT_CONTRACT', 'Transport start must return a receipt Future')
+                            response = pending.result()
+                        except GateError:
+                            raise
+                        except Exception as error:
+                            raise GateError('TRANSPORT_ERROR', 'Transport lost its receipt; no automatic retry') from error
+                        require(isinstance(response, dict), 'RESPONSE_SCHEMA', 'Transport returned no Responses object')
+                        recoverable = gateway.cold_scopes.get(run_id) == 'optimization' and retryable_response(response)
+                        usage = gateway.ledger.finish_request(request_id, response, late_receipt=True,
+                            terminal=response.get('status') in {'completed', 'incomplete', 'failed', 'cancelled'},
+                            recoverable=recoverable)
                         if gateway.audit_sink is not None:
-                            gateway.audit_sink('request', request_id, deepcopy(payload))
-                        with gateway.lifecycle:
-                            require(not gateway.closing and not gateway.cancel_event.is_set(), 'STOPPED', 'Gateway stopped before dispatch')
-                            dispatched = True
-                            pending = gateway.ledger.dispatch_request(request_id,lambda:gateway.transport.start(
-                                payload,dict(request_id=request_id,run_id=run_id,role=dispatch_role,cancel_event=gateway.cancel_event)))
-                            require(isinstance(pending, Future), 'TRANSPORT_CONTRACT', 'Transport start must return a receipt Future')
-                        response = pending.result()
-                    except GateError:
-                        raise
-                    except Exception as error:
-                        raise GateError('TRANSPORT_ERROR', 'Transport lost its receipt; no automatic retry') from error
-                    require(isinstance(response, dict), 'RESPONSE_SCHEMA', 'Transport returned no Responses object')
-                    usage = gateway.ledger.finish_request(request_id, response, late_receipt=True,
-                        terminal=response.get('status') in {'completed', 'incomplete', 'failed', 'cancelled'})
-                    if gateway.audit_sink is not None:
-                        gateway.audit_sink('response', request_id, deepcopy(response))
+                            gateway.audit_sink('response', request_id, deepcopy(response))
+                        if not recoverable:
+                            break
+                        delay = retry_delay(response, attempts)
+                        gateway.ledger.record(run_id, 'retry_scheduled', request_id=request_id,
+                                              attempt=attempts, wait_seconds=delay,
+                                              error_code=response['error']['code'])
+                        require(not gateway.cancel_event.wait(delay), 'STOPPED', 'Cancelled during retry wait')
+                        gateway.ledger.record(run_id, 'retry_ready', request_id=request_id, attempt=attempts)
+                        retry_of = request_id
                     require(usage['complete'], 'USAGE_UNKNOWN', 'Provider usage missing or inconsistent')
                     require(response.get('model') == POLICY['model'], 'MODEL_DRIFT', 'Response model differs from frozen model')
                     if adapter is not None:
@@ -450,6 +471,16 @@ class Gateway:
         self.server.daemon_threads = True
         self.url = f'http://127.0.0.1:{self.server.server_port}'
 
+    def manifest_tools(self, run_id):
+        scope = self.cold_scopes.get(run_id)
+        result = deepcopy(responses_tools(scope))
+        if self.candidate_schema is not None:
+            require(scope == 'optimization', 'TOOL_SCOPE', 'Custom certificates require optimization scope')
+            for tool in result:
+                if target_tool(tool['name']):
+                    tool['parameters'] = schema({'candidate': self.candidate_schema}, ['candidate'])
+        return result
+
     def check_cold_materials(self, run_id):
         scope = self.cold_scopes.get(run_id)
         if scope is None:
@@ -459,8 +490,16 @@ class Gateway:
                 'COLD_RUN_BINDING', 'Cold tool identity or mandatory accounting binding changed')
         require(callable(getattr(host, 'material_inventory', None)), 'COLD_INPUT', 'Canonical cold material inventory is required')
         import hashlib
-        expected = [{'id': name, 'size': len(data), 'sha256': hashlib.sha256(data).hexdigest()}
-                    for name, data in sorted(canonical_inputs(scope).items())]
+        if scope == 'optimization':
+            expected = self.frozen_materials.get(run_id)
+            require(isinstance(expected, list) and bool(expected) and all(
+                isinstance(item, dict) and set(item) == {'id', 'size', 'sha256'}
+                and isinstance(item['id'], str) and isinstance(item['size'], int) and item['size'] > 0
+                and isinstance(item['sha256'], str) and len(item['sha256']) == 64
+                for item in expected), 'COLD_INPUT', 'Optimization requires a frozen task-specific public inventory')
+        else:
+            expected = [{'id': name, 'size': len(data), 'sha256': hashlib.sha256(data).hexdigest()}
+                        for name, data in sorted(canonical_inputs(scope).items())]
         require(host.material_inventory() == expected, 'COLD_INPUT', 'Smoke/formal input must match the canonical cold task exactly')
 
     def start(self):

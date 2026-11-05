@@ -8,8 +8,8 @@ import {spawn} from 'node:child_process';
 const REPO = fileURLToPath(new URL('../../', import.meta.url));
 const SERVICE = fileURLToPath(new URL('./m_service.py', import.meta.url));
 export const WORKFLOW_SOURCE_PIN = Object.freeze({
-  commit: 'ffc582c52585d958bcb3198259ea27c69ee6f8bb',
-  sha256: '9dc11c4f63c7bff9c9ece539331bf10f9007eb5f27f694e005caae7c76399410',
+  commit: '32c68ac2c4f98f0e499bfa99fb6fbf49ec246651',
+  sha256: 'af7beeac207c59eae4c0b1fa8a2712ade6a4d8afccb30b234e6b73a4e4feb061',
 });
 const OLD_SENTENCE = 'No tool or network calls are available.';
 const NEW_SENTENCE = 'Only the supplied benchmark tools are available. Use their common JSON contracts; network access is unavailable. After tool use return the required workflow proposal JSON.';
@@ -74,7 +74,7 @@ export function normalizeResponsesUsage(raw) {
 }
 
 function validateTools(schemas, scope) {
-  if (!['offline', 'formal', 'smoke'].includes(scope)) throw fail('TOOLS_SCOPE', 'A known benchmark tool scope is required');
+  if (!['offline', 'formal', 'smoke', 'optimization'].includes(scope)) throw fail('TOOLS_SCOPE', 'A known benchmark tool scope is required');
   const admitted = new Set(Object.keys(COMMON_TOOL_NAMES).filter(name => scope !== 'smoke' || !['check', 'submit'].includes(name)));
   if (!Array.isArray(schemas) || schemas.length !== admitted.size) {
     throw fail('TOOLS', scope === 'smoke' ? 'All five non-target smoke tool schemas are required' : 'All seven common benchmark tool schemas are required');
@@ -153,7 +153,7 @@ export function createMAdapter({service, transport, tools, toolSchemas, resolved
               instructions: options.system, input, tools: schemas, parallel_tool_calls: false, stream: false, store: false,
               truncation: 'disabled'};
             const inputTokenBound = Buffer.byteLength(JSON.stringify(request)) + 2048;
-            if (inputTokenBound > frozenSpec.context_budget.max_tokens || inputTokenBound + config.maxTokens > contextWindow) {
+            if (toolScope !== 'optimization' && (inputTokenBound > frozenSpec.context_budget.max_tokens || inputTokenBound + config.maxTokens > contextWindow)) {
               throw fail('CONTEXT_BUDGET', 'Full benchmark tool context exceeds the frozen context budget');
             }
             const row = {request_id: randomUUID(), parent_request_id: parentRequestId, status: 'unknown', usage: null, raw_usage: null};

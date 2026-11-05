@@ -111,7 +111,7 @@ class ParserTests(unittest.TestCase):
     def test_unknown_malformed_truncated_and_duplicate(self):
         for raw, code in [(b'', 'SSE_TRUNCATED'), (b'data: [DONE]\n\n', 'SSE_TRUNCATED'),
                           (terminal()[:-1], 'SSE_TRUNCATED'), (b'data: {\n\n', 'SSE_SCHEMA'),
-                          (event('response.future'), 'SSE_UNKNOWN'),
+                          (event('response.future'), 'SSE_TRUNCATED'),
                           (terminal() + terminal(), 'SSE_DUPLICATE'),
                           (terminal() + event('response.created'), 'SSE_DUPLICATE'),
                           (terminal() + b'data: [DONE]\n\n' + terminal(), 'SSE_SCHEMA'),
@@ -184,6 +184,22 @@ class TransportTests(unittest.TestCase):
         self.assertNotIn('fixture-access-secret',json.dumps(evidence))
         self.assertNotIn('fixture-access-secret',str(caught.exception))
         self.assertEqual(len(connection.sent),1)
+
+    def test_optimization_transient_http_receipt_has_safe_retry_after_and_no_replay(self):
+        from ledger import retryable_response, retry_delay
+        rejected = FakeResponse(b'{"error":{"message":"temporary fixture-access-secret"}}')
+        rejected.status = 503
+        original_header = rejected.getheader
+        rejected.getheader = lambda name, default=None: '3' if name.lower() == 'retry-after' else original_header(name, default)
+        transport, connection = self.make(profile='optimization', max_output_tokens=128000)
+        connection.getresponse = lambda: rejected
+        received = transport.start({**payload(), 'max_output_tokens':128000}, self.context()).result(2)
+        self.assertTrue(retryable_response(received), received)
+        self.assertIsNone(received.get('usage'))
+        self.assertEqual(retry_delay(received, 1), 3)
+        self.assertNotIn('fixture-access-secret', json.dumps(received))
+        self.assertNotIn('private', json.dumps(received))
+        self.assertEqual(len(connection.sent), 1)
 
     def test_actual_400_diagnostic_digest_and_no_replay(self):
         # Reconstructed offline from the known JSON diagnostic, verified against
@@ -461,7 +477,7 @@ class TransportTests(unittest.TestCase):
         io_socket = connection.sock
         reading = threading.Event()
         class BlockedResponse(FakeResponse):
-            def readline(self, limit):
+            def read1(self, limit):
                 reading.set()
                 if not io_socket.stopped.wait(1):
                     raise AssertionError('cancellation did not shutdown detached socket')

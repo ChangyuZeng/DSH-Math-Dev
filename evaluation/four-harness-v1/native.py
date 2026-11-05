@@ -309,25 +309,37 @@ class OwnedProcessTree:
                 "whole_process_tree_complete": False, "unobserved_short_lived_parents_possible": True}
 
 
-def run_process(command, *, env, cwd, timeout=30, cancel_event=None):
+def run_process(command, *, env, cwd, timeout=30, cancel_event=None, capture_dir=None):
     """One attempt; promptly cancel only identity-verified owned descendants."""
     from observation import ProcessObserver
-    process = subprocess.Popen([str(x) for x in command], cwd=cwd, env=env, stdin=subprocess.DEVNULL,
-                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
+    captures = []
+    if capture_dir is not None:
+        capture_dir = Path(capture_dir)
+        capture_dir.mkdir(mode=0o700, parents=True, exist_ok=False)
+        captures = [(capture_dir / name).open('x+', encoding='utf-8') for name in ('stdout.log', 'stderr.log')]
+    try:
+        process = subprocess.Popen([str(x) for x in command], cwd=cwd, env=env, stdin=subprocess.DEVNULL,
+                                   stdout=captures[0] if captures else subprocess.PIPE,
+                                   stderr=captures[1] if captures else subprocess.PIPE,
+                                   text=True, start_new_session=True)
+    except BaseException:
+        for capture in captures:
+            capture.close()
+        raise
     owned = OwnedProcessTree(process.pid)
     observer = ProcessObserver(process.pid, sampler=owned.sample).start()
     timed_out = False
     cancelled = False
-    deadline = time.monotonic() + timeout
+    deadline = time.monotonic() + timeout if timeout is not None else None
     stdout = stderr = ""
     try:
         while True:
             try:
-                stdout, stderr = process.communicate(timeout=max(0.001, min(0.2, deadline - time.monotonic())))
+                stdout, stderr = process.communicate(timeout=0.2 if deadline is None else max(0.001, min(0.2, deadline - time.monotonic())))
                 break
             except subprocess.TimeoutExpired:
                 cancelled = cancel_event is not None and cancel_event.is_set()
-                timed_out = not cancelled and time.monotonic() >= deadline
+                timed_out = not cancelled and deadline is not None and time.monotonic() >= deadline
                 if not cancelled and not timed_out and process.poll() is None:
                     continue
                 cleanup = owned.cleanup()
@@ -341,8 +353,19 @@ def run_process(command, *, env, cwd, timeout=30, cancel_event=None):
                     process.stderr.close()
                 break
     finally:
-        cleanup = owned.cleanup()
-        resource_observations = observer.stop()
+        # Capture files receive output directly from the child before cleanup;
+        # cleanup errors can never erase the original logs or justify a rerun.
+        try:
+            if captures:
+                for capture in captures:
+                    capture.flush()
+                    capture.seek(0)
+                stdout, stderr = [capture.read() for capture in captures]
+            cleanup = owned.cleanup()
+        finally:
+            resource_observations = observer.stop()
+            for capture in captures:
+                capture.close()
     require(not cleanup["remaining_known_pids"] and not cleanup["errors"], "PROCESS_CLEANUP",
             "Owned native process cleanup was incomplete: " + json.dumps(cleanup, sort_keys=True))
     return {"returncode": process.poll(), "stdout": stdout, "stderr": stderr, "timed_out": timed_out,

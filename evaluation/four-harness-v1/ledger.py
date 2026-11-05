@@ -21,6 +21,9 @@ POLICY = {"provider": "openai-codex", "model": "gpt-6-astra", "effort": "max"}
 FORMAL_BUDGET = dict(wall_seconds=7200, model_requests=120, total_tokens=1000000,
                      max_output_tokens=16384, context_tokens=65536, tool_calls=500,
                      artifact_bytes=1073741824, tool_timeout_seconds=60)
+OPTIMIZATION_BUDGET = dict(wall_seconds=None, model_requests=120, total_tokens=None,
+                           max_output_tokens=128000, context_tokens=272000, tool_calls=1000000,
+                           artifact_bytes=1073741824, tool_timeout_seconds=None)
 SMOKE_BUDGET = {**FORMAL_BUDGET, 'wall_seconds': 180, 'model_requests': 2, 'total_tokens': 131072,
                 'max_output_tokens': 2048, 'tool_calls': 8,
                 'tool_timeout_seconds': 10, 'artifact_bytes': 16777216}
@@ -104,6 +107,39 @@ def native_identity(raw):
     return result
 
 
+TRANSIENT_CODES = frozenset({'server_is_overloaded', 'server_error', 'internal_server_error',
+    'rate_limit_exceeded', 'service_unavailable_error', 'http_429', 'http_500', 'http_502', 'http_503', 'http_504'})
+
+
+def retryable_response(response):
+    if not isinstance(response, dict) or response.get('status') != 'failed' or response.get('output'):
+        return False
+    error = response.get('error')
+    reasoning = response.get('reasoning')
+    effort = reasoning.get('effort') if isinstance(reasoning, dict) else None
+    return (isinstance(error, dict) and error.get('code') in TRANSIENT_CODES
+            and response.get('model') in (None, POLICY['model']) and effort in (None, POLICY['effort']))
+
+
+def retry_delay(response, attempt):
+    raw = response.get('error', {}).get('headers')
+    headers = {str(k).lower(): v for k, v in raw.items()} if isinstance(raw, dict) else {}
+    for key, scale in [('retry-after-ms', .001), ('retry-after', 1.)]:
+        try:
+            value = float(headers[key]) * scale
+            if math.isfinite(value) and value >= 0:
+                return max(1., value)
+        except (KeyError, ValueError, TypeError):
+            pass
+    if 'retry-after' in headers:
+        try:
+            from email.utils import parsedate_to_datetime
+            return max(1., parsedate_to_datetime(headers['retry-after']).timestamp() - time.time())
+        except (ValueError, TypeError, OverflowError):
+            pass
+    return min(60., 5. * 2 ** min(max(0, attempt - 1), 4))
+
+
 class Ledger:
     def __init__(self, path):
         self.path = Path(path).absolute()
@@ -176,8 +212,12 @@ class Ledger:
         return event
 
     def create_campaign(self, campaign_id, *, max_requests, max_tokens, scope="offline"):
-        require(scope in {"offline", "smoke", "formal"} and integer(max_requests, 1) and integer(max_tokens, 1),
+        require(scope in {"offline", "smoke", "formal", "optimization"} and integer(max_requests, 1)
+                and (integer(max_tokens, 1) or scope == 'optimization' and max_tokens is None),
                 "INVALID_SPEC", "Invalid campaign limits")
+        if scope == 'optimization':
+            require(max_requests <= 120 and max_tokens is None, 'BUDGET',
+                    'Optimization campaigns contain exactly one solve with at most 120 physical requests')
         if scope == "smoke":
             require(max_requests <= 8 and max_tokens <= 524288, "BUDGET", "Smoke campaign ceiling is eight requests and 524288 tokens")
         if scope == "formal":
@@ -192,7 +232,8 @@ class Ledger:
     def create_run(self, run_id, campaign_id, arm, *, budget=None, frozen=None):
         budget = dict(FORMAL_BUDGET if budget is None else budget)
         require(arm in ROLES and set(budget) == set(FORMAL_BUDGET) and
-                all(integer(v, 1) for v in budget.values()), "INVALID_SPEC", "Invalid arm or complete budget")
+                all(integer(v, 1) or key in {'wall_seconds', 'total_tokens', 'tool_timeout_seconds'} and v is None
+                    for key, v in budget.items()), "INVALID_SPEC", "Invalid arm or complete budget")
         require(budget["max_output_tokens"] < budget["context_tokens"], "INVALID_SPEC", "Context must include output")
         with self.transaction() as db:
             campaign = db.execute("SELECT * FROM campaign WHERE id=?", (campaign_id,)).fetchone()
@@ -200,6 +241,13 @@ class Ledger:
             spec = json.loads(campaign["spec"])
             require(not db.execute("SELECT 1 FROM runs WHERE id=?", (run_id,)).fetchone(),
                     "ALREADY_EXISTS", "Never reuse run identity or reset its costs")
+            if spec['scope'] == 'optimization':
+                require(arm == 'M' and budget == OPTIMIZATION_BUDGET, 'BUDGET', 'Optimization budget must be exact')
+                require(not db.execute('SELECT 1 FROM runs WHERE campaign=?', (campaign_id,)).fetchone(),
+                        'NO_REPLACEMENT', 'One optimization solve per campaign')
+            else:
+                require(all(integer(value, 1) for value in budget.values()), 'INVALID_SPEC',
+                        'Legacy scopes retain finite budgets')
             if spec["scope"] in {"smoke", "formal"}:
                 ceiling = SMOKE_BUDGET if spec["scope"] == "smoke" else FORMAL_BUDGET
                 require(all(budget[key] <= ceiling[key] for key in ceiling), "BUDGET", "Run exceeds its frozen scope budget")
@@ -221,7 +269,7 @@ class Ledger:
             budget = json.loads(run["spec"])["budget"]
             elapsed = max(time.time() - run["created"], time.monotonic() - run["monotonic"])
             require(time.monotonic() >= run["monotonic"], "CLOCK_CHANGED", "Monotonic clock changed; reconcile only")
-            require(elapsed < budget["wall_seconds"], "WALL_BUDGET", "Run wall budget exhausted")
+            require(budget['wall_seconds'] is None or elapsed < budget["wall_seconds"], "WALL_BUDGET", "Run wall budget exhausted")
         return run
 
     @staticmethod
@@ -319,7 +367,7 @@ class Ledger:
             'fixed_fields_sha256':digest(fixed(previous)),'prefix_sha256':digest(before),
             'provider_response_id':parent['response_id'],'opaque_item_bindings':opaque,'full_utf8_bound':full}
 
-    def reserve_request(self, run_id, role, payload, *, parent_request_id=None, thread_id=None, native_metadata=None):
+    def reserve_request(self, run_id, role, payload, *, parent_request_id=None, thread_id=None, native_metadata=None, retry_of=None):
         require(isinstance(payload, dict), "INVALID_REQUEST", "Expected Responses request object")
         native = native_identity(native_metadata) if native_metadata is not None else None
         with self.transaction() as db:
@@ -334,6 +382,15 @@ class Ledger:
                     "OUTPUT_CAP", "Explicit bounded output is required")
             require(not payload.get("previous_response_id"), "HIDDEN_CONTEXT", "Full request context is required for reservation")
             lineage_kind = None
+            retry = None
+            if retry_of:
+                retry = db.execute('SELECT * FROM requests WHERE id=?', (retry_of,)).fetchone()
+                receipt = db.execute("SELECT event FROM events WHERE json_extract(event,'$.request_id')=? AND json_extract(event,'$.retryable')=1 ORDER BY seq DESC LIMIT 1", (retry_of,)).fetchone()
+                used = db.execute("SELECT 1 FROM events WHERE json_extract(event,'$.retry_of')=?", (retry_of,)).fetchone()
+                require(budget == OPTIMIZATION_BUDGET and retry is not None and receipt is not None and not used
+                        and retry['run'] == run_id and retry['role'] == role and retry['payload_hash'] == digest(payload)
+                        and retry['state'] in {'unknown', 'finished'}, 'RETRY_IDENTITY',
+                        'Retry requires an unused explicit transient receipt and identical same-role request')
             if native:
                 require(thread_id is None or thread_id == native["thread_id"], "NATIVE_METADATA", "Explicit and native thread identities disagree")
                 thread_id = native["thread_id"]
@@ -350,8 +407,14 @@ class Ledger:
                     require(ancestry["parent_thread"] == native["parent_thread_id"] and ancestry["parent_turn"] == native["parent_turn_id"],
                             "NATIVE_LINEAGE_DRIFT", "Parent ancestry changed within one native turn")
                     spawn_parent = ancestry["origin_parent"]
-                    resolved_parent = self._native_lookup(db, run_id, thread_id, native["turn_id"] or "")
-                    lineage_kind = "same_native_turn_continuation"
+                    if retry is not None:
+                        require(previous['latest_request'] == retry_of and retry['thread'] == thread_id,
+                                'RETRY_IDENTITY', 'Retry must follow the latest failed attempt in this native turn')
+                        resolved_parent = retry['parent']
+                        lineage_kind = 'native_provider_retry'
+                    else:
+                        resolved_parent = self._native_lookup(db, run_id, thread_id, native["turn_id"] or "")
+                        lineage_kind = "same_native_turn_continuation"
                 else:
                     # Codex can reuse a child thread from a later parent turn.
                     # Preserve original spawn evidence, bind each new native turn separately.
@@ -373,14 +436,18 @@ class Ledger:
             rows = db.execute("SELECT * FROM requests WHERE run=?", (run_id,)).fetchall()
             require(len(rows) < budget["model_requests"], "REQUEST_BUDGET", "All-role request budget exhausted")
             input_bound, context_evidence = self._context_bound(db,run_id,role,payload,parent_request_id,thread_id,lineage_kind)
-            require(input_bound + output_cap <= budget['context_tokens'], 'CONTEXT_BUDGET', 'Request exceeds context budget')
+            # UTF-8 length is a byte safety estimate, not measured model tokens.
+            # The optimization profile delegates token-window rejection to the server.
+            if budget != OPTIMIZATION_BUDGET:
+                require(input_bound + output_cap <= budget['context_tokens'], 'CONTEXT_BUDGET', 'Request exceeds context budget')
             reservation = input_bound + output_cap
-            require(self._cost(rows) + reservation <= budget["total_tokens"], "TOKEN_BUDGET", "Cannot reserve next request")
+            require(budget['total_tokens'] is None or self._cost(rows) + reservation <= budget["total_tokens"], "TOKEN_BUDGET", "Cannot reserve next request")
             campaign = db.execute("SELECT * FROM campaign WHERE id=?", (run["campaign"],)).fetchone()
             caps = json.loads(campaign["spec"])
             all_rows = db.execute("SELECT requests.* FROM requests JOIN runs ON requests.run=runs.id WHERE runs.campaign=?",
                                   (run["campaign"],)).fetchall()
-            require(len(all_rows) < caps["max_requests"] and self._cost(all_rows) + reservation <= caps["max_tokens"],
+            require(len(all_rows) < caps["max_requests"] and
+                    (caps['max_tokens'] is None or self._cost(all_rows) + reservation <= caps["max_tokens"]),
                     "CAMPAIGN_BUDGET", "Shared campaign budget exhausted")
             request_id = str(uuid.uuid4())
             db.execute("INSERT INTO requests VALUES(?,?,?,?,?,'reserved',?,?,?,?,NULL,NULL,NULL)",
@@ -399,7 +466,7 @@ class Ledger:
             self._event(db, run_id, "request_reserved", request_id=request_id, role=role,
                         parent_request_id=parent_request_id, thread_id=thread_id, input_bound=input_bound,
                         output_cap=output_cap, reservation=reservation, payload_sha256=digest(payload), model=POLICY,
-                        native_metadata=native, lineage_kind=lineage_kind,context_bound_evidence=context_evidence)
+                        native_metadata=native, lineage_kind=lineage_kind, context_bound_evidence=context_evidence, retry_of=retry_of)
             return request_id
 
     def start_request(self, request_id):
@@ -442,7 +509,7 @@ class Ledger:
             raise failure
         return result
 
-    def finish_request(self, request_id, response, *, terminal=True, source="responses.completed", late_receipt=False):
+    def finish_request(self, request_id, response, *, terminal=True, source="responses.completed", late_receipt=False, recoverable=False):
         """Record a receipt without dispatch; late reconciliation never reopens a run."""
         with self.transaction() as db:
             row = db.execute("SELECT * FROM requests WHERE id=?", (request_id,)).fetchone()
@@ -465,14 +532,18 @@ class Ledger:
             model_ok = response.get("model") == POLICY["model"]
             reasoning = response.get("reasoning")
             actual_effort = reasoning.get("effort") if isinstance(reasoning, dict) else None
+            budget = json.loads(self._run(db, row['run'], active=False)['spec'])['budget']
+            recoverable = bool(recoverable and terminal and retryable_response(response) and budget == OPTIMIZATION_BUDGET)
             reason = None
-            if not usage["complete"]:
+            if recoverable:
+                reason = None
+            elif not usage["complete"]:
                 reason = "usage_unknown"
             elif not model_ok:
                 reason = "response_model_drift"
             elif actual_effort is not None and actual_effort != POLICY["effort"]:
                 reason = "response_effort_drift"
-            elif usage["output_tokens"] > row["output_cap"] or usage["input_tokens"] > row["input_bound"]:
+            elif usage["output_tokens"] > row["output_cap"] or (budget != OPTIMIZATION_BUDGET and usage["input_tokens"] > row["input_bound"]):
                 reason = "reservation_exceeded"
             state = "finished" if usage["complete"] else "unknown"
             db.execute("UPDATE requests SET state=?,usage=?,raw_usage=?,response_id=? WHERE id=?",
@@ -486,7 +557,7 @@ class Ledger:
                         request_id=request_id, role=row["role"], parent_request_id=row["parent"], thread_id=row["thread"],
                         usage=usage, raw_usage=response.get("usage"), actual_model=response.get("model"), actual_effort=actual_effort,
                         provider_request_id=response.get("id"), finish_reason=response.get("status"), anomaly=reason,
-                         late_receipt=late)
+                         late_receipt=late, retryable=recoverable)
             if reason:
                 self._close(db, row["run"], reason, campaign=True)
             return usage
