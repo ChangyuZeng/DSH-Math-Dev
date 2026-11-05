@@ -73,6 +73,19 @@ export function normalizeResponsesUsage(raw) {
   return usage;
 }
 
+// Host telemetry remains in durable tool/ledger logs. Only its model-context
+// serialization is optional; mathematical results and errors remain byte-exact.
+export function serializeToolResult(result, policy = 'full') {
+  if (!['full', 'omit-host-metrics'].includes(policy)) throw fail('CONTEXT_POLICY', 'Unknown context policy');
+  const full = JSON.stringify(result);
+  if (policy === 'full' || !result || Array.isArray(result) || typeof result !== 'object' || !Object.hasOwn(result, 'metrics')) {
+    return {output: full, triggered: false, removed_bytes: 0};
+  }
+  const {metrics, ...visible} = result;
+  const output = JSON.stringify(visible);
+  return {output, triggered: true, removed_bytes: Buffer.byteLength(full) - Buffer.byteLength(output)};
+}
+
 function validateTools(schemas, scope) {
   if (!['offline', 'formal', 'smoke', 'optimization'].includes(scope)) throw fail('TOOLS_SCOPE', 'A known benchmark tool scope is required');
   const admitted = new Set(Object.keys(COMMON_TOOL_NAMES).filter(name => scope !== 'smoke' || !['check', 'submit'].includes(name)));
@@ -96,7 +109,10 @@ function validateTools(schemas, scope) {
  * conservatively unknown. tools({name,arguments,callId,signal}) invokes the shared
  * tool implementation with dotted names and returns its JSON value unchanged.
  */
-export function createMAdapter({service, transport, tools, toolSchemas, resolvedModel, contextWindow, toolScope = 'offline'}) {
+export function createMAdapter({service, transport, tools, toolSchemas, resolvedModel, contextWindow, toolScope = 'offline', contextPolicy = 'full'}) {
+  if (!['full', 'omit-host-metrics'].includes(contextPolicy) || (toolScope !== 'optimization' && contextPolicy !== 'full')) {
+    throw fail('CONTEXT_POLICY', 'Experimental context policy requires optimization scope');
+  }
   if (!service?.call || typeof transport !== 'function' || typeof tools !== 'function') {
     throw fail('CONFIG', 'A Python workflow service, metered transport, and common tools callback are required');
   }
@@ -206,7 +222,10 @@ export function createMAdapter({service, transport, tools, toolSchemas, resolved
               await emit({type: 'tool_started', request_id: row.request_id, call_id: toolCall.call_id, name,
                 arguments_sha256: hash(canonical(args))});
               const result = await tools({name, arguments: args, callId: toolCall.call_id, requestId: row.request_id, signal});
-              const output = JSON.stringify(result);
+              const projection = serializeToolResult(result, contextPolicy);
+              const output = projection.output;
+              if (projection.triggered) await emit({type: 'context_projection', policy: contextPolicy,
+                request_id: row.request_id, call_id: toolCall.call_id, removed_bytes: projection.removed_bytes});
               if (output === undefined) throw fail('TOOL_RESULT', 'Common tools must return a JSON value');
               await emit({type: 'tool_finished', request_id: row.request_id, call_id: toolCall.call_id, name,
                 result_sha256: hash(canonical(result)), wall_seconds: (performance.now() - started) / 1000});

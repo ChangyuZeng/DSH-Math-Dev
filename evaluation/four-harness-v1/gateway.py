@@ -440,6 +440,10 @@ class Gateway:
                     if request_id:
                         with gateway.lifecycle:
                             gateway.cancel_event.set()
+                            fragments=getattr(error,'partial_output_events',[])
+                            if fragments and gateway.audit_sink is not None:
+                                gateway.audit_sink('partial_response',request_id,{'output_events':deepcopy(fragments),
+                                    'terminal':False,'usage':None,'uncommitted':True})
                             partial=getattr(error,'observed_response',None)
                             if isinstance(partial,dict):
                                 # Framing/HTTP failure does not erase counters already seen.

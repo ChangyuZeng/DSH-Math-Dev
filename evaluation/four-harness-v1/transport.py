@@ -154,20 +154,23 @@ class ReceiptFuture(Future):
 
 def parse_sse(source, *, max_bytes=8 * 1024 * 1024, max_events=100000,
               max_event_bytes=2 * 1024 * 1024, cancel_event=None):
-    observed=[]
+    observed=[]; partial_output_events=[]
     try:
         return _parse_sse(source,max_bytes=max_bytes,max_events=max_events,
-                          max_event_bytes=max_event_bytes,cancel_event=cancel_event,observed=observed)
+                          max_event_bytes=max_event_bytes,cancel_event=cancel_event,observed=observed,
+                          partial_output_events=partial_output_events)
     except Exception as original:
         from ledger import Ledger
         error=original if isinstance(original,GateError) else GateError('SSE_SCHEMA','Invalid upstream framing; no retry')
+        if partial_output_events:
+            error.partial_output_events=deepcopy(partial_output_events)
         if observed:
             error.observed_response=deepcopy(max(observed,key=lambda value:Ledger._known_lower_bound(normalize_usage(value.get('usage'),terminal=False))))
             error.observed_responses=deepcopy(observed)
         raise error from None
 
 
-def _parse_sse(source, *, max_bytes, max_events, max_event_bytes, cancel_event, observed):
+def _parse_sse(source, *, max_bytes, max_events, max_event_bytes, cancel_event, observed, partial_output_events):
     """Bound memory/bytes/events; retain complete terminal data on cancellation.
 
     EOF before a terminal, malformed/unknown events and duplicate terminals fail.
@@ -241,6 +244,10 @@ def _parse_sse(source, *, max_bytes, max_events, max_event_bytes, cancel_event, 
             observed.append(event['response'])
         require(not names or names == [kind.encode()], 'SSE_SCHEMA', 'SSE event name disagrees with its data')
         require(terminal is None, 'SSE_DUPLICATE', 'Event followed a terminal receipt')
+        if kind in {'response.output_item.added','response.output_item.done','response.output_text.delta',
+                    'response.output_text.done','response.function_call_arguments.delta','response.function_call_arguments.done'}:
+            # Bounded by the same aggregate wire limit; evidence only, never a receipt/tool dispatch.
+            partial_output_events.append(event)
         if kind in TERMINALS:
             response = event.get('response')
             require(isinstance(response, dict) and response.get('status') == TERMINALS[kind],
@@ -446,6 +453,7 @@ class HostTransport:
 
         def read():
             result = error_code = upstream = observed_response = None
+            partial_output_events=[]
             try:
                 io_socket.settimeout(self.response_timeout)
                 upstream = connection.getresponse()
@@ -535,6 +543,7 @@ class HostTransport:
             except GateError as error:
                 error_code = error.code
                 observed_response = getattr(error,'observed_response',observed_response)
+                partial_output_events=getattr(error,'partial_output_events',[])
             except Exception:
                 error_code = 'TRANSPORT_READ'
             finally:
@@ -564,6 +573,8 @@ class HostTransport:
                 error_code = None
             if error_code:
                 failure=GateError(error_code, 'Host receipt unavailable or invalid; no automatic retry')
+                if partial_output_events:
+                    failure.partial_output_events=partial_output_events
                 if observed_response is not None:
                     failure.observed_response=observed_response
                 future.set_exception(failure)

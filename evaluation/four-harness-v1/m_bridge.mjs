@@ -193,6 +193,7 @@ export async function runBridge(argv, {env = process.env, stdin = process.stdin,
   };
   const adapter = createMAdapter({service, transport, tools: bindings.tools,
     toolSchemas: manifest.tools, toolScope: manifest.scope,
+    contextPolicy: args.optimization ? (process.env.FOUR_HARNESS_CONTEXT_POLICY ?? 'full') : 'full',
     resolvedModel: manifest.model_policy, contextWindow: manifest.context_window});
   await adapter.initialize({runId: args['run-id'], problem: bootstrap.problem ?? syntheticProblem(),
     modelPolicy: manifest.model_policy, budget: bootstrap.budget ?? {
@@ -200,13 +201,15 @@ export async function runBridge(argv, {env = process.env, stdin = process.stdin,
       max_output_tokens: manifest.budget?.max_output_tokens},
     contextBudget: bootstrap.contextBudget ?? {max_tokens: args.optimization ? null : manifest.context_window - manifest.budget?.max_output_tokens},
     stageGoal: bootstrap.stageGoal ?? 'Record a candidate for 2 + 3 and its unreviewed obligation using only the synthetic fixture.'});
+  const moduleEvents = [];
   let result, failure;
-  try { result = await adapter.run({signal}); }
+  try { result = await adapter.run({signal, emit: async event => { moduleEvents.push(event); }}); }
   catch (caught) {
     failure = {code: caught.code ?? 'WORKFLOW_FAILED', message: caught.message};
     result = {run: await adapter.read()};
   }
   const evidence = {...result, ok: !failure, error: failure ?? null, research: await service.inspect(),
+    module_events: moduleEvents, context_policy: args.optimization ? (env.FOUR_HARNESS_CONTEXT_POLICY ?? 'full') : 'full',
     physical_requests: physicalRequests, workflow_root: service.root, offline: manifest.offline, execution: execution ?? null,
     mechanisms: {loop: 'current_executeLoop', resume_dispatch: false, parallel_dispatch: false, compaction: false,
       durable_reconciliation_without_replay: true}};

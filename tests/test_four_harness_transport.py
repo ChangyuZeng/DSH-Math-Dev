@@ -93,6 +93,14 @@ class ParserTests(unittest.TestCase):
             parse_sse(BytesIO(raw), **bounds)
         self.assertEqual(caught.exception.code, code)
 
+    def test_truncated_candidate_deltas_are_retained_as_uncommitted_evidence(self):
+        raw=event('response.output_text.delta',delta='{"values":[1')
+        with self.assertRaises(GateError) as caught:
+            parse_sse(BytesIO(raw))
+        self.assertEqual(caught.exception.code,'SSE_TRUNCATED')
+        self.assertEqual(caught.exception.partial_output_events,[{'type':'response.output_text.delta','delta':'{"values":[1'}])
+        self.assertFalse(hasattr(caught.exception,'observed_response'))
+
     def test_terminal_statuses_retain_exact_usage_model_and_reasoning(self):
         for status in ('completed', 'incomplete', 'failed', 'cancelled'):
             value = response(status, usage=None, reasoning=None, model='raw-provider-model')
@@ -156,6 +164,16 @@ class TransportTests(unittest.TestCase):
 
     def context(self, request_id='offline-request'):
         return dict(request_id=request_id, run_id='M1', role='worker', cancel_event=threading.Event())
+
+    def test_partial_candidate_survives_transport_future_without_replay(self):
+        raw=event('response.function_call_arguments.delta',delta='{"candidate":{"values":[1]}}')
+        transport,connection=self.make(FakeConnection(raw=raw))
+        with self.assertRaises(GateError) as caught:
+            transport.start(payload(),self.context()).result(timeout=1)
+        self.assertEqual(caught.exception.code,'SSE_TRUNCATED')
+        self.assertEqual(caught.exception.partial_output_events[0]['delta'],'{"candidate":{"values":[1]}}')
+        self.assertEqual(len(connection.sent),1)
+        self.assertFalse(hasattr(caught.exception,'observed_response'))
 
     def test_terminal_usage_survives_later_invalid_stream_and_duplicate(self):
         value=response(usage={'input_tokens':40000,'output_tokens':2,'total_tokens':40002})
