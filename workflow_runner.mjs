@@ -81,7 +81,7 @@ export async function executeStep({call, llm, projectId, runId, expectedRev, kin
     // Do not replay a request whose result or accounting is uncertain.
     const latest = await call('workflow-state', {action: 'read', project_id: projectId, run_id: runId});
     const active = latest.actions.find(row => row.action_id === actionId);
-    if (active?.status === 'running' && usage) {
+    if (active?.status === 'running' && (usage || text)) {
       await call('workflow-state', {action: 'propose', project_id: projectId, run_id: runId,
         expected_rev: latest.rev, operation_id: randomUUID(), action_id: actionId,
         proposal: {invalid_output: text, error: String(error.message ?? error)}, usage});

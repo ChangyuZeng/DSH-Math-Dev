@@ -42,6 +42,15 @@ test('stream error without accounting becomes unknown, never retried', async () 
   const f = fixture({chunks: [Error('stream lost')]}); await assert.rejects(executeStep(f.options), /stream lost/);
   assert.equal(f.calls.filter(([, a]) => a.action === 'fail').length, 1);
 });
+test('partial text survives interruption with unknown usage and no replay', async () => {
+  const f = fixture({chunks: [{type: 'text-delta', text: '{"candidate":"durable"'}, Error('stream lost')]});
+  await assert.rejects(executeStep(f.options), /stream lost/);
+  const saved = f.calls.find(([, a]) => a.action === 'propose')?.[1];
+  assert.equal(saved?.proposal.invalid_output, '{"candidate":"durable"');
+  assert.equal(saved?.usage, null);
+  assert.equal(f.calls.filter(([, a]) => a.action === 'reserve').length, 1);
+  assert.equal(f.calls.some(([action]) => action === 'workflow-commit'), false);
+});
 test('partial known usage is retained but marked incomplete', async () => {
   const f = fixture({chunks: [{type: 'usage', usage: {inputTokens: 20, outputTokens: 3}}, Error('stream lost')]});
   await assert.rejects(executeStep(f.options), /stream lost/);
