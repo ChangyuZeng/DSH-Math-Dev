@@ -25,6 +25,16 @@ export function verificationInput(snapshotText, candidate, feedback = null) {
   return {problem, candidate, declared_premises: premises, ...(feedback === null ? {} : {public_feedback: feedback})};
 }
 
+/** Fresh revision drops generation history, never the current action's task requirements. */
+function revisionInput(snapshotText, candidate, feedback) {
+  const snapshot = parseExact(snapshotText);
+  if (typeof snapshot.stage_goal !== 'string' || !snapshot.stage_goal.trim()) {
+    throw fault('CONTEXT_STAGE_GOAL', 'Fresh revision requires the frozen stage goal');
+  }
+  return {action: 'revise', ...verificationInput(snapshotText, candidate, feedback),
+    stage_goal: snapshot.stage_goal, output_contract: snapshot.output_contract};
+}
+
 export async function executeToolStep({call, modelPort, toolPort, projectId, runId, expectedRev, kind,
   targetRef = null, dependencyRefs = [], routeId = null, signal, authorize = async () => {}}) {
   let run = await call('workflow-state', {action: 'read', project_id: projectId, run_id: runId});
@@ -165,8 +175,7 @@ export async function executeToolStep({call, modelPort, toolPort, projectId, run
         }
         if (nextRevision) {
           await journal({type: 'revision_triggered', basis: 'program', chain: nextRevision.chain, revision: nextRevision.count});
-          input = userInput(canonical({action: 'revise', ...verificationInput(snapshot.text, nextRevision.candidate, nextRevision.feedback),
-            output_contract: parseExact(snapshot.text).output_contract,
+          input = userInput(canonical({...revisionInput(snapshot.text, nextRevision.candidate, nextRevision.feedback),
             instruction: 'Revise the candidate using these specific failed constraints. Persist useful intermediate work, and explicitly submit a final certificate.'}));
           role = 'reviser';
         }
@@ -210,8 +219,7 @@ export async function executeToolStep({call, modelPort, toolPort, projectId, run
             revisions.set(chain, count + 1);
             await journal({type: 'revision_triggered', basis: 'model_advisory', candidate_sha256: candidateHash,
               chain, revision: count + 1, public_feedback: review});
-            input = userInput(canonical({action: 'revise', ...verificationInput(snapshot.text, {changes: proposal.changes}, review),
-              output_contract: parseExact(snapshot.text).output_contract}));
+            input = userInput(canonical(revisionInput(snapshot.text, {changes: proposal.changes}, review)));
             role = 'reviser';
             continue;
           }

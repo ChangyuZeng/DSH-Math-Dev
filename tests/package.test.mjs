@@ -7,7 +7,7 @@ const json = name => JSON.parse(readFileSync(new URL(name, root), 'utf8'));
 
 test('rc5 preview declares its runtime target and includes the admission module', () => {
   const manifest = json('package.json');
-  assert.equal(manifest.version, '0.12.0');
+  assert.equal(manifest.version, '0.12.1');
   for (const file of ['workflow_v2.py', 'workflow_ports.mjs', 'workflow_executor.mjs', 'workflow_tool_store.py', 'workflow_candidates.py', 'workflow_host.mjs', 'workflow_runtime.py', 'workflow_runtime.mjs', 'contracts/workflow-v2.md', 'evaluation/optimization-v1/certificates.py']) {
     assert.ok(manifest.files.includes(file), `${file} must be packaged`);
     assert.ok(statSync(new URL(file, root)).isFile());

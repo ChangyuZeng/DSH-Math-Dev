@@ -28,6 +28,12 @@ A candidate is archived before checking or verification: raw arguments, canonica
 
 For B, a new candidate with a qualified failed program check triggers a fresh reviser using public failed constraints. A prose candidate gets a separate verifier context containing only the frozen problem, candidate and declared premises; generation history and previous review traces are absent. Each revision chain has at most two revisions, shared across program and prose paths. Inconclusive checks remain inconclusive. Repeated unchanged candidates and the revision limit stop that chain. All candidate archival and tool facilities are common to A and B.
 
+Both program-triggered and advisory-triggered revisers retain the current action's complete `stage_goal` and `output_contract`. Freshness removes generation history and unrelated reviews, not public task requirements. A missing or empty stage goal prevents dispatch of the fresh revision. The verifier's narrower advisory context remains separate.
+
+The public D5/D6 recovery instructions require the arrays themselves as the top-level JSON values: D5 rows have `N+1` nonnegative integers; D6 matrices have the same square dimensions as `A` and integers in `[0,p)`. Manifest hashes cover exact file bytes. These auxiliary requirements do not alter the mathematical certificate checker. A raw recovery failure remains a failure unless separately qualified evidence establishes otherwise.
+
+An audit pause remains in force when an already-started solve finishes, including the last slot of a phase. Finishing that slot cannot itself open the promotion gate. Machine checks for matching source, isolation and checker identity are not a certificate that no differential implementation defect exists; independent findings can disqualify the comparison.
+
 ## Interrupted runs and exports
 
 A live runtime may serve successive manual steps while its process remains open. Its durable lineage claim is never removed to obtain a fresh budget. A used or interrupted runtime cannot cold-start a pristine gateway under the same or continued lineage; retained logs support reconciliation, not automatic effect replay. The UI consequently does not offer v2 continuation as a working resume feature. Preparation of a separate run requires a new explicit user action and is not an experiment retry.

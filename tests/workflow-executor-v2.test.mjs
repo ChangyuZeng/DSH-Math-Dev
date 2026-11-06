@@ -5,7 +5,8 @@ import {parseExact, canonical, physicalProjection, createMeteredPorts, hash} fro
 
 const clone = value => parseExact(JSON.stringify(value));
 const problem = {id: 'P', rev: 2, kind: 'Problem', data: {statement: 'Frozen problem'}, origin: {secret: 'generation-secret'}};
-const context = {problem_ref: {id: 'P', rev: 2}, records: [
+const context = {problem_ref: {id: 'P', rev: 2},
+  stage_goal: 'Retain every intermediate row and recovery.json with format dsh-math-workflow-recovery-v2, resume_index and ordered entries.', records: [
   {id: 'ancestor', rev: 1, kind: 'Problem', data: {statement: 'Wrong ancestor'}}, problem,
   {id: 'N', rev: 3, kind: 'Note', data: {body: 'Declared premise'}, origin: {secret: 'generation-secret'}},
   {id: 'unused', rev: 1, kind: 'Note', data: {body: 'prior-review-secret'}},
@@ -18,13 +19,13 @@ const response = value => ({model: 'gpt-6-astra', status: 'completed', output: [
 const toolResponse = (name, callId, candidate = {values: [1]}) => ({model: 'gpt-6-astra', status: 'completed',
   output: [{type: 'function_call', name, call_id: callId, arguments: JSON.stringify(name === 'compute' ? {code: 'print(1)'} : {candidate})}]});
 
-function fixture(responses, {policy = 'model-directed-v1', dispatch, commitFailure = false} = {}) {
+function fixture(responses, {policy = 'model-directed-v1', dispatch, commitFailure = false, snapshot = context} = {}) {
   const requests = [], effects = [], receipts = new Map(), candidateCalls = [];
   let state = {run_id: 'run', rev: 1, status: 'running', actions: [], execution_events: [], physical_requests: [],
     spec: {format: 'dsh-math-workflow-v2', problem_ref: context.problem_ref, model_policy: {provider: 'openai-codex', model: 'gpt-6-astra', effort: 'max'},
       execution: {verification_policy: policy, max_revisions: 2, checker: {code_sha256: 'a'.repeat(64)}}, budget: {requests: 120, max_output_tokens: 128000}}};
   const call = async (action, args) => {
-    if (action === 'workflow-context') return {text: JSON.stringify(context)};
+    if (action === 'workflow-context') return {text: JSON.stringify(snapshot)};
     if (action === 'workflow-candidate') {
       candidateCalls.push(clone(args));
       return {candidate_sha256: hash(args.candidate), evidence_ref: {id: 'E', rev: 1}};
@@ -85,6 +86,47 @@ test('fresh verification uses the exact problem and declared premises only', () 
   assert.equal(value.problem.rev, 2); assert.equal(value.problem.data.statement, 'Frozen problem');
   assert.deepEqual(value.declared_premises.map(item => item.id), ['N']);
   assert.doesNotMatch(JSON.stringify(value), /secret|Wrong ancestor|origin/);
+});
+
+test('program-triggered fresh revision retains the full frozen task requirements', async () => {
+  const f = fixture([toolResponse('check', 'failed'), toolResponse('submit', 'final')], {
+    policy: 'verify-revise-v1', dispatch: name => name === 'submit'
+      ? {ok: true, result: {independent_check: {legal: true, target_met: true}}}
+      : {ok: true, result: {legal: false, target_met: false}},
+  });
+  await f.execute();
+  assert.deepEqual(f.requests.map(item => item.role), ['worker', 'reviser']);
+  const initial = parseExact(f.requests[0].request.input[0].content[0].text);
+  const input = f.requests[1].request.input;
+  assert.equal(input.length, 1);
+  const revised = parseExact(input[0].content[0].text);
+  assert.equal(revised.stage_goal, initial.stage_goal);
+  assert.deepEqual(revised.output_contract, initial.output_contract);
+  assert.equal(revised.problem.rev, initial.problem_ref.rev);
+  assert.doesNotMatch(JSON.stringify(input), /secret|Wrong ancestor|origin/);
+});
+
+test('advisory-triggered fresh revision retains the same task without generation history', async () => {
+  const f = fixture([response(proposal()), response({verdict: 'fail', gaps: ['Specific public gap']}),
+    response({...proposal(2), changes: []})], {policy: 'verify-revise-v1'});
+  await f.execute();
+  assert.deepEqual(f.requests.map(item => item.role), ['worker', 'verifier', 'reviser']);
+  const initial = parseExact(f.requests[0].request.input[0].content[0].text);
+  const input = f.requests[2].request.input;
+  assert.equal(input.length, 1);
+  const revised = parseExact(input[0].content[0].text);
+  assert.equal(revised.stage_goal, initial.stage_goal);
+  assert.deepEqual(revised.output_contract, initial.output_contract);
+  assert.deepEqual(revised.declared_premises.map(item => item.id), ['N']);
+  assert.doesNotMatch(JSON.stringify(input), /secret|Wrong ancestor|origin/);
+});
+
+test('missing stage requirements fail before dispatching a fresh reviser', async () => {
+  const snapshot = clone(context);
+  delete snapshot.stage_goal;
+  const f = fixture([toolResponse('check', 'failed')], {policy: 'verify-revise-v1', snapshot});
+  await assert.rejects(f.execute(), error => error.code === 'CONTEXT_STAGE_GOAL');
+  assert.equal(f.requests.length, 1);
 });
 
 test('all physical retry rows remain visible and optional usage is nullable', () => {

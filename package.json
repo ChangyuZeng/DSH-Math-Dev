@@ -1,6 +1,6 @@
 {
   "name": "dsh-math",
-  "version": "0.12.0",
+  "version": "0.12.1",
   "description": "Conversational mathematical research records, route history, original materials and human review in DSH",
   "engines": {
     "dsh": "0.2.1-rc.5"

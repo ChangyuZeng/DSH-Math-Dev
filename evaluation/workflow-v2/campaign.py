@@ -238,7 +238,9 @@ class Campaign:
             self._pause(state, result['immediate'])
         elif state['infra_streak'] >= 2:
             self._pause(state, 'two_consecutive_infrastructure_terminations')
-        elif state['cursor'] == len(self.protocol['queue']) or self.protocol['queue'][state['cursor']]['phase'] != state['phase']:
+        elif state['status'] == 'running' and (state['cursor'] == len(self.protocol['queue']) or
+                                              self.protocol['queue'][state['cursor']]['phase'] != state['phase']):
+            # Closing an in-flight slot must not override an independent audit pause.
             state['status'] = 'awaiting_gate'
         return result
 

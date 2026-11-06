@@ -14,7 +14,7 @@ sys.path.insert(0, str(SOURCE / 'evaluation' / 'workflow-v2'))
 from campaign import Campaign, positive_gate, paired_metric, usage_projection, unknown_result, mechanism_active
 from protocol import GATE, pair_queue, digest, public_tasks, validate_qualification, build_protocol, REQUIRED_PREFLIGHT, campaign_root
 from recovery import verify_recovery, fingerprint, matrix_mul
-from workflow_runtime import tool_contracts
+from workflow_runtime import tool_contracts, qualified_spec
 from driver import immediate_failure
 from schema import StoreError
 
@@ -194,6 +194,24 @@ class QueueTests(unittest.TestCase):
         self.assertTrue(self.queue.read()['B_default_on'])
         self.assertEqual(self.queue.read()['cursor'], 54)
 
+    def test_audit_pause_survives_the_last_inflight_development_slot(self):
+        self.connected()
+        for _ in range(35):
+            slot = self.queue.claim_slot()
+            self.queue.finish_slot(result(slot, tokens=99 if slot['arm'] == 'B' else 100))
+        active = self.queue.claim_slot()
+        self.queue.pause('audited_differential_workload_contract')
+        self.queue.finish_slot(result(active, tokens=99 if active['arm'] == 'B' else 100))
+        state = self.queue.read()
+        self.assertEqual(state['status'], 'paused')
+        self.assertIsNone(state['active_slot'])
+        self.assertEqual(len(state['results']), 36)
+        self.assertFalse(state['B_default_on'])
+        with self.assertRaises(StoreError):
+            self.queue.evaluate()
+        with self.assertRaises(StoreError):
+            self.queue.claim_slot()
+
     def test_negative_development_never_opens_holdout(self):
         self.connected()
         for _ in range(36):
@@ -297,6 +315,20 @@ class RecoveryTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name).resolve()
+
+    def test_recovery_file_schema_is_explicit_and_shared_by_both_policies(self):
+        for task_id in ('D5', 'D6'):
+            a = qualified_spec('fixture-project', task_id, 'model-directed-v1')
+            b = qualified_spec('fixture-project', task_id, 'verify-revise-v1')
+            self.assertEqual(a['execution'].pop('verification_policy'), 'model-directed-v1')
+            self.assertEqual(b['execution'].pop('verification_policy'), 'verify-revise-v1')
+            self.assertEqual(a, b)
+            goal = a['stage_goal']
+            self.assertIn('bare JSON array', goal)
+            self.assertIn('N+1 nonnegative integers', goal)
+            self.assertIn('0 <= value < p', goal)
+            self.assertIn('exact file bytes', goal)
+            self.assertIn('does not change mathematical certificate acceptance', goal)
 
     def persist(self, task_id, rows, start, checkpoint):
         entries = []

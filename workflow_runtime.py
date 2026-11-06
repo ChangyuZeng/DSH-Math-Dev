@@ -92,7 +92,9 @@ def qualified_spec(project_id, task_id, policy='model-directed-v1', problem_ref=
     contract = certificate_contract(task_id)
     stage_goal = 'Construct and explicitly submit an exact certificate for the frozen public task. Preserve useful intermediate work in the isolated workspace.'
     if task_id in {'D5', 'D6'}:
-        stage_goal += (' For separate workflow recovery evidence, retain every intermediate DP row (D5, indices 1..m) or squaring-chain matrix (D6, indices 0..bit_length(exponent)-1) as JSON files. Write recovery.json with format dsh-math-workflow-recovery-v2, task_id, resume_index (a proper interior checkpoint), and ordered entries [{index,path,sha256}] identifying the persisted files. This evidence does not change mathematical certificate acceptance.')
+        stage_goal += (' For separate workflow recovery evidence, retain every intermediate DP row (D5, indices 1..m) or squaring-chain matrix (D6, indices 0..bit_length(exponent)-1) as JSON files.'
+                       ' Each D5 file must be a bare JSON array of N+1 nonnegative integers; each D6 file must be a bare JSON array of size-by-size row arrays with integers satisfying 0 <= value < p, where size is the number of rows of A. The top-level value is the array itself.'
+                       ' Write recovery.json with format dsh-math-workflow-recovery-v2, task_id, resume_index (a proper interior checkpoint), and ordered entries [{index,path,sha256}] identifying the persisted files. sha256 is the SHA-256 of the exact file bytes. This evidence does not change mathematical certificate acceptance.')
     return {'format': 'dsh-math-workflow-v2', 'project_id': project_id,
             'problem_ref': problem_ref or {'id': 'P', 'rev': 1}, 'model_policy': deepcopy(MODEL),
             'budget': {'requests': 120, 'total_tokens': None, 'max_output_tokens': 128000},
