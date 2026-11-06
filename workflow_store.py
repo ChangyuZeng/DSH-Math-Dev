@@ -28,7 +28,9 @@ MAX_BYTES = 1024 * 1024
 
 def validate_spec(spec):
     require(type(spec) is dict, "INVALID_SCHEMA", "Expected workflow spec")
-    fields(spec, "format project_id problem_ref model_policy budget tools context_budget stage_goal" + (" routes" if "routes" in spec else ""))
+    v2 = spec.get('format') == 'dsh-math-workflow-v2'
+    fields(spec, "format project_id problem_ref model_policy budget tools context_budget stage_goal" +
+           (" execution" if v2 else "") + (" routes" if "routes" in spec else ""))
     routes = spec.get("routes", [])
     require(type(routes) is list and len(routes) <= 3, "INVALID_SCHEMA", "At most three routes")
     route_ids = set()
@@ -39,7 +41,7 @@ def validate_spec(spec):
         route_ids.add(route["id"])
         for key in ("title", "goal", "stop_condition", "reopen_condition"):
             string(route[key])
-    require(spec["format"] == FORMAT, "UNKNOWN_SCHEMA", "Unsupported workflow format")
+    require(spec["format"] == FORMAT or v2, "UNKNOWN_SCHEMA", "Unsupported workflow format")
     identifier(spec["project_id"])
     ref(spec["problem_ref"])
     fields(spec["model_policy"], "provider model effort")
@@ -57,11 +59,15 @@ def validate_spec(spec):
     require(type(spec["tools"]) is list, "INVALID_SCHEMA", "Expected selected tools")
     names = set()
     for tool in spec["tools"]:
-        fields(tool, "name version read_only")
+        fields(tool, "name version read_only" + (" schema_sha256 effect" if v2 else ""))
         string(tool["name"])
         string(tool["version"])
-        require(tool["read_only"] is True and tool["name"] not in names, "INVALID_SCHEMA", "Tools must be unique and read-only")
+        require(type(tool['read_only']) is bool and (v2 or tool["read_only"] is True)
+                and tool["name"] not in names, "INVALID_SCHEMA", "Tools must be unique and capabilities explicit")
         names.add(tool["name"])
+    if v2:
+        from workflow_v2 import validate_execution
+        validate_execution(spec)
     require(len(canonical(spec)) <= MAX_BYTES, "TOO_LARGE", "Workflow spec exceeds limit")
 
 
@@ -147,7 +153,7 @@ class WorkflowStore:
         require(len(canonical(request)) <= 2 * MAX_BYTES, "TOO_LARGE", "Workflow request exceeds limit")
         request = deepcopy(request)
         action, project_id = request.get("action"), request.get("project_id")
-        require(action in {"list", "read", "prepare", "start", "pause", "cancel", "reserve", "queue", "claim", "propose", "commit", "fail", "reconcile", "continue"},
+        require(action in {"list", "read", "prepare", "start", "pause", "cancel", "reserve", "queue", "claim", "propose", "commit", "fail", "reconcile", "continue", "account", "event", "grant_chat"},
                 "INVALID_SCHEMA", "Unknown workflow action")
         identifier(project_id)
         writable = action not in {"list", "read"}
@@ -196,10 +202,23 @@ class WorkflowStore:
                         run_id = request["new_run_id"]
                         identifier(run_id)
                         require(run_id not in state["runs"], "CONFLICT", "New run already exists")
-                    run = {"format": FORMAT, "run_id": run_id, "project_id": project_id, "rev": 1,
+                    parent_run = run
+                    run = {"format": spec['format'], "run_id": run_id, "project_id": project_id, "rev": 1,
                            "spec": spec, "parent": parent, "status": "prepared", "scientific_status": "candidate_pending_review",
                            "actions": [], "usage": {"requests": 0, "total_tokens": 0, "complete": True},
                            "reason": None, "created_at": now(), "updated_at": now()}
+                    if spec['format'] == 'dsh-math-workflow-v2':
+                        from workflow_v2 import refresh_usage
+                        if parent_run is not None:
+                            require(parent_run['spec'] == spec, 'LINEAGE_POLICY', 'Continuation must retain its frozen v2 policy and quota')
+                        run['lineage_root_run_id'] = parent_run['lineage_root_run_id'] if parent_run else run_id
+                        run['physical_requests'] = deepcopy(parent_run['physical_requests']) if parent_run else []
+                        run['execution_events'] = deepcopy(parent_run.get('execution_events', [])) if parent_run else []
+                        if parent_run and parent_run.get('accounting_unreconciled'):
+                            run['accounting_unreconciled'] = True
+                        refresh_usage(run)
+                    elif parent_run is not None:
+                        require(parent_run['spec']['format'] == FORMAT, 'LINEAGE_POLICY', 'Cannot reset v2 quota through a v1 continuation')
                 else:
                     require(run is not None, "NOT_FOUND", "Workflow run not found")
                     self._transition(run, request, base, research)
@@ -209,6 +228,9 @@ class WorkflowStore:
 
     @staticmethod
     def _can_call(run):
+        if run['spec']['format'] == 'dsh-math-workflow-v2':
+            from workflow_v2 import can_call
+            return can_call(run)
         budget = run["spec"]["budget"]
         return (run["usage"]["complete"] and run["usage"]["requests"] < budget["requests"]
                 and (budget["total_tokens"] is None or run["usage"]["total_tokens"] < budget["total_tokens"])
@@ -217,14 +239,31 @@ class WorkflowStore:
 
     def _transition(self, run, request, base, research):
         action = request["action"]
+        v2 = run['spec']['format'] == 'dsh-math-workflow-v2'
         active = next((a for a in run["actions"] if a["status"] in {"queued", "running", "proposed"}), None)
+        if action == 'grant_chat':
+            fields(request, base + ' session_id allowed')
+            require(v2 and type(request['allowed']) is bool, 'INVALID_SCHEMA', 'Explicit v2 chat capability required')
+            identifier(request['session_id'])
+            require(active is None, 'INVALID_STATE', 'Wait for the active action before changing chat authority')
+            run['chat_execution'] = {'session_id': request['session_id'], 'allowed': request['allowed']}
+            return
+        if action in {'account', 'event'}:
+            require(v2, 'UNKNOWN_SCHEMA', 'Physical receipts and execution events require workflow v2')
+            from workflow_v2 import account, record_event
+            (account if action == 'account' else record_event)(run, request, base)
+            return
         if action in {"start", "pause", "cancel", "reconcile"}:
             fields(request, base)
             if action == "reconcile":
                 require(active is not None and active["status"] == "running", "INVALID_STATE", "Only a running claim can be reconciled")
                 active["status"] = "unknown"
                 run["status"], run["reason"] = "needs_reconcile", "unknown_action_outcome"
-                run["usage"]["complete"] = False
+                if v2:
+                    from workflow_v2 import refresh_usage
+                    refresh_usage(run)
+                else:
+                    run["usage"]["complete"] = False
             elif action == "start":
                 require(run["status"] in {"prepared", "paused"} and self._can_call(run)
                         and run["reason"] not in {"budget_exhausted", "usage_missing", "budget_exceeded"}, "INVALID_STATE", "Run cannot start")
@@ -279,7 +318,7 @@ class WorkflowStore:
             run["actions"].append(item)
             if action == "reserve":
                 item["status"] = "running"
-                run["usage"]["requests"] += 1
+                run["usage"]["requests"] += (0 if v2 else 1)
             return
         fields(request, base + {"claim": " action_id", "propose": " action_id proposal usage",
                                "commit": " action_id output_refs", "fail": " action_id reason"}[action]
@@ -289,20 +328,30 @@ class WorkflowStore:
         if action == "claim":
             require(run["status"] == "running" and active["status"] == "queued", "INVALID_STATE", "Action cannot be claimed")
             active["status"] = "running"
-            run["usage"]["requests"] += 1
+            run["usage"]["requests"] += (0 if v2 else 1)
         elif action == "fail":
             string(request["reason"])
             if "accounting_complete" in request:
                 require(request["accounting_complete"] is False, "INVALID_SCHEMA", "Only incomplete accounting may be flagged")
                 run["usage"]["complete"] = False
+                if v2:
+                    run['accounting_unreconciled'] = True
             require(active["status"] in {"queued", "running", "proposed"}, "INVALID_STATE", "Action cannot fail")
             if active["status"] == "running":
                 active["status"], run["status"] = "unknown", "needs_reconcile"
-                run["usage"]["complete"] = False
+                if not v2:
+                    run["usage"]["complete"] = False
             else:
                 active["status"], run["status"] = "failed", "paused"
             run["reason"] = request["reason"]
+            if v2:
+                from workflow_v2 import refresh_usage
+                refresh_usage(run)
         elif action == "propose":
+            if v2:
+                from workflow_v2 import propose
+                propose(run, request, active)
+                return
             require(active["status"] == "running", "INVALID_STATE", "Proposal needs a claimed action")
             require(type(request["proposal"]) is dict and len(canonical(request["proposal"])) <= MAX_BYTES, "INVALID_SCHEMA", "Expected bounded proposal object")
             usage = request["usage"]

@@ -22,9 +22,14 @@ function fixture() {
 
 test('chat schemas preserve shared fields and never offer authority-bearing arguments', () => {
   assert.deepEqual(CHAT_TOOLS, ['math_project_context', 'math_project_prepare', 'math_project_draft_read', 'math_research_read', 'math_research_record', 'math_material_read', 'math_library_list', 'math_library_read', 'math_library_manage']);
-  for (const schema of Object.values(CHAT_SCHEMAS)) {
+  for (const [name, schema] of Object.entries(CHAT_SCHEMAS)) {
     assert.equal(schema.additionalProperties, false);
-    for (const forbidden of ['actor', 'origin', 'session_id', 'root', 'path', 'manifest', 'run_id']) assert.equal(schema.properties[forbidden], undefined);
+    for (const forbidden of ['actor', 'origin', 'session_id', 'root', 'path', 'manifest', 'allowed', 'budget', 'verification_policy']) assert.equal(schema.properties[forbidden], undefined);
+    // Opt-in workflow tools address an existing run; they cannot grant authority or prepare one.
+    if (name.startsWith('math_workflow_')) {
+      assert.ok(schema.properties.run_id);
+      assert.equal(CHAT_TOOLS.includes(name), false);
+    } else assert.equal(schema.properties.run_id, undefined);
   }
   assert.deepEqual(CHAT_SCHEMAS.math_project_prepare.properties.patch.properties.target_type.enum, ['construct', 'prove_or_disprove', 'exploratory']);
   assert.match(CHAT_GUIDANCE, /ask_user_question/);

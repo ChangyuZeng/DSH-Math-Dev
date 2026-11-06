@@ -5,7 +5,7 @@ import {fileURLToPath} from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 const fields = JSON.parse(readFileSync(join(here, 'project-fields.json'), 'utf8'));
 export const CHAT_TOOLS = ['math_project_context', 'math_project_prepare', 'math_project_draft_read', 'math_research_read', 'math_research_record', 'math_material_read', 'math_library_list', 'math_library_read', 'math_library_manage'];
-export const CHAT_WRITES = new Set(['math_project_prepare', 'math_research_record', 'math_library_manage']);
+export const CHAT_WRITES = new Set(['math_project_prepare', 'math_research_record', 'math_library_manage', 'math_workflow_execute']);
 const nullableString = {oneOf: [{type: 'string'}, {type: 'null'}]};
 const object = (properties, required = Object.keys(properties)) => ({type: 'object', properties, required, additionalProperties: false});
 const reference = object({id: {type: 'string', minLength: 1}, rev: {type: 'integer', minimum: 1}});
@@ -30,6 +30,8 @@ const libraryEntry = object({kind: {type: 'string', enum: ['object', 'scratchpad
 const libraryProject = {...nullableString, description: '项目ID；null仅查询当前会话的准备草稿。'};
 const metadataPatch = object({title: {type: 'string', maxLength: 2000}, summary: {type: 'string', maxLength: 12000}, tags: {type: 'array', items: {type: 'string', minLength: 1, maxLength: 100}}, pinned: {type: 'boolean'}}, []);
 export const CHAT_SCHEMAS = {
+  math_workflow_read: object({project_id: projectId, run_id: nullableString}),
+  math_workflow_execute: object({project_id: projectId, run_id: {type: 'string', minLength: 1}, expected_rev: {type: 'integer', minimum: 1}, mode: {type: 'string', enum: ['step', 'run']}, kind: {type: 'string', enum: ['derive', 'check', 'revise', 'decompose', 'reconstruct', 'stop']}}),
   math_library_list: object({project_id: libraryProject, include_removed: {type: 'boolean'}, removed_only: {type: 'boolean'}, kind: {oneOf: [{type: 'null'}, {type: 'string', enum: ['Problem', 'Note', 'Obligation', 'Evidence', 'material', 'scratchpad', 'preparation', 'project']}]}, query: {type: 'string', maxLength: 200}, sort: {type: 'string', enum: ['updated_desc', 'updated_asc', 'created_desc', 'title_asc']}, offset: {type: 'integer', minimum: 0}, limit: {type: 'integer', minimum: 1, maximum: 100}}),
   math_library_read: object({project_id: libraryProject, entry: libraryEntry, rev: {oneOf: [{type: 'integer', minimum: 1}, {type: 'null'}], description: '精确内容版本；null读当前内容。'}, ...readWindow}),
   math_library_manage: object({action: {type: 'string', enum: ['update', 'remove', 'restore']}, project_id: libraryProject, entry: libraryEntry, expected_rev: {type: 'integer', minimum: 0, description: '先读取条目的metadata_rev；不是内容版本。'}, operation_id: {type: 'string', minLength: 1, description: '新操作唯一；同次重试保持不变。'}, patch: {...metadataPatch, description: 'update可含title、summary、tags、pinned；remove/restore用空对象。只修改目录元数据。'}}),
@@ -78,7 +80,7 @@ export function validateChatArguments(name, args) {
   const schema = CHAT_SCHEMAS[name];
   if (!schema || !exact(args, schema.required)) reject('INVALID_ARGUMENTS', 'Unexpected or missing fields; identity and filesystem paths are host-owned');
   for (const [key, value] of Object.entries(args)) {
-    if (name.startsWith('math_library_')) {
+    if (name.startsWith('math_library_') || name.startsWith('math_workflow_')) {
       if (!matches(schema.properties[key], value)) reject('INVALID_ARGUMENTS', `Invalid ${key}`);
     } else if (key === 'patch') {
       if (!record(value)) reject('INVALID_ARGUMENTS', 'patch must be an object');

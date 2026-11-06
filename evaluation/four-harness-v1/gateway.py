@@ -15,7 +15,8 @@ import threading
 from urllib.parse import urlsplit
 
 from ledger import (GateError, POLICY, RESOURCE_POLICY, canonical, digest, require, native_identity,
-                    OPTIMIZATION_BUDGET, retryable_response, retry_delay)
+                    OPTIMIZATION_BUDGET, retryable_response, retryable_transport_failure, retry_delay, normalize_usage,
+                    usage_schema_valid)
 from cold_start import INFORMATION_POLICY, canonical_inputs
 
 # Tool contracts are shared by MCP, Pi and the workflow worker. Names use API-
@@ -135,10 +136,11 @@ class FixtureTransport:
 class Gateway:
     """Local capability endpoint; transport.start(payload, context) -> Future.
 
-    start must synchronously initiate dispatch and promptly return a receipt Future;
-    it must NOT queue a later dispatch or wait for a provider response. It runs under
+    start must synchronously dispatch within its connection/send deadlines, then
+    return a receipt Future without queuing dispatch or waiting for a response. It runs under
     the shutdown lock. The future may resolve after cancellation and is still
-    accounted. No retries. A live transport must separately qualify this contract,
+    accounted. Only this gateway may retry (at most two retries per logical call).
+    A live transport must separately qualify this contract,
     cancellation, provider framing and OS coverage before it can be installed.
     """
     def __init__(self, ledger, *, transport, bindings, tools=None, allowed_tools=None, intrinsic_tools=None, inject_output_cap=False, drain_timeout=5.0, execution=None, state_guards=None, request_adapters=None, audit_sink=None, frozen_materials=None, candidate_schema=None):
@@ -217,6 +219,8 @@ class Gateway:
         self.lifecycle = threading.Condition()
         self.close_lock = threading.Lock()
         self.active_handlers = 0
+        # A cost receipt is not tool authority: validation/framing may still fail.
+        self.validated_requests = set()
         self.closing = self.closed = False
         self.thread = None
         gateway = self
@@ -226,6 +230,21 @@ class Gateway:
             def log_message(self, *_):
                 pass  # Never log capability tokens or request bodies to stderr.
 
+            def accounting_projection(self):
+                ids = self.request_ids
+                requests = []
+                with gateway.ledger.connection() as db:
+                    for index, rid in enumerate(ids):
+                        row = db.execute('SELECT * FROM requests WHERE id=?', (rid,)).fetchone()
+                        usage = json.loads(row['usage']) if row['usage'] else normalize_usage(None, terminal=False)
+                        requests.append(dict(request_id=rid, parent_request_id=row['parent'],
+                            logical_request_id=ids[0], retry_of=ids[index - 1] if index else None, attempt=index + 1,
+                            status='finished' if row['state'] == 'finished' else 'unknown', usage=usage,
+                            raw_usage=json.loads(row['raw_usage']) if row['raw_usage'] else None,
+                            transport=self.attempt_evidence.get(rid)))
+                return dict(format='four-harness-accounting-v2', logical_request_id=ids[0] if ids else None,
+                            request_ids=list(ids), requests=requests)
+
             def reply(self, status, body, *, request_id=None, sse=False):
                 raw = body if isinstance(body, bytes) else canonical(body).encode()
                 self.send_response(status)
@@ -234,6 +253,9 @@ class Gateway:
                 self.send_header('Connection', 'close')
                 if request_id:
                     self.send_header('X-Four-Request-Id', request_id)
+                if getattr(self, 'request_ids', None):
+                    self.send_header('X-Four-Request-Ids', canonical(self.request_ids))
+                    self.send_header('X-Four-Logical-Request-Id', self.request_ids[0])
                 self.end_headers()
                 self.wfile.write(raw)
                 self.close_connection = True
@@ -242,6 +264,7 @@ class Gateway:
                 self.reply(405, {'error': {'code': 'ENDPOINT', 'message': 'Only registered POST endpoints are available', 'dispatched': False}})
 
             def do_POST(self):
+                self.request_ids, self.attempt_evidence = [], {}
                 request_id = None
                 dispatched = False
                 binding = payload = response = None
@@ -289,6 +312,10 @@ class Gateway:
                     explicit_parent = self.headers.get('X-Four-Parent-Request-Id')
                     native_tool_parent = (tool_parent(gateway.ledger, run_id, metadata, explicit_parent)
                                           if path.path.endswith(('/intrinsic', '/tools')) else None)
+                    if path.path.endswith(('/intrinsic', '/tools')) and (native_tool_parent or gateway.cold_scopes.get(run_id) == 'optimization'):
+                        with gateway.lifecycle:
+                            require(native_tool_parent in gateway.validated_requests, 'NATIVE_PARENT_UNKNOWN',
+                                    'Tool parent lacks a fully validated completed response')
                     if path.path.endswith('/intrinsic'):
                         name, phase, call_id = payload.get('name'), payload.get('phase'), payload.get('call_id')
                         require(name in gateway.intrinsic_tools.get((run_id, role), set()),
@@ -315,6 +342,12 @@ class Gateway:
                         native_call_id=self.headers.get('X-Four-Native-Call-Id')
                         require(native_call_id is None or (0<len(native_call_id)<=200 and all(32<ord(c)<127 for c in native_call_id)),
                                 'NATIVE_TOOL_ID','Invalid native tool call identity')
+                        audit_id = 'native-tool-' + digest([run_id, role, native_tool_parent,
+                                                            native_call_id or secrets.token_hex(16)])
+                        if gateway.audit_sink is not None:
+                            gateway.audit_sink('tool_request', audit_id, {
+                                'run_id': run_id, 'role': role, 'parent_request_id': native_tool_parent,
+                                'native_call_id': native_call_id, **deepcopy(payload)})
                         result = gateway.tools[run_id].call(INTERNAL_NAMES[payload['name']], payload['arguments'],
                                                             cancel_event=gateway.cancel_event)
                         if native_tool_parent:
@@ -343,6 +376,8 @@ class Gateway:
                                 omitted_result_fields=sorted(set(full.get('result',{}))-set(result.get('result',{})))
                                     if isinstance(full.get('result'),dict) else [],
                                 omitted_metrics=sorted(set(full['metrics'])-set(result['metrics'])))
+                        if gateway.audit_sink is not None:
+                            gateway.audit_sink('tool_response', audit_id, deepcopy(result))
                         self.reply(200, result)
                         return
                     require('provider' not in payload or payload['provider'] == POLICY['provider'], 'MODEL_DRIFT', 'Provider drift')
@@ -377,11 +412,15 @@ class Gateway:
                     dispatch_role = 'compaction' if metadata and metadata.get('request_kind') == 'compaction' else role
                     retry_of, attempts = None, 0
                     while True:
+                        require(not gateway.cancel_event.is_set(), 'STOPPED', 'Gateway stopped before reservation')
                         request_id = gateway.ledger.reserve_request(run_id, dispatch_role, payload,
                             parent_request_id=explicit_parent, thread_id=self.headers.get('X-Four-Thread-Id'),
                             native_metadata=metadata, retry_of=retry_of)
+                        self.request_ids.append(request_id)
                         gateway.ledger.start_request(request_id)
                         attempts += 1
+                        can_retry = gateway.cold_scopes.get(run_id) == 'optimization' and attempts < 3
+                        response = pending = retry_receipt = None
                         try:
                             if gateway.audit_sink is not None:
                                 gateway.audit_sink('request', request_id, deepcopy(payload))
@@ -389,38 +428,66 @@ class Gateway:
                                 require(not gateway.closing and not gateway.cancel_event.is_set(), 'STOPPED', 'Gateway stopped before dispatch')
                                 dispatched = True
                                 pending = gateway.ledger.dispatch_request(request_id, lambda: gateway.transport.start(
-                                    payload, dict(request_id=request_id, run_id=run_id, role=dispatch_role,
-                                                  cancel_event=gateway.cancel_event)))
+                                    payload, dict(request_id=request_id, logical_request_id=self.request_ids[0],
+                                        retry_of=retry_of, attempt=attempts, run_id=run_id, role=dispatch_role,
+                                        cancel_event=gateway.cancel_event)), recover_not_sent=can_retry)
                                 require(isinstance(pending, Future), 'TRANSPORT_CONTRACT', 'Transport start must return a receipt Future')
                             response = pending.result()
-                        except GateError:
-                            raise
-                        except Exception as error:
-                            raise GateError('TRANSPORT_ERROR', 'Transport lost its receipt; no automatic retry') from error
-                        require(isinstance(response, dict), 'RESPONSE_SCHEMA', 'Transport returned no Responses object')
-                        recoverable = gateway.cold_scopes.get(run_id) == 'optimization' and retryable_response(response)
-                        usage = gateway.ledger.finish_request(request_id, response, late_receipt=True,
-                            terminal=response.get('status') in {'completed', 'incomplete', 'failed', 'cancelled'},
-                            recoverable=recoverable)
-                        if gateway.audit_sink is not None:
-                            gateway.audit_sink('response', request_id, deepcopy(response))
-                        if not recoverable:
-                            break
-                        delay = retry_delay(response, attempts)
+                        except GateError as error:
+                            evidence = getattr(error, 'evidence', None)
+                            if isinstance(evidence, dict):
+                                self.attempt_evidence[request_id] = deepcopy(evidence)
+                                gateway.ledger.record(run_id, 'transport_evidence', request_id=request_id, evidence=evidence)
+                            if not (can_retry and retryable_transport_failure(error) and not gateway.cancel_event.is_set()):
+                                raise
+                            retry_receipt = {'error': {'code': 'connection_not_sent'}}
+                        except Exception:
+                            # Never expose the original exception or its secret-bearing context.
+                            raise GateError('TRANSPORT_ERROR', 'Transport lost its receipt; no automatic retry') from None
+                        if pending is not None and isinstance(getattr(pending, 'evidence', None), dict):
+                            self.attempt_evidence[request_id] = deepcopy(pending.evidence)
+                            gateway.ledger.record(run_id, 'transport_evidence', request_id=request_id, evidence=pending.evidence)
+                        if retry_receipt is None:
+                            require(isinstance(response, dict), 'RESPONSE_SCHEMA', 'Transport returned no Responses object')
+                            recoverable = (can_retry and retryable_response(response) and
+                                not self.attempt_evidence.get(request_id, {}).get('partial_output_observed'))
+                            usage = gateway.ledger.finish_request(request_id, response, late_receipt=True,
+                                terminal=response.get('status') in {'completed', 'incomplete', 'failed', 'cancelled'},
+                                recoverable=recoverable)
+                            if gateway.audit_sink is not None:
+                                gateway.audit_sink('response', request_id, deepcopy(response))
+                            if not recoverable:
+                                break
+                            retry_receipt = response
+                        delay = retry_delay(retry_receipt, attempts)
                         gateway.ledger.record(run_id, 'retry_scheduled', request_id=request_id,
+                                              logical_request_id=self.request_ids[0], retry_of=retry_of,
                                               attempt=attempts, wait_seconds=delay,
-                                              error_code=response['error']['code'])
+                                              error_code=retry_receipt['error']['code'])
                         require(not gateway.cancel_event.wait(delay), 'STOPPED', 'Cancelled during retry wait')
                         gateway.ledger.record(run_id, 'retry_ready', request_id=request_id, attempt=attempts)
                         retry_of = request_id
+                    require(usage_schema_valid(response.get('usage')), 'RESPONSE_SCHEMA', 'Invalid provider usage schema')
                     require(usage['complete'], 'USAGE_UNKNOWN', 'Provider usage missing or inconsistent')
                     require(response.get('model') == POLICY['model'], 'MODEL_DRIFT', 'Response model differs from frozen model')
+                    reasoning = response.get('reasoning')
+                    require(reasoning is None or (isinstance(reasoning, dict) and reasoning.get('effort') in (None, POLICY['effort'])),
+                            'MODEL_DRIFT', 'Response effort differs from frozen policy')
+                    require(response.get('status') in {'completed', 'incomplete', 'failed', 'cancelled'} and
+                            isinstance(response.get('output'), list) and all(isinstance(item, dict) for item in response['output']),
+                            'RESPONSE_SCHEMA', 'A validated terminal output is required')
+                    for item in response['output']:
+                        if item.get('type') in {'function_call', 'custom_tool_call'}:
+                            require(response['status'] == 'completed', 'RESPONSE_SCHEMA', 'Only completed responses may authorize tools')
                     if adapter is not None:
                         adapter.validate_response(response, request_id=request_id, ledger=gateway.ledger, run_id=run_id)
                     else:
                         for item in response.get('output', []):
                             if isinstance(item, dict) and item.get('type') == 'function_call':
                                 require(item.get('name') in allowed, 'TOOL_NOT_ALLOWED', 'Response requested an unadmitted tool')
+                                require(isinstance(item.get('call_id'), str) and bool(item['call_id']) and
+                                        isinstance(item.get('arguments'), str), 'RESPONSE_SCHEMA', 'Invalid terminal tool call')
+                                require(isinstance(json.loads(item['arguments']), dict), 'RESPONSE_SCHEMA', 'Tool arguments must be an object')
                             require(not (isinstance(item, dict) and item.get('type') == 'custom_tool_call'),
                                     'TOOL_NOT_ALLOWED', 'Custom executable tool responses are not admitted')
                     if response.get('status') in {'failed', 'cancelled'}:
@@ -430,7 +497,11 @@ class Gateway:
                     with gateway.lifecycle:
                         require(not gateway.closing and not gateway.cancel_event.is_set(), 'STOPPED', 'Receipt retained after cancellation; no result delivery')
                         sse = payload.get('stream') is True
-                        self.reply(200, as_sse(response) if sse else response, request_id=request_id, sse=sse)
+                        delivered = {**response, 'four_harness_accounting': self.accounting_projection()}
+                        framed = as_sse(delivered) if sse else canonical(delivered).encode()
+                        if response['status'] == 'completed':
+                            gateway.validated_requests.add(request_id)
+                        self.reply(200, framed, request_id=request_id, sse=sse)
                 except (BrokenPipeError, ConnectionResetError):
                     # A complete provider receipt still counts even if the native
                     # client disappears; stop the run rather than replaying it.
@@ -460,9 +531,10 @@ class Gateway:
                         gateway.ledger.record(binding['run_id'], 'request_rejected', role=binding['role'], code=code, tool_names=names)
                     try:
                         self.reply(409 if isinstance(error, GateError) else 502,
-                                   {'error': {'code': code, 'message': str(error), 'dispatched': dispatched,
+                                   {'error': {'code': code, 'message': 'Gateway request failed; consult structured host evidence', 'dispatched': dispatched,
                                               'request_id': request_id,
-                                               'usage': response.get('usage') if isinstance(response, dict) else None}}, request_id=request_id)
+                                               'usage': response.get('usage') if isinstance(response, dict) else None},
+                                     'four_harness_accounting': self.accounting_projection()}, request_id=request_id)
                     except (BrokenPipeError, ConnectionResetError):
                         pass
                 finally:
@@ -513,6 +585,9 @@ class Gateway:
         return self
 
     def close(self):
+        # Synchronous DNS/TCP/TLS/send holds lifecycle. Signal first so that I/O
+        # can be interrupted before close waits to acquire that lock.
+        self.cancel_event.set()
         with self.close_lock:
             if self.closed:
                 return

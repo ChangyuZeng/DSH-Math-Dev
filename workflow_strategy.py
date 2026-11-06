@@ -35,7 +35,7 @@ def _advisory(proposal, problem_ref):
             validate_data(change['kind'], change['data'])
             if change['data']['problem_ref'] != problem_ref:
                 return False
-            if change['kind'] == 'Obligation' and change['data']['state'] != 'open':
+            if change['kind'] == 'Obligation' and change['data']['state'] not in ('open', 'candidate'):
                 return False
         return True
     except (StoreError, TypeError, KeyError):

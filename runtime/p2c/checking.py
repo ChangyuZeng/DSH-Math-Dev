@@ -43,8 +43,9 @@ def validate_request(store, request):
     require(scope_spec is not None and data["checker_id"] == request["checker_id"],
             "TARGET_MISMATCH", "Obligation scope is not registered for this checker")
     problem = store.get(data["problem_ref"]["id"], data["problem_ref"]["rev"])["data"]
+    problem_fields = spec["problem_fields"] if "problem_fields" in spec else spec["module"].PROBLEM_FIELDS
     require(all(data[k] == v for k, v in scope_spec["obligation_fields"].items())
-            and all(problem[k] == v for k, v in spec["module"].PROBLEM_FIELDS.items()),
+            and all(problem[k] == v for k, v in problem_fields.items()),
             "TARGET_MISMATCH", "Checker only accepts its exact frozen Problem and Obligation contract")
     require(request["witness"] in data["evidence"], "TARGET_MISMATCH", "Witness must be linked to this obligation revision")
     witness = store.get(request["witness"]["id"], request["witness"]["rev"])

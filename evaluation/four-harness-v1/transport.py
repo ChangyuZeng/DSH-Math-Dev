@@ -7,6 +7,8 @@ Injected connection/auth factories are trusted HOST test seams, not client optio
 """
 from concurrent.futures import Future, TimeoutError
 from copy import deepcopy
+from email.utils import parsedate_to_datetime
+import errno
 import http.client
 import hashlib
 import json
@@ -21,7 +23,8 @@ import threading
 import time
 import zlib
 
-from ledger import GateError, POLICY, canonical, digest, require, normalize_usage
+from ledger import (GateError, POLICY, canonical, digest, require, normalize_usage, usage_schema_valid,
+                    retry_error_schema_valid, NONTRANSIENT_CODES)
 
 UPSTREAM = 'https://chatgpt.com/backend-api/codex/responses'
 AUTH_PATH = Path('/Users/zcy/.dsh/.openai-codex-auth.json')
@@ -109,41 +112,192 @@ def load_host_credential():
     return credential
 
 
+STAGES = ('credential', 'dns', 'tcp', 'tls', 'send', 'response_headers', 'stream', 'decode', 'terminal')
+SAFE_CODES = frozenset({'AUTH_INVALID', 'AUTH_EXPIRED', 'STOPPED', 'TLS_POLICY', 'MODEL_DRIFT',
+    'OUTPUT_CAP', 'TRUNCATION_POLICY', 'REQUEST_ID', 'NO_REPLAY', 'SCHEMA', 'UPSTREAM_HTTP',
+    'UPSTREAM_TYPE', 'UPSTREAM_JSON', 'UPSTREAM_DECODE', 'SSE_TRUNCATED', 'SSE_SCHEMA',
+    'SSE_LIMIT', 'SSE_DUPLICATE', 'TRANSPORT_SEND', 'TRANSPORT_READ'})
+
+
+def _failure_kind(error):
+    # Never copy str(error), exception class names, URLs, addresses, or TLS text.
+    if isinstance(error, ssl.SSLCertVerificationError):
+        return 'tls_certificate'
+    if isinstance(error, ssl.SSLError):
+        return 'tls_protocol'
+    if isinstance(error, socket.gaierror):
+        return 'dns_temporary' if error.errno == socket.EAI_AGAIN else 'dns_permanent'
+    if isinstance(error, TimeoutError):
+        return 'timeout'
+    if isinstance(error, OSError):
+        return {errno.ECONNREFUSED: 'connection_refused', errno.ECONNRESET: 'connection_reset',
+                errno.ENETUNREACH: 'network_unreachable', errno.EHOSTUNREACH: 'host_unreachable',
+                errno.ETIMEDOUT: 'timeout', errno.EPIPE: 'broken_pipe'}.get(error.errno, 'io_error')
+    if isinstance(error, GateError):
+        return 'cancelled' if error.code == 'STOPPED' else 'validation'
+    return 'unknown'
+
+
+class _Diagnostics:
+    def __init__(self, context, clock):
+        self.clock, self.started = clock, clock()
+        self.active, self.entered = None, self.started
+        self.value = dict(format='four-harness-transport-v2', request_id=context.get('request_id'),
+            logical_request_id=context.get('logical_request_id', context.get('request_id')),
+            retry_of=context.get('retry_of'), attempt=context.get('attempt', 1),
+            stage='credential', send_state='not_started',
+            stage_timings={stage: None for stage in STAGES})
+        self.enter('credential')
+
+    def _end(self, now):
+        if self.active is not None:
+            row = self.value['stage_timings'][self.active]
+            row['elapsed_seconds'] += max(0, now - self.entered)
+            row['ended_seconds'] = max(0, now - self.started)
+
+    def enter(self, stage):
+        assert stage in STAGES
+        now = self.clock()
+        self._end(now)
+        self.active, self.entered = stage, now
+        self.value['stage'] = stage
+        if self.value['stage_timings'][stage] is None:
+            self.value['stage_timings'][stage] = dict(started_seconds=max(0, now - self.started),
+                                                    elapsed_seconds=0.0, ended_seconds=None)
+
+    def finish(self, error=None):
+        now = self.clock()
+        self._end(now)
+        self.active = None
+        self.value.update(elapsed_seconds=max(0, now - self.started),
+                          outcome='failed' if error else 'completed')
+        if error is not None:
+            self.value['failure_kind'] = _failure_kind(error)
+
+
+class _IODeadline:
+    """Absolute connect/send/header deadlines; only received bytes renew stream idle."""
+    def __init__(self, clock):
+        self.clock, self.lock = clock, threading.Lock()
+        self.deadline, self.expired, self.idle = None, False, None
+
+    def arm(self, seconds, *, idle=False):
+        with self.lock:
+            self.deadline = self.clock() + seconds
+            self.idle = seconds if idle else None
+            self.expired = False
+
+    def remaining(self):
+        with self.lock:
+            if self.deadline is None:
+                return None
+            remaining = self.deadline - self.clock()
+            self.expired = self.expired or remaining <= 0
+            if self.expired:
+                raise TimeoutError('Transport stage deadline expired')
+            return remaining
+
+    def activity(self, count):
+        self.remaining()
+        with self.lock:
+            if count and self.idle is not None:
+                self.deadline = self.clock() + self.idle
+
+    def disarm(self):
+        with self.lock:
+            self.deadline = None
+
+
+def _retry_headers(response):
+    """Normalize Retry-After to numeric seconds; arbitrary header text never escapes."""
+    result = {}
+    for name in ('Retry-After', 'retry-after-ms'):
+        text = response.getheader(name, '')
+        if not isinstance(text, str) or not text or len(text) > 128:
+            continue
+        try:
+            number = float(text)
+        except ValueError:
+            try:
+                number = parsedate_to_datetime(text).timestamp() - time.time() if name == 'Retry-After' else -1
+            except (TypeError, ValueError, OverflowError):
+                continue
+        if math.isfinite(number) and number >= 0:
+            result[name] = str(number)
+    return result
+
+
+def _unique_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError('Duplicate JSON member')
+        result[key] = value
+    return result
+
+
 class _DeadlineHTTPSConnection(http.client.HTTPSConnection):
     """One address, no fallback/retry; resolver never receives auth/request bytes."""
     def __init__(self, host, port, *, timeout, context):
         super().__init__(host, port, timeout=timeout, context=context)
-        self.deadline = time.monotonic() + timeout
+        self.clock = time.monotonic
+        self.deadline = self.clock() + timeout
+        self.diagnostics, self.cancel_event = None, None
 
     def remaining(self):
-        remaining = self.deadline - time.monotonic()
+        if self.cancel_event is not None and self.cancel_event.is_set():
+            raise GateError('STOPPED', 'Transport cancelled')
+        remaining = self.deadline - self.clock()
         if remaining <= 0:
             raise TimeoutError()
         return remaining
 
     def connect(self):
+        if self.diagnostics:
+            self.diagnostics.enter('dns')
         resolved = Future()
         def resolve():
             try:
                 resolved.set_result(socket.getaddrinfo(self.host, self.port, type=socket.SOCK_STREAM))
-            except Exception:
-                resolved.set_exception(OSError('Host resolution failed'))
+            except Exception as error:
+                # Keep only a typed errno to distinguish transient DNS, not resolver text.
+                safe = socket.gaierror(error.errno, 'Host resolution failed') if isinstance(error, socket.gaierror) else OSError('Host resolution failed')
+                resolved.set_exception(safe)
         threading.Thread(target=resolve, daemon=True, name='codex-dns').start()
-        addresses = resolved.result(timeout=self.remaining())
+        while True:
+            try:
+                addresses = resolved.result(timeout=min(.05, self.remaining()))
+                break
+            except TimeoutError:
+                self.remaining()
+        self.remaining()
         if not addresses:
-            raise OSError('Host resolution failed')
+            raise socket.gaierror(socket.EAI_NONAME, 'Host resolution failed')
+        if self.diagnostics:
+            self.diagnostics.enter('tcp')
         family, kind, protocol, _, address = addresses[0]
         self.sock = socket.socket(family, kind, protocol)
         self.sock.settimeout(self.remaining())
         self.sock.connect(address)
         self.sock.settimeout(self.remaining())
-        self.sock = self._context.wrap_socket(self.sock, server_hostname=self.host)
+        if self.diagnostics:
+            self.diagnostics.enter('tls')
+        if self.cancel_event is None:
+            self.sock = self._context.wrap_socket(self.sock, server_hostname=self.host)
+        else:
+            # Publish the SSLSocket before its blocking handshake. wrap_socket's
+            # default handshake detaches the raw fd before cancellation can see it.
+            self.sock = self._context.wrap_socket(self.sock, server_hostname=self.host, do_handshake_on_connect=False)
+            self.sock.settimeout(self.remaining())
+            self.sock.do_handshake()
+        self.remaining()
 
     def send(self, data):
         if self.sock is None:
             self.connect()
         self.sock.settimeout(self.remaining())
         super().send(data)
+        self.remaining()
 
 
 class ReceiptFuture(Future):
@@ -153,12 +307,15 @@ class ReceiptFuture(Future):
 
 
 def parse_sse(source, *, max_bytes=8 * 1024 * 1024, max_events=100000,
-              max_event_bytes=2 * 1024 * 1024, cancel_event=None):
+              max_event_bytes=2 * 1024 * 1024, cancel_event=None, evidence=None):
     observed=[]; partial_output_events=[]
     try:
-        return _parse_sse(source,max_bytes=max_bytes,max_events=max_events,
+        result = _parse_sse(source,max_bytes=max_bytes,max_events=max_events,
                           max_event_bytes=max_event_bytes,cancel_event=cancel_event,observed=observed,
                           partial_output_events=partial_output_events)
+        if evidence is not None:
+            evidence['partial_output_observed'] = bool(partial_output_events)
+        return result
     except Exception as original:
         from ledger import Ledger
         error=original if isinstance(original,GateError) else GateError('SSE_SCHEMA','Invalid upstream framing; no retry')
@@ -228,7 +385,7 @@ def _parse_sse(source, *, max_bytes, max_events, max_event_bytes, cancel_event, 
             continue
         failed = False
         try:
-            event = json.loads(raw)
+            event = json.loads(raw, object_pairs_hook=_unique_object)
         except (ValueError, UnicodeError):
             failed = True
         if failed:
@@ -244,9 +401,11 @@ def _parse_sse(source, *, max_bytes, max_events, max_event_bytes, cancel_event, 
             observed.append(event['response'])
         require(not names or names == [kind.encode()], 'SSE_SCHEMA', 'SSE event name disagrees with its data')
         require(terminal is None, 'SSE_DUPLICATE', 'Event followed a terminal receipt')
-        if kind in {'response.output_item.added','response.output_item.done','response.output_text.delta',
-                    'response.output_text.done','response.function_call_arguments.delta','response.function_call_arguments.done'}:
-            # Bounded by the same aggregate wire limit; evidence only, never a receipt/tool dispatch.
+        if kind not in TERMINALS and ((kind.startswith('response.') and
+                kind not in {'response.created', 'response.in_progress'}) or
+                (isinstance(event.get('response'), dict) and event['response'].get('output'))):
+            # Reasoning, refusal, content and unknown response extensions cannot
+            # establish no output. Bounded evidence only, never tool dispatch.
             partial_output_events.append(event)
         if kind in TERMINALS:
             response = event.get('response')
@@ -257,10 +416,11 @@ def _parse_sse(source, *, max_bytes, max_events, max_event_bytes, cancel_event, 
 
 class _BoundedBody:
     """Decode incrementally, bounding both wire and decoded bytes independently."""
-    def __init__(self, source, encoding, limit, evidence):
+    def __init__(self, source, encoding, limit, evidence, *, before_read=None, received=None, diagnostics=None):
         require(encoding in {'identity', 'gzip', 'deflate'},
                 'UPSTREAM_TYPE', 'Unsupported upstream content encoding')
         self.source, self.limit, self.evidence = source, limit, evidence
+        self.before_read, self.received, self.diagnostics = before_read, received, diagnostics
         self.decoder = (zlib.decompressobj(31 if encoding == 'gzip' else 15)
                         if encoding != 'identity' else None)
         self.buffer = b''
@@ -271,8 +431,16 @@ class _BoundedBody:
     def _fill(self):
         if self.ended:
             return
+        if self.diagnostics:
+            self.diagnostics.enter('stream')
+        if self.before_read:
+            self.before_read()
         chunk = getattr(self.source, 'read1', self.source.read)(
             min(65536, self.limit - self.wire_bytes + 1))
+        if self.received:
+            self.received(len(chunk))
+        if self.diagnostics:
+            self.diagnostics.enter('decode')
         self.wire_bytes += len(chunk)
         self.wire_hash.update(chunk)
         self.evidence['response_body_bytes_observed'] = self.wire_bytes
@@ -323,7 +491,7 @@ def _observed_usage(candidate):
 
 def _parse_terminal_json(raw):
     try:
-        value = json.loads(raw)
+        value = json.loads(raw, object_pairs_hook=_unique_object)
     except (ValueError, UnicodeError):
         raise GateError('UPSTREAM_JSON', 'Malformed upstream JSON') from None
     response = value.get('response', value) if isinstance(value, dict) else None
@@ -350,13 +518,40 @@ def _parse_terminal_json(raw):
 
 class HostTransport:
     def __init__(self, *, auth_loader=load_host_credential, connection_factory=_DeadlineHTTPSConnection,
-                 evidence_sink=None, dispatch_timeout=4.0, response_timeout=60.0,
-                 max_output_tokens=2048, max_bytes=8 * 1024 * 1024, max_events=100000, profile='smoke'):
-        require(type(dispatch_timeout) in (int, float) and 0 < dispatch_timeout <= 4.5 and
-                type(response_timeout) in (int, float) and 0 < response_timeout <= 180,
-                'TRANSPORT_CONFIG', 'Transport timeouts must be positive and bounded')
-        require(profile in {'smoke', 'optimization'} and type(max_output_tokens) is int and
-                max_output_tokens == (128000 if profile == 'optimization' else 2048),
+                 evidence_sink=None, dispatch_timeout=None, response_timeout=None,
+                 connect_timeout=None, send_timeout=None, headers_timeout=None, stream_idle_timeout=None,
+                 timeout_profile=None, clock=None, max_output_tokens=2048,
+                 max_bytes=8 * 1024 * 1024, max_events=100000, profile='smoke'):
+        # Explicit legacy arguments select the old combined connect+send deadline.
+        # Optimization/workflow otherwise uses independent stages, with no solve cap.
+        legacy_args = dispatch_timeout is not None or response_timeout is not None
+        split_args = any(value is not None for value in (connect_timeout, send_timeout, headers_timeout, stream_idle_timeout))
+        require(timeout_profile in (None, 'legacy', 'workflow') and not (legacy_args and split_args) and
+                not (legacy_args and timeout_profile == 'workflow') and not (split_args and timeout_profile == 'legacy'),
+                'TRANSPORT_CONFIG', 'Select one transport timeout profile')
+        self.legacy_timeouts = (timeout_profile == 'legacy' or legacy_args or
+            (timeout_profile is None and profile == 'smoke' and not split_args))
+        if self.legacy_timeouts:
+            dispatch_timeout = 4.0 if dispatch_timeout is None else dispatch_timeout
+            response_timeout = 60.0 if response_timeout is None else response_timeout
+            require(type(dispatch_timeout) in (int, float) and 0 < dispatch_timeout <= 4.5 and
+                    type(response_timeout) in (int, float) and 0 < response_timeout <= 180,
+                    'TRANSPORT_CONFIG', 'Legacy transport timeouts must be positive and bounded')
+            connect_timeout = send_timeout = dispatch_timeout
+            headers_timeout = stream_idle_timeout = response_timeout
+        else:
+            connect_timeout = 30.0 if connect_timeout is None else connect_timeout
+            send_timeout = 60.0 if send_timeout is None else send_timeout
+            headers_timeout = 300.0 if headers_timeout is None else headers_timeout
+            stream_idle_timeout = 300.0 if stream_idle_timeout is None else stream_idle_timeout
+        require(all(type(value) in (int, float) and math.isfinite(value) and value > 0 for value in
+                    (connect_timeout, send_timeout, headers_timeout, stream_idle_timeout)),
+                'TRANSPORT_CONFIG', 'Finite positive transport timeouts required')
+        self.connect_timeout, self.send_timeout = connect_timeout, send_timeout
+        self.headers_timeout, self.stream_idle_timeout = headers_timeout, stream_idle_timeout
+        self.clock = clock or time.monotonic
+        require(profile in {'smoke', 'optimization', 'workflow'} and type(max_output_tokens) is int and
+                max_output_tokens == (2048 if profile == 'smoke' else 128000),
                 'OUTPUT_CAP', 'Transport requires the exact approved profile output cap')
         self.profile = profile
         require(type(max_bytes) is int and 0 < max_bytes <= 8 * 1024 * 1024 and
@@ -370,7 +565,31 @@ class HostTransport:
     def __repr__(self):
         return '<HostTransport fixed Codex HTTPS; credentials redacted>'
 
+    def _emit(self, evidence):
+        if self._sink is not None:
+            try:
+                self._sink(deepcopy(evidence))
+            except Exception:
+                evidence['evidence_sink_failed'] = True
+
     def start(self, payload, context):
+        diagnostics = _Diagnostics(context, self.clock)
+        failure = None
+        try:
+            return self._start(payload, context, diagnostics)
+        except Exception as error:
+            diagnostics.finish(error)
+            if diagnostics.value.get('deadline_exceeded'):
+                diagnostics.value['failure_kind'] = 'timeout'
+            code = error.code if isinstance(error, GateError) and error.code in SAFE_CODES else 'TRANSPORT_SEND'
+            diagnostics.value['error_code'] = code
+            failure = GateError(code, 'Host dispatch failed; consult structured transport evidence')
+            self._emit(diagnostics.value)
+            failure.evidence = deepcopy(diagnostics.value)
+        # Raised outside except: no secret-bearing exception/context can escape.
+        raise failure
+
+    def _start(self, payload, context, diagnostics):
         require(isinstance(payload, dict) and payload.get('model') == POLICY['model'] and
                 payload.get('provider', POLICY['provider']) == POLICY['provider'] and
                 isinstance(payload.get('reasoning'), dict) and payload['reasoning'].get('effort') == POLICY['effort'],
@@ -402,7 +621,8 @@ class HostTransport:
         def frame(key, value):
             if key not in wire or wire[key] != value:
                 adaptations.append({'field': key, 'before_present': key in wire,
-                                    'before_sha256': digest(wire[key]) if key in wire else None, 'after': value})
+                                    'before_sha256': digest(wire[key]) if key in wire else None,
+                                    **({'after_sha256': digest(value)} if key == 'include' else {'after': value})})
                 wire[key] = value
         frame('store', False)
         frame('stream', True)
@@ -413,50 +633,90 @@ class HostTransport:
         if 'reasoning.encrypted_content' not in include:
             frame('include', include + ['reasoning.encrypted_content'])
         require('provider' not in wire, 'SCHEMA', 'Gateway must remove the local provider field')
-        evidence = dict(request_id=request_id, upstream=UPSTREAM, semantic_payload_sha256=digest(payload),
-                        wire_payload_sha256=digest(wire), adaptations=adaptations,
-                        dispatch_point='synchronous_https_request_send_completed', retries=0, redirects=0)
+        evidence = diagnostics.value
+        evidence.update(upstream=UPSTREAM, semantic_payload_sha256=digest(payload),
+                        wire_payload_sha256=digest(wire), adaptations=adaptations, retries=0, redirects=0,
+                        timeout_profile='legacy' if self.legacy_timeouts else 'workflow',
+                        deadlines_seconds=dict(connect=self.connect_timeout, send=self.send_timeout,
+                            response_headers=self.headers_timeout, stream_idle=self.stream_idle_timeout))
         body = canonical(wire).encode()
-        connection = None
-        failed = False
+        connection = io_socket = None
+        done, deadline = threading.Event(), _IODeadline(self.clock)
+
+        def stop_io():
+            while not done.wait(0.02):
+                expired = False
+                try:
+                    deadline.remaining()
+                except TimeoutError:
+                    expired = True
+                if cancel.is_set() or expired:
+                    self._abort(connection, io_socket)
+                    return
+
+        threading.Thread(target=stop_io, daemon=True, name='codex-cancel').start()
         try:
             credential = self._auth_loader()
             credential.validate()
+            require(not cancel.is_set(), 'STOPPED', 'Transport cancelled before connect')
             tls = ssl.create_default_context()
-            connection = self._factory('chatgpt.com', 443, timeout=self.dispatch_timeout, context=tls)
+            deadline.arm(self.connect_timeout)
+            connection = self._factory('chatgpt.com', 443, timeout=self.connect_timeout, context=tls)
+            if isinstance(connection, _DeadlineHTTPSConnection):
+                connection.clock, connection.diagnostics, connection.cancel_event = self.clock, diagnostics, cancel
+                connection.deadline = self.clock() + deadline.remaining()
+            else:
+                diagnostics.enter('tcp')  # Injected factories may not expose DNS/TLS instrumentation.
             connection.connect()
+            deadline.remaining()
             require(not cancel.is_set(), 'STOPPED', 'Transport cancelled before request send')
             headers = {'Authorization': 'Bearer ' + credential.access, 'chatgpt-account-id': credential.account_id,
                        'OpenAI-Beta': 'responses=experimental', 'originator': 'pi', 'accept': 'text/event-stream',
                        'Accept-Encoding': 'identity',
                        'content-type': 'application/json', 'x-client-request-id': request_id, 'Connection': 'close'}
+            diagnostics.enter('send')
+            if not self.legacy_timeouts:
+                deadline.arm(self.send_timeout)
+                if isinstance(connection, _DeadlineHTTPSConnection):
+                    connection.deadline = self.clock() + deadline.remaining()
+            connection.sock.settimeout(deadline.remaining())
+            evidence['send_state'] = 'started'
             connection.request('POST', '/backend-api/codex/responses', body=body, headers=headers)
-        except GateError as error:
-            code = error.code
-            failed = True
+            evidence['send_state'] = 'completed'
+            deadline.remaining()
         except Exception:
-            code = 'TRANSPORT_SEND'
-            failed = True
-        if failed:
-            if connection is not None:
-                self._abort(connection)
-            raise GateError(code, 'Host dispatch failed; outcome may be unknown; no automatic retry')
+            if deadline.expired:
+                evidence['deadline_exceeded'] = True
+            done.set()
+            self._abort(connection)
+            raise
         # Headers/credential never enter Future evidence, result, repr or reports.
         del headers, credential
+        evidence['dispatch_point'] = 'synchronous_https_request_send_completed'
         future = ReceiptFuture()
         future.evidence = deepcopy(evidence)
-        done = threading.Event()
-        # HTTPConnection.getresponse may detach self.sock when Connection: close
-        # is received. Keep the actual socket so cancellation can still shutdown
-        # a blocked HTTPResponse.makefile reader after that detachment.
+        # Keep the actual socket even if getresponse detaches connection.sock.
         io_socket = connection.sock
+        diagnostics.enter('response_headers')
+        if not self.legacy_timeouts:
+            deadline.arm(self.headers_timeout)
+        else:
+            deadline.disarm()
+
+        def before_read():
+            remaining = deadline.remaining()
+            io_socket.settimeout(self.stream_idle_timeout if remaining is None else remaining)
 
         def read():
             result = error_code = upstream = observed_response = None
             partial_output_events=[]
             try:
-                io_socket.settimeout(self.response_timeout)
+                io_socket.settimeout(self.headers_timeout if self.legacy_timeouts else deadline.remaining())
                 upstream = connection.getresponse()
+                deadline.remaining()
+                diagnostics.enter('stream')
+                if not self.legacy_timeouts:
+                    deadline.arm(self.stream_idle_timeout, idle=True)
                 evidence['http_status'] = upstream.status
                 media_type = upstream.getheader('Content-Type', '').split(';')[0].strip().lower()
                 encoding = upstream.getheader('Content-Encoding', 'identity').strip().lower()
@@ -467,28 +727,47 @@ class HostTransport:
                     'identity', 'gzip', 'br', 'deflate', 'zstd'} else 'other'
                 if upstream.status != 200:
                     # Keep bounded diagnostics without exposing server text,
-                    # headers or credentials. The rejected request still has an
-                    # unknown usage result and is never automatically replayed.
-                    error_body = upstream.read(8193)
+                    # headers or credentials. Any retry eligibility is returned
+                    # as a receipt; only the gateway can admit a new attempt.
+                    error_body = b''
+                    while len(error_body) < 8193:
+                        before_read()
+                        chunk = getattr(upstream, 'read1', upstream.read)(8193 - len(error_body))
+                        deadline.activity(len(chunk))
+                        if not chunk:
+                            break
+                        error_body += chunk
+                    diagnostics.enter('decode')
                     evidence['error_body_sha256'] = hashlib.sha256(error_body).hexdigest()
                     evidence['error_body_bytes_observed'] = len(error_body)
                     evidence['error_body_truncated'] = len(error_body) > 8192
                     rejected = None
                     try:
-                        value = json.loads(error_body)
+                        value = json.loads(error_body, object_pairs_hook=_unique_object)
                         if not evidence['error_body_truncated']:
                             rejected = rejected_parameter(value, set(payload) | set(wire))
                             # Retain only allowlisted structure and hashes. Arbitrary
                             # upstream text can echo credentials or private inputs.
-                        candidate = value.get('response', value) if isinstance(value, dict) else {}
+                        candidate = value.get('response', value) if isinstance(value, dict) else None
+                        envelopes = [value] if candidate is value else [value, candidate]
+                        objects = [item for item in envelopes if isinstance(item, dict)]
                         evidence['error_output_absent'] = (not evidence['error_body_truncated'] and
-                            isinstance(value, dict) and isinstance(candidate, dict) and candidate.get('output', []) == [])
-                        evidence['error_output_present'] = isinstance(candidate, dict) and bool(candidate.get('output'))
-                        if isinstance(candidate, dict):
-                            evidence['error_model_drift'] = candidate.get('model') not in (None, POLICY['model'])
-                            reasoning = candidate.get('reasoning')
-                            evidence['error_effort_drift'] = (isinstance(reasoning, dict) and
-                                reasoning.get('effort') not in (None, POLICY['effort']))
+                            len(objects) == len(envelopes) and all(item.get('output', []) == [] and
+                            normalize_usage(item.get('usage'), terminal=False)['output_tokens'] in (None, 0)
+                            for item in objects))
+                        evidence['error_output_present'] = any(bool(item.get('output')) or
+                            (normalize_usage(item.get('usage'), terminal=False)['output_tokens'] or 0) > 0
+                            for item in objects)
+                        evidence['error_model_drift'] = any(item.get('model') not in (None, POLICY['model']) for item in objects)
+                        evidence['error_schema_invalid'] = any(not usage_schema_valid(item.get('usage')) or
+                            not retry_error_schema_valid(item.get('error')) or item.get('status') not in (None, 'failed') or
+                            item.get('object') not in (None, 'response', 'error') for item in objects)
+                        evidence['error_nontransient'] = any(code in NONTRANSIENT_CODES for item in objects
+                            if isinstance(item.get('error'), dict)
+                            for code in (item['error'].get('code'), item['error'].get('type')) if isinstance(code, str))
+                        evidence['error_effort_drift'] = any(item.get('reasoning') is not None and
+                            (not isinstance(item['reasoning'], dict) or item['reasoning'].get('effort') not in (None, POLICY['effort']))
+                            for item in objects)
                         if isinstance(candidate, dict) and isinstance(candidate.get('usage'), dict):
                             usage = normalize_usage(candidate['usage'], terminal=False)
                             # Only numeric counters cross the error boundary; no
@@ -499,19 +778,15 @@ class HostTransport:
                             observed_response['usage']['output_tokens_details'] = {'reasoning_tokens':usage['reasoning_tokens']}
                     except (ValueError, TypeError):
                         pass
-                    if self.profile == 'optimization' and upstream.status in {429, 500, 502, 503, 504}:
-                        safe_headers = {}
-                        for key in ('retry-after', 'retry-after-ms'):
-                            value = upstream.getheader(key)
-                            if isinstance(value, str) and len(value) <= 128 and all(ord(c) < 127 and (c.isalnum() or c in ' ,:.-+') for c in value):
-                                safe_headers[key] = value
-                        evidence['retry_headers'] = safe_headers
+                    if self.profile in {'optimization', 'workflow'} and upstream.status in {429, 500, 502, 503, 504}:
+                        evidence['retry_headers'] = _retry_headers(upstream)
                     evidence['rejected_parameter'] = rejected
                     evidence['unsupported_output_limit_reported'] = rejected == 'max_output_tokens'
                     raise GateError('UPSTREAM_HTTP', 'Upstream rejected HTTP request; no retry or redirect')
-                source = _BoundedBody(upstream, encoding, self.max_bytes, evidence)
+                source = _BoundedBody(upstream, encoding, self.max_bytes, evidence,
+                    before_read=before_read, received=deadline.activity, diagnostics=diagnostics)
                 if media_type == 'text/event-stream':
-                    result = parse_sse(source, max_bytes=self.max_bytes, max_events=self.max_events, cancel_event=cancel)
+                    result = parse_sse(source, max_bytes=self.max_bytes, max_events=self.max_events, cancel_event=cancel, evidence=evidence)
                 else:
                     # Sniff bounded actual framing, including mislabelled responses.
                     prefix = source.readline(min(4096, self.max_bytes + 1))
@@ -521,7 +796,7 @@ class HostTransport:
                     sniff = prefix.lstrip()
                     if sniff.startswith((b'data:', b'event:', b':', b'id:', b'retry:')):
                         evidence['response_body_format'] = 'sse'
-                        result = parse_sse(source, max_bytes=self.max_bytes, max_events=self.max_events, cancel_event=cancel)
+                        result = parse_sse(source, max_bytes=self.max_bytes, max_events=self.max_events, cancel_event=cancel, evidence=evidence)
                     else:
                         require(sniff.startswith(b'{'), 'UPSTREAM_TYPE', 'Upstream body is neither SSE nor Responses JSON')
                         evidence['response_body_format'] = 'json'
@@ -536,19 +811,38 @@ class HostTransport:
                             # A complete JSON object already buffered can still
                             # carry charge evidence when framing/decode later fails.
                             try:
-                                partial = json.loads(b''.join(chunks) + source.buffer)
+                                partial = json.loads(b''.join(chunks) + source.buffer, object_pairs_hook=_unique_object)
                                 candidate = partial.get('response', partial) if isinstance(partial, dict) else None
                                 observed_response = _observed_usage(candidate)
                             except (ValueError, TypeError, GateError):
                                 pass
                             raise
+                        diagnostics.enter('decode')
                         result = _parse_terminal_json(b''.join(chunks))
+                diagnostics.enter('terminal')
+                require(isinstance(result, dict) and isinstance(result.get('output'), list) and
+                        isinstance(result.get('id'), str) and bool(result['id']) and
+                        isinstance(result.get('model'), str) and result.get('status') in TERMINALS.values(),
+                        'SSE_SCHEMA', 'Terminal response schema is invalid')
+                evidence['partial_output_observed'] = evidence.get('partial_output_observed', False) or bool(result['output'])
+                diagnostics.finish()
             except GateError as error:
-                error_code = error.code
+                error_code = error.code if error.code in SAFE_CODES else 'TRANSPORT_READ'
                 observed_response = getattr(error,'observed_response',observed_response)
                 partial_output_events=getattr(error,'partial_output_events',[])
-            except Exception:
+                if error_code in {'SSE_SCHEMA', 'SSE_DUPLICATE', 'UPSTREAM_DECODE', 'UPSTREAM_JSON'}:
+                    diagnostics.enter('decode')
+                elif error_code == 'SSE_TRUNCATED':
+                    diagnostics.enter('stream')
+                diagnostics.finish(error)
+                if deadline.expired:
+                    evidence['failure_kind'] = 'timeout'
+                evidence['partial_output_observed'] = evidence.get('partial_output_observed', False) or bool(partial_output_events)
+            except Exception as error:
                 error_code = 'TRANSPORT_READ'
+                diagnostics.finish(error)
+                if deadline.expired:
+                    evidence['failure_kind'] = 'timeout'
             finally:
                 done.set()
                 self._abort(connection, io_socket)
@@ -557,18 +851,17 @@ class HostTransport:
                         upstream.close()
                     except Exception:
                         pass
-            if self._sink is not None:
-                # This callback runs outside the gateway lifecycle lock. A sink
-                # failure never suppresses a receipt or causes another dispatch.
-                try:
-                    self._sink(deepcopy(evidence))
-                except Exception:
-                    future.evidence['evidence_sink_failed'] = True
-            if (self.profile == 'optimization' and error_code == 'UPSTREAM_HTTP'
+            if error_code:
+                evidence['error_code'] = error_code
+            # Both success and failure evidence is final before Future completion.
+            self._emit(evidence)
+            future.evidence = deepcopy(evidence)
+            if (self.profile in {'optimization', 'workflow'} and error_code == 'UPSTREAM_HTTP'
                     and evidence.get('http_status') in {429, 500, 502, 503, 504}
                     and evidence.get('rejected_parameter') is None
                     and evidence.get('error_output_absent') is True
-                    and not evidence.get('error_model_drift') and not evidence.get('error_effort_drift')):
+                    and not evidence.get('error_model_drift') and not evidence.get('error_effort_drift')
+                    and not evidence.get('error_schema_invalid') and not evidence.get('error_nontransient')):
                 result = {'status': 'failed', 'output': [], 'model': POLICY['model'],
                           'reasoning': {'effort': POLICY['effort']},
                           'usage': observed_response.get('usage') if observed_response else None,
@@ -577,6 +870,7 @@ class HostTransport:
                 error_code = None
             if error_code:
                 failure=GateError(error_code, 'Host receipt unavailable or invalid; no automatic retry')
+                failure.evidence = deepcopy(evidence)
                 if partial_output_events:
                     failure.partial_output_events=partial_output_events
                 if observed_response is not None:
@@ -585,14 +879,13 @@ class HostTransport:
             else:
                 future.set_result(result)
 
-        def stop_io():
-            while not done.wait(0.02):
-                if cancel.is_set():
-                    self._abort(connection, io_socket)
-                    return
         # All actual HTTP dispatch has happened synchronously above this point.
-        threading.Thread(target=read, daemon=True, name='codex-receipt').start()
-        threading.Thread(target=stop_io, daemon=True, name='codex-cancel').start()
+        try:
+            threading.Thread(target=read, daemon=True, name='codex-receipt').start()
+        except Exception:
+            done.set()
+            self._abort(connection, io_socket)
+            raise
         return future
 
     @staticmethod

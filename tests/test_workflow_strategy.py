@@ -134,6 +134,20 @@ class WorkflowStrategyTests(unittest.TestCase):
         self.records['CHECK'].append({'id': 'CHECK', 'rev': 2})
         self.assertEqual(reuse_candidates(self.run, self.records, self.snapshot), [])
 
+    def test_candidate_obligation_is_valid_advisory_but_closed_is_not(self):
+        attempt = self.attempt('candidate', 'new_obligation')
+        data = {'statement': 'Fixture claim', 'scope': 'one fixed problem',
+                'completion_criteria': ['Independent review'], 'check_method': 'human', 'checker_id': None,
+                'problem_ref': {'id': 'P', 'rev': 1}, 'uses': [], 'candidates': [{'id': 'N', 'rev': 1}],
+                'evidence': [], 'next_action': 'Review the candidate', 'state': 'candidate', 'reason': 'Unreviewed'}
+        attempt['proposal']['changes'] = [{'kind': 'Obligation', 'id': 'O', 'expected_rev': 0, 'data': data}]
+        attempt['output_refs'] = [{'id': 'O', 'rev': 1}]
+        self.records['O'] = [{'id': 'O', 'rev': 1, 'kind': 'Obligation', 'data': data}]
+        self.run['actions'] = [attempt]
+        self.assertEqual(len(reuse_candidates(self.run, self.records, self.snapshot)), 1)
+        data['state'] = 'closed'
+        self.assertEqual(reuse_candidates(self.run, self.records, self.snapshot), [])
+
     def test_terminal_run_stops_and_current_snapshot_overrides_old_copy(self):
         old_copy = deepcopy(self.run)
         old_copy['actions'] = [self.attempt('old', 'new_argument')]

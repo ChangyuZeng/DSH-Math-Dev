@@ -70,6 +70,14 @@
 !/workflow_strategy.py
 !/workflow_runner.mjs
 !/workflow-ui.cjs
+!/workflow_v2.py
+!/workflow_tool_store.py
+!/workflow_candidates.py
+!/workflow_ports.mjs
+!/workflow_executor.mjs
+!/workflow_runtime.py
+!/workflow_runtime.mjs
+!/workflow_host.mjs
 
 !/locale/
 /locale/*
@@ -90,6 +98,7 @@
 !/contracts/workbench-v1.md
 !/contracts/workflow-v1.md
 !/contracts/workflow-evaluation-v1.md
+!/contracts/workflow-v2.md
 !/contracts/cards/
 /contracts/cards/*
 !/contracts/cards/*.md
@@ -103,10 +112,21 @@
 !/docs/workflow/harness-influences.md
 !/docs/workflow/current-workflow.html
 !/docs/workflow/candidate.json
+!/docs/workflow/optimization-v2.md
+!/docs/workflow/optimization-v2-results.md
 
 # Offline evaluation protocol and helper source; never admit run data.
 !/evaluation/
 /evaluation/*
+!/evaluation/workflow-v2/
+/evaluation/workflow-v2/*
+!/evaluation/workflow-v2/*.py
+!/evaluation/workflow-v2/*.mjs
+!/evaluation/workflow-v2/README.md
+!/evaluation/optimization-v1/
+/evaluation/optimization-v1/*
+!/evaluation/optimization-v1/*.py
+!/evaluation/optimization-v1/*.mjs
 !/evaluation/four-harness-v1/
 /evaluation/four-harness-v1/*
 !/evaluation/four-harness-v1/README.md

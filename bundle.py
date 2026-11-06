@@ -119,6 +119,8 @@ def export_project(projects, project_id, sources, expected_seq, run=None):
             payloads["runtime/p2c_schema.py"] = read_regular(BASE / "schema.py")
             payloads["runtime/schema.py"] = read_regular(HERE / "schema.py")
             payloads["runtime/cli.py"] = read_regular(HERE / "runtime_cli.py")
+            from checkers.workflow_certificate_v2 import source_bytes
+            payloads['evaluation/optimization-v1/certificates.py'] = source_bytes()[1]
         for name, raw in payloads.items():
             if name not in ("verify_bundle.py",) and not name.startswith("runtime/"):
                 guard_content(raw)

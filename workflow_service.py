@@ -17,7 +17,7 @@ from workflow_context import build_snapshot, completion_projection, freshness, h
 from workflow_store import WorkflowStore
 from workflow_strategy import derive_strategy
 
-PUBLIC = {'list', 'read', 'prepare', 'start', 'pause', 'cancel', 'reconcile', 'continue', 'commit'}
+PUBLIC = {'list', 'read', 'prepare', 'start', 'pause', 'cancel', 'reconcile', 'continue', 'commit', 'grant_chat'}
 
 
 @contextmanager
@@ -55,6 +55,9 @@ def control(root, project_id, session_id, command):
             fields(command, 'action run_id expected_rev action_id')
             return _commit_proposal(root, project_id, command['run_id'], command['expected_rev'], command['action_id'])
         request = {**command, 'project_id': project_id}
+        if command['action'] == 'grant_chat':
+            fields(command, 'action run_id expected_rev operation_id allowed')
+            request['session_id'] = session_id
         if command['action'] == 'continue':
             with projects.open_project(project_id, require_writable=True) as (_, research):
                 request['research_head'] = head(research)
@@ -181,6 +184,19 @@ def commit_proposal(root, project_id, run_id, expected_rev, action_id):
 def dispatch_internal(root, action, args):
     if action == 'workflow-control':
         return control(root, **args)
+    if action == 'workflow-template':
+        fields(args, 'project_id session_id problem_ref verification_policy')
+        ref(args['problem_ref'])
+        require(args['verification_policy'] in {'model-directed-v1', 'verify-revise-v1'}, 'INVALID_SPEC', 'Unknown verification policy')
+        with Projects(root).open_project(args['project_id'], require_writable=True, session_id=args['session_id'], chat=True) as (_, research):
+            problem = research.get(args['problem_ref']['id'], args['problem_ref']['rev'])
+            from workflow_candidates import certificate_contract
+            from workflow_runtime import qualified_spec
+            for task_id in ('D1', 'D2', 'D3', 'D4', 'D5', 'D6', 'H1', 'H2', 'H3'):
+                contract = certificate_contract(task_id)
+                if problem['kind'] == 'Problem' and all(problem['data'].get(k) == v for k, v in contract['problem_fields'].items()):
+                    return qualified_spec(args['project_id'], task_id, args['verification_policy'], args['problem_ref'])
+        require(False, 'RUNTIME_CAPABILITY', 'This exact problem has no qualified fixed certificate binding')
     if action == 'workflow-context':
         return context(root, **args)
     if action == 'workflow-commit':
@@ -188,6 +204,14 @@ def dispatch_internal(root, action, args):
     if action == 'workflow-state':
         with transaction(root, args['project_id']):
             return _state(root, args)
+    if action == 'workflow-tool':
+        from workflow_tool_store import tool_receipt
+        with transaction(root, args['project_id']):
+            return tool_receipt(root, **args)
+    if action in ('workflow-candidate', 'workflow-candidate-check'):
+        from workflow_candidates import archive_candidate, archive_check
+        with transaction(root, args['project_id']):
+            return (archive_candidate if action == 'workflow-candidate' else archive_check)(root, **args)
     require(False, 'FORBIDDEN', 'Unknown workflow service entry')
 
 

@@ -16,7 +16,8 @@ from schema import SCHEMA_VERSION, canonical, require
 ROOT = Path(__file__).resolve().parent
 RUNTIME_FILES = ("schema.py", "research_store.py", "domain.py", "checking.py", "render.py",
                  "exporting.py", "verify_export.py", "cli.py", "checkers/primitive_pythagorean_v1.py",
-                 "checkers/registry.py", "checkers/ring15_d20_v1.py", "checkers/q7_e305_v1.py", "checkers/grid75_p149_v1.py")
+                 "checkers/registry.py", "checkers/ring15_d20_v1.py", "checkers/q7_e305_v1.py", "checkers/grid75_p149_v1.py",
+                 "checkers/workflow_certificate_v2.py")
 SECRET_KEYS = {"accesstoken", "refreshtoken", "apikey", "clientsecret", "authorization", "password"}
 
 
@@ -118,6 +119,8 @@ def export_bundle(store, destination, expected_seq=None):
         payloads[name] = text.encode("utf-8")
     for name in RUNTIME_FILES:
         payloads["runtime/" + name] = read_regular(safe_path(ROOT, name))
+    from checkers.workflow_certificate_v2 import source_bytes
+    payloads['evaluation/optimization-v1/certificates.py'] = source_bytes()[1]
     checks = []
     for versions in store.records.values():
         obj = versions[0]

@@ -22,6 +22,17 @@ SPECS = {
 }
 
 
+# Older portable bundles do not include this optional workflow checker. Do not
+# hide dependency/hash failures when the module itself is present.
+try:
+    import checkers.workflow_certificate_v2 as workflow_certificate
+except ModuleNotFoundError as error:
+    if error.name != "checkers.workflow_certificate_v2":
+        raise
+else:
+    SPECS.update(workflow_certificate.registered_specs(workflow_certificate))
+
+
 def get(checker_id, scope=None):
     if checker_id not in SPECS:
         return None

@@ -6,10 +6,11 @@ import {fileURLToPath} from 'node:url';
 import {humanApiRejection} from './human-api.mjs';
 import {registerChatTools, CHAT_TOOLS} from './chat-tools.mjs';
 import {executeStep, executeLoop, workflowCapability} from './workflow_runner.mjs';
+import {createWorkflowV2Host, WORKFLOW_CHAT_TOOLS} from './workflow_host.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 export const name = 'dsh-math';
-export const inject = ['webServer', 'tools', 'connection'];
+export const inject = ['webServer', 'tools', 'connection', 'agents'];
 
 export const MODEL_TOOLS = ['research_read', 'note_save', 'obligation_save', 'evidence_register', 'check_witness', 'material_read', 'file_read', 'file_write', 'python_run', 'research_finish'];
 const DESCRIPTIONS = {
@@ -89,14 +90,27 @@ export function apply(ctx, config = {}) {
   }
   let pending = Promise.resolve();
   const workflowActive = new Map();
-  const workflowCall = (action, args) => spawnPython('workflow_service.py', root, {action, args}, config.python);
-  const capability = () => workflowCapability(config.workflowExecution, ctx.get?.('llm'));
-  async function workflowRequest(request) {
+  const workflowV2 = createWorkflowV2Host({ctx, config, root, bindings});
+  const workflowCall = workflowV2.call;
+  const capability = () => ({...workflowCapability(config.workflowExecution, ctx.get?.('llm')), tool_workflow: workflowV2.capability()});
+  async function workflowRequest(request, chatExec = null) {
     const args = request.args;
     if (!args || typeof args.project_id !== 'string' || typeof args.session_id !== 'string') throw Error('Workflow project/session required');
     const cap = capability();
+    if (request.action === 'workflow-template') {
+      await workflowV2.admit(args, {readOnly: true});
+      return {spec: await workflowCall('workflow-template', args), capability: cap};
+    }
     if (request.action === 'workflow') {
-      if (args.command?.action === 'start' && !cap.enabled) throw Error(cap.reason);
+      if (chatExec) throw Error('Ordinary tools cannot create or grant workflow runs');
+      if (['prepare', 'start', 'continue', 'grant_chat'].includes(args.command?.action)) {
+        const existing = args.command.run_id && args.command.action !== 'prepare'
+          ? await workflowCall('workflow-control', {project_id: args.project_id, session_id: args.session_id,
+            command: {action: 'read', run_id: args.command.run_id}}) : null;
+        const v2 = (args.command.spec?.format ?? existing?.format) === 'dsh-math-workflow-v2';
+        if (v2) await workflowV2.admit({...args, run_id: args.command.run_id, expected_rev: args.command.expected_rev || 1});
+        else if (args.command.action === 'start' && !cap.enabled) throw Error(cap.reason);
+      }
       if (['pause', 'cancel', 'reconcile'].includes(args.command?.action)) {
         const current = await workflowCall('workflow-control', {project_id: args.project_id, session_id: args.session_id,
           command: {action: 'read', run_id: args.command.run_id}});
@@ -111,29 +125,43 @@ export function apply(ctx, config = {}) {
           if (args.command.action === 'pause' && ['paused', 'needs_reconcile'].includes(latest.status)) return {run: latest, capability: cap};
           args.command.expected_rev = latest.rev;
         }
+        await workflowV2.close(args.project_id, args.command.run_id);
       }
       const value = await workflowCall('workflow-control', args);
       return args.command?.action === 'list' ? {runs: value, capability: cap} : {run: value, capability: cap};
     }
-    if (!cap.enabled) throw Error(cap.reason);
+    if (!['workflow-run', 'workflow-step'].includes(request.action)) throw Error('Unknown workflow entry');
     const activeKey = `${args.project_id}/${args.run_id}`;
     if (workflowActive.has(activeKey)) throw Error('Workflow action already active');
-    // Establish session authority through the same shared human-control gate.
-    await workflowCall('workflow-control', {project_id: args.project_id, session_id: args.session_id,
+    // Project admission precedes runtime creation and every model request.
+    const selected = await workflowCall('workflow-control', {project_id: args.project_id, session_id: args.session_id,
       command: {action: 'read', run_id: args.run_id}});
+    const isV2 = selected.format === 'dsh-math-workflow-v2';
+    if (!isV2 && chatExec) throw Error('Ordinary workflow execution requires an explicitly granted v2 run');
+    if (!isV2 && !cap.enabled) throw Error(cap.reason);
     if (workflowActive.has(activeKey)) throw Error('Workflow action already active');
     const controller = new AbortController();
     let settled;
     const active = {controller, done: new Promise(resolve => { settled = resolve; })};
     workflowActive.set(activeKey, active);
+    const abortFromChat = () => controller.abort();
+    chatExec?.signal?.addEventListener('abort', abortFromChat, {once: true});
+    if (chatExec?.signal?.aborted) controller.abort();
     try {
-      const run = await (request.action === 'workflow-run' ? executeLoop : executeStep)({call: workflowCall, llm: ctx.get('llm'), projectId: args.project_id,
+      const run = isV2 ? await workflowV2.execute(args, {exec: chatExec, signal: controller.signal, continuous: request.action === 'workflow-run'})
+        : await (request.action === 'workflow-run' ? executeLoop : executeStep)({call: workflowCall, llm: ctx.get('llm'), projectId: args.project_id,
         runId: args.run_id, expectedRev: args.expected_rev, kind: args.kind, targetRef: args.target_ref,
         dependencyRefs: args.dependency_refs, routeId: args.route_id, signal: controller.signal});
       return {run, capability: cap};
-    } finally { if (workflowActive.get(activeKey) === active) workflowActive.delete(activeKey); settled(); }
+    } finally {
+      chatExec?.signal?.removeEventListener('abort', abortFromChat);
+      if (workflowActive.get(activeKey) === active) workflowActive.delete(activeKey); settled();
+    }
   }
-  ctx.effect(() => () => { for (const active of workflowActive.values()) active.controller.abort(); }, 'dsh-math: stop workflow calls');
+  ctx.effect(() => () => {
+    for (const active of workflowActive.values()) active.controller.abort();
+    return Promise.allSettled([...workflowActive.values()].map(active => active.done)).then(() => workflowV2.dispose());
+  }, 'dsh-math: stop workflow calls');
   if (!config.headless) ctx.effect(() => ctx.webServer.register({kind: 'exact', path: '/dsh-math/api', async handler(req, res) {
     const reply = (status, value) => {
       res.writeHead(status, {'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff'});
@@ -149,13 +177,13 @@ export function apply(ctx, config = {}) {
         if (Buffer.byteLength(body) > 1024 * 1024) return reply(413, {error: 'Request exceeds 1 MiB'});
       }
       const request = JSON.parse(body);
-      if (['workflow', 'workflow-step', 'workflow-run'].includes(request.action)) {
+      if (['workflow', 'workflow-step', 'workflow-run', 'workflow-template'].includes(request.action)) {
         return reply(200, {ok: true, value: await workflowRequest(request)});
       }
       const task = pending.then(() => pythonCall(root, request, config.python));
       pending = task.catch(() => {});
       reply(200, {ok: true, value: await task});
-    } catch (error) { reply(400, {ok: false, error: error.message}); }
+    } catch (error) { reply(400, {ok: false, error: error.message, code: error.code ?? null}); }
   }}), 'dsh-math: local human API');
 
   function modelCall(gate, request, signal) {
@@ -199,6 +227,8 @@ export function apply(ctx, config = {}) {
     run: (argv, request, signal) => spawnCommand(argv, request, {signal}),
   });
 
+  workflowV2.registerChat(workflowRequest);
+
   function cancelRun(runId, reason = 'user_cancelled') {
     const gate = gates.get(runId);
     if (!gate) throw Error('Unknown run');
@@ -222,5 +252,5 @@ export function apply(ctx, config = {}) {
     })();
     return gate.done;
   }
-  return {cancelRun, modelToolNames: [...MODEL_TOOLS], chatToolNames: !config.headless && config.chatPreparation !== false ? [...CHAT_TOOLS] : []};
+  return {cancelRun, modelToolNames: [...MODEL_TOOLS], chatToolNames: !config.headless && config.chatPreparation !== false ? [...CHAT_TOOLS, ...(config.workflowV2?.enabled ? WORKFLOW_CHAT_TOOLS : [])] : []};
 }

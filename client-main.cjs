@@ -69,7 +69,7 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
   async function request(action, args = {}) {
     const response = await fetch('/dsh-math/api', {method: 'POST', headers: {'content-type': 'application/json', 'x-dsh-math': 'human-ui-v1'}, body: JSON.stringify({action, args})});
     const result = await response.json();
-    if (!result.ok) { const error = Error([result.error, result.message].filter(Boolean).join(': ') || '本地请求失败'); error.code = result.error; throw error; }
+    if (!result.ok) { const error = Error([result.error, result.message].filter(Boolean).join(': ') || '本地请求失败'); error.code = result.code ?? result.error; throw error; }
     return result.value;
   }
   function MathIcon({size = 14}) {
@@ -444,6 +444,7 @@ window.__ModuleLoader__.load({id: 'dsh-math', factory: require => {
           goal && view.project.schema_version === 4 && h(WorkflowPanel, {
             request: workbenchRequest.current, projectId: selected, sessionId,
             problemRef: {id: goal.id, rev: goal.rev}, writable,
+            onInspect: ref => inspect(view.objects.find(object => object.id === ref.id && object.rev === ref.rev)),
             onChanged: () => lifetime.current.active && lifetime.current.selected === selected ? run(() => load(), '刷新研究流程记录', true) : undefined,
           }),
           h(Panel, {title: '最近内容', actions: h(Button, {size: 'small', onClick: () => changeTab('records')}, '查看全部')},

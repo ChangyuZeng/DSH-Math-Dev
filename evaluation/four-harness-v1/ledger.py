@@ -35,7 +35,7 @@ RESOURCE_POLICY = {'mode': 'observed', 'scope': 'per_tool_and_sampled_native_pro
                    'process_and_tool_cpu_additive': False}
 ROLES = {"C": {"agent", "compaction"}, "X": {"coordinator", "explorer", "verifier", "compaction"},
          "R": {"generator", "strategy", "verifier", "repair", "compaction"},
-         "M": {"worker", "compaction"}}
+         "M": {"worker", "verifier", "reviser", "summary", "compaction"}}
 
 
 def canonical(value):
@@ -109,16 +109,67 @@ def native_identity(raw):
 
 TRANSIENT_CODES = frozenset({'server_is_overloaded', 'server_error', 'internal_server_error',
     'rate_limit_exceeded', 'service_unavailable_error', 'http_429', 'http_500', 'http_502', 'http_503', 'http_504'})
+NONTRANSIENT_CODES = frozenset({'invalid_api_key', 'authentication_error', 'unauthorized', 'permission_denied',
+    'insufficient_quota', 'billing_hard_limit_reached', 'model_not_found', 'invalid_request_error',
+    'invalid_parameter', 'unsupported_parameter', 'context_length_exceeded'})
+
+
+def retry_error_schema_valid(error):
+    return (error is None or (isinstance(error, dict) and
+        all(error.get(key) is None or isinstance(error[key], str) for key in ('code', 'type')) and
+        (error.get('headers') is None or isinstance(error['headers'], dict))))
+
+
+def usage_schema_valid(raw):
+    """Missing counters stay unknown; malformed or contradictory counters are not retry proof."""
+    if raw is None:
+        return True
+    if not isinstance(raw, dict):
+        return False
+    counters = {key: raw.get(key) for key in ('input_tokens', 'output_tokens', 'total_tokens')}
+    for details, key in (('input_tokens_details', 'cached_tokens'), ('output_tokens_details', 'reasoning_tokens')):
+        value = raw.get(details)
+        if value is not None and not isinstance(value, dict):
+            return False
+        counters[key] = value.get(key) if isinstance(value, dict) else None
+    if any(value is not None and (type(value) is not int or value < 0) for value in counters.values()):
+        return False
+    incoming, outgoing, total = (counters[key] for key in ('input_tokens', 'output_tokens', 'total_tokens'))
+    if all(value is not None for value in (incoming, outgoing, total)) and total != incoming + outgoing:
+        return False
+    return all(part is None or whole is None or part <= whole for part, whole in
+               ((incoming, total), (outgoing, total), (counters['cached_tokens'], incoming),
+                (counters['reasoning_tokens'], outgoing), (counters['cached_tokens'], total),
+                (counters['reasoning_tokens'], total)))
 
 
 def retryable_response(response):
-    if not isinstance(response, dict) or response.get('status') != 'failed' or response.get('output'):
+    if (not isinstance(response, dict) or response.get('status') != 'failed' or response.get('output') != [] or
+            response.get('object') not in (None, 'response') or
+            ('id' in response and (not isinstance(response['id'], str) or not response['id'])) or
+            not usage_schema_valid(response.get('usage'))):
         return False
     error = response.get('error')
     reasoning = response.get('reasoning')
+    if reasoning is not None and not isinstance(reasoning, dict):
+        return False
     effort = reasoning.get('effort') if isinstance(reasoning, dict) else None
-    return (isinstance(error, dict) and error.get('code') in TRANSIENT_CODES
+    output_tokens = normalize_usage(response.get('usage'), terminal=False)['output_tokens']
+    return (isinstance(error, dict) and retry_error_schema_valid(error) and error.get('code') in TRANSIENT_CODES
+            and error.get('type') not in NONTRANSIENT_CODES
+            and output_tokens in (None, 0) and not response.get('partial_output_observed')
             and response.get('model') in (None, POLICY['model']) and effort in (None, POLICY['effort']))
+
+
+def retryable_transport_failure(error):
+    """Only instrumented connection failures with proof that HTTP send never began."""
+    evidence = getattr(error, 'evidence', None)
+    return (isinstance(error, GateError) and error.code == 'TRANSPORT_SEND' and isinstance(evidence, dict)
+            and evidence.get('format') == 'four-harness-transport-v2'
+            and evidence.get('stage') in {'dns', 'tcp', 'tls'} and evidence.get('send_state') == 'not_started'
+            and evidence.get('failure_kind') in {'dns_temporary', 'timeout', 'connection_refused',
+                'connection_reset', 'network_unreachable', 'host_unreachable'}
+            and not evidence.get('partial_output_observed'))
 
 
 def retry_delay(response, attempt):
@@ -478,7 +529,7 @@ class Ledger:
             self._event(db, row["run"], "request_started", request_id=request_id, role=row["role"], model=POLICY,
                         parent_request_id=row["parent"], thread_id=row["thread"])
 
-    def dispatch_request(self,request_id,start):
+    def dispatch_request(self,request_id,start, *, recover_not_sent=False):
         """Serialize the real synchronous send with permanent campaign closure.
 
         The starter must return promptly after initiating I/O, never wait for a
@@ -499,9 +550,15 @@ class Ledger:
             except BaseException as error:
                 failure=error
                 db.execute("UPDATE requests SET state='unknown' WHERE id=?",(request_id,))
+                budget = json.loads(self._run(db, row['run'], active=False)['spec'])['budget']
+                recoverable = (recover_not_sent and budget == OPTIMIZATION_BUDGET and retryable_transport_failure(error))
+                # Legacy callers still close on every synchronous failure. The gateway
+                # alone opts into a new physical attempt; this method never resends.
                 self._event(db,row['run'],'request_unknown',request_id=request_id,role=row['role'],
-                            reservation_retained=row['reservation'],reason=getattr(error,'code','transport_start_failed'))
-                self._close(db,row['run'],getattr(error,'code','transport_start_failed'),campaign=True)
+                            reservation_retained=row['reservation'],reason=getattr(error,'code','transport_start_failed'),
+                            retryable=bool(recoverable))
+                if not recoverable:
+                    self._close(db,row['run'],getattr(error,'code','transport_start_failed'),campaign=True)
             else:
                 self._event(db,row['run'],'request_dispatched',request_id=request_id,
                             boundary='synchronous_transport_start_under_campaign_write_lock')
