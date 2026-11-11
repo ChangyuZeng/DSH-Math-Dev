@@ -28,7 +28,7 @@ SOURCE_PINS = {
     'workflow_runner.mjs': 'af7beeac207c59eae4c0b1fa8a2712ade6a4d8afccb30b234e6b73a4e4feb061',
     'workflow_store.py': 'c26f5bc4fdf5514312a99ad920fca6e16105ba93d0ff9c6600de808aacce58a3',
     'workflow_context.py': 'a410b202124d51417eff42f738d88dc9db96d09a4de4d9f5f8b53168e7eec3b4',
-    'workflow_service.py': 'faa3734e725f6df5f65b7e2d445a91dd7ad53eaa97eed30d352bc287215d4b7b',
+    'workflow_service.py': 'c599fff41ef98f33722b8b2f22a427c760b39ac4393753e50c140233c652c200',
 }
 
 from backend import Projects, checked_root, write_new

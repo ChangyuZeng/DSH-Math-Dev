@@ -72,6 +72,27 @@ def check(task, candidate):
                     elif parent[a]!=b and parent[b]!=a and dist[a]+dist[b]+1<6:
                         raise ValueError('Cycle of length below 6')
         ok=True
+    elif k=='ramsey_coloring':
+        n=p['n'];size=p['clique_size']
+        if len(v)!=n*(n-1)//2 or any(x not in (0,1) for x in v):
+            raise ValueError('Expected one 0/1 color per edge in i<j lexicographic order')
+        adjacency=[[0]*n for _ in range(2)];index=0
+        for i in range(n):
+            for j in range(i+1,n):
+                color=v[index];index+=1
+                adjacency[color][i] |= 1<<j
+                adjacency[color][j] |= 1<<i
+        def has_clique(neighbors, candidates, needed):
+            if needed==0:return True
+            while candidates.bit_count()>=needed:
+                bit=candidates & -candidates;candidates ^= bit
+                if has_clique(neighbors,candidates & neighbors[bit.bit_length()-1],needed-1):
+                    return True
+            return False
+        # Each increasing vertex tuple is searched via common-neighbor bitsets.
+        # Evaluate both colors even when the first already contains a clique.
+        forbidden=[has_clique(neighbors,(1<<n)-1,size) for neighbors in adjacency]
+        ok=not any(forbidden)
     elif k=='magic_square':
         n=p['n'];target=n*(n*n+1)//2
         if len(v)!=n*n or set(v)!=set(range(1,n*n+1)):raise ValueError('Expected a normal square permutation')
@@ -197,7 +218,15 @@ def cards():
        '1009 is a prime congruent to 1 modulo 4.'),
       ('R3','reserve','exact_linear_algebra','determinant',{'A':[[rng.randrange(-50,51) for _ in range(12)] for _ in range(12)]},
        'Compute the exact integer determinant of the supplied 12 by 12 matrix. Encode one integer.',
-       'A finite integer determinant is uniquely defined.')]
+       'A finite integer determinant is uniquely defined.'),
+      ('D7','session1_dev','iterative_search','ramsey_coloring',{'n':42,'clique_size':5},
+       'Construct a two-coloring of every edge of the complete graph on vertices 0..41 with no monochromatic K5 in either color. Encode exactly 861 values in {0,1}, one for each edge (i,j) in lexicographic order with i<j (i outermost, j increasing). Only one construction is requested; no extremal or optimality claim is requested.',
+       'A finite construction task; acceptance checks every possible monochromatic K5 in both colors.'),
+      ('S1','session1_acceptance','construction','ramsey_coloring',{'n':17,'clique_size':4},
+       'Construct a two-coloring of every edge of the complete graph on vertices 0..16 with no monochromatic K4 in either color. Encode exactly 136 values in {0,1}, one for each edge (i,j) in lexicographic order with i<j (i outermost, j increasing). This is an independent acceptance subgoal and does not count as a subsequent research task.',
+       'A finite construction exists; acceptance checks every possible monochromatic K4 in both colors.')]
+    # Original reserve R1 (CRT) remains immutable and unregistered.
+    # S1 is an acceptance-only subgoal with its own unambiguous identifier.
     result=[]
     for ident,split,family,kind,params,statement,solvable in specs:
         card={'id':ident,'split':split,'family':family,'kind':kind,'parameters':params,

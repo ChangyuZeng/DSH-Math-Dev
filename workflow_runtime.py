@@ -138,7 +138,7 @@ class WorkflowRuntime:
                     and not run['execution_events'] and run['usage']['requests'] == 0,
                     'RECONCILE_REQUIRED', 'Used or continued lineages cannot start a new quota')
             checker = spec['execution']['checker']
-            require(type(checker) is dict and re.fullmatch(r'workflow_certificate_v2_[DHR][1-6]', checker.get('id', '')),
+            require(type(checker) is dict and re.fullmatch(r'workflow_certificate_v2_(?:D[1-7]|H[1-3]|S1)', checker.get('id', '')),
                     'RUNTIME_CAPABILITY', 'Runtime supports qualified public certificate tasks only')
             task_id = checker['id'].rsplit('_', 1)[1]
             contract = certificate_contract(task_id)

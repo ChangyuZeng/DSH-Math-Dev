@@ -14,8 +14,8 @@ from pathlib import Path
 import sys
 
 VERSION = "workflow-certificate-v2.1"
-CERTIFICATE_SOURCE_SHA256 = "31c79a4f97162ea387c58483bfc603689cfc2ee091652926a12dce09f7ebe241"
-TASK_IDS = ("D1", "D2", "D3", "D4", "D5", "D6", "H1", "H2", "H3")
+CERTIFICATE_SOURCE_SHA256 = "fcfe7e400942705bf71473f6968df581d84d86965ce43e29f3f26b70e9df52b1"
+TASK_IDS = ("D1", "D2", "D3", "D4", "D5", "D6", "D7", "H1", "H2", "H3", "S1")
 PREFIX = "workflow_certificate_v2_"
 CHECKS = ["legal", "target_met"]
 VALUES = ["valid", "target_met", "H", "D", "task_sha256", "certificate_source_sha256", "detail"]
@@ -83,20 +83,23 @@ def _contract(card, raw):
     }
 
 
+def _registered_cards(source):
+    # Legacy reserve cards remain unregistered; S1 is acceptance-only.
+    return [card for card in source.cards() if card["id"] in TASK_IDS and card["split"] != "reserve"]
+
+
 def contract(task_id):
     """Return public frozen fields; code_sha256 is the CommonTools rendered hash."""
     if task_id not in TASK_IDS:
         raise ValueError("Unregistered workflow certificate task")
     module, raw = _source()
-    return _contract(next(card for card in module.cards() if card["id"] == task_id), raw)
+    return _contract(next(card for card in _registered_cards(module) if card["id"] == task_id), raw)
 
 
 def registered_specs(module):
     source, raw = _source()
     specs = {}
-    for card in source.cards():
-        if card["id"] not in TASK_IDS:
-            continue
+    for card in _registered_cards(source):
         item = _contract(card, raw)
         specs[item["checker"]["id"]] = {
             "module": module, "path": "workflow_certificate_v2.py", "problem_fields": item["problem_fields"],
@@ -129,7 +132,7 @@ def evaluate(raw, scope):
         return dict(result, error_code="unsupported")
     try:
         source, _ = _source()
-        card = next(card for card in source.cards() if card["id"] == task_id)
+        card = next(card for card in _registered_cards(source) if card["id"] == task_id)
     except (OSError, ValueError, StopIteration):
         return dict(result, error_code="execution_error")
     try:

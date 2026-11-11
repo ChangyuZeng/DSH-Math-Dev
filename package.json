@@ -32,6 +32,8 @@
     "evaluation/four-harness-v1/native.py",
     "evaluation/four-harness-v1/observation.py",
     "evaluation/optimization-v1/certificates.py",
+    "evaluation/session1/prepare.py",
+    "evaluation/session1/terminal.mjs",
     "contracts/workflow-v1.md",
     "contracts/workflow-evaluation-v1.md",
     "project-fields.json",

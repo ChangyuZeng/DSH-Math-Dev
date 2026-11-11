@@ -192,7 +192,8 @@ def dispatch_internal(root, action, args):
             problem = research.get(args['problem_ref']['id'], args['problem_ref']['rev'])
             from workflow_candidates import certificate_contract
             from workflow_runtime import qualified_spec
-            for task_id in ('D1', 'D2', 'D3', 'D4', 'D5', 'D6', 'H1', 'H2', 'H3'):
+            from checkers.workflow_certificate_v2 import TASK_IDS
+            for task_id in TASK_IDS:
                 contract = certificate_contract(task_id)
                 if problem['kind'] == 'Problem' and all(problem['data'].get(k) == v for k, v in contract['problem_fields'].items()):
                     return qualified_spec(args['project_id'], task_id, args['verification_policy'], args['problem_ref'])

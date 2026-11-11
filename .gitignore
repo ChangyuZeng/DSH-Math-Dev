@@ -118,6 +118,10 @@
 # Offline evaluation protocol and helper source; never admit run data.
 !/evaluation/
 /evaluation/*
+!/evaluation/session1/
+/evaluation/session1/*
+!/evaluation/session1/prepare.py
+!/evaluation/session1/terminal.mjs
 !/evaluation/workflow-v2/
 /evaluation/workflow-v2/*
 !/evaluation/workflow-v2/*.py
