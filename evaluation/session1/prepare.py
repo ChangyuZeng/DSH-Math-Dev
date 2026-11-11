@@ -30,6 +30,19 @@ def source_inventory():
 
 
 def prepare(output, mode, task, stage_goal=None):
+    if mode == 'real':
+        # Read-only admission before creating project/run/claim. The host manages
+        # OAuth maintenance separately; experiment transport still never refreshes.
+        from transport import load_host_credential
+        try:
+            credential = load_host_credential()
+            del credential
+        except Exception as error:
+            save_json(output / 'credential-preflight.json', {'ready': False,
+                'code': getattr(error, 'code', 'AUTH_INVALID'), 'network_requests': 0})
+            raise
+        save_json(output / 'credential-preflight.json', {'ready': True,
+            'code': None, 'network_requests': 0})
     root = output / 'store'
     session = 'terminal-session1-' + str(uuid.uuid4())
     contract = certificate_contract(task)
