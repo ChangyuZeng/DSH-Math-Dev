@@ -165,6 +165,33 @@ class TransportTests(unittest.TestCase):
     def context(self, request_id='offline-request'):
         return dict(request_id=request_id, run_id='M1', role='worker', cancel_event=threading.Event())
 
+    def test_tls_eof_failed_identity_cannot_be_replayed_or_hide_handshake_attempts(self):
+        from test_transport_v2 import offline_tls, unexpected_eof
+        evidence = []
+        with offline_tls([unexpected_eof(), None]) as (sockets, factory):
+            transport = HostTransport(auth_loader=lambda: Credential('fixture-access-secret',
+                'fixture-account-secret', time.time() * 1000 + 60000), connection_factory=factory,
+                evidence_sink=evidence.append)
+            context = self.context()
+            with self.assertRaises(GateError) as caught:
+                transport.start(payload(), context)
+            self.assertEqual(caught.exception.evidence['failure_kind'], 'tls_unexpected_eof')
+            self.assertEqual(len(sockets), 1)
+            self.assertEqual(sockets[0].handshakes, 1)
+            self.assertFalse(sockets[0].sent)
+            with self.assertRaises(GateError) as replay:
+                transport.start(payload(), context)
+            self.assertEqual(replay.exception.code, 'NO_REPLAY')
+            self.assertEqual(len(sockets), 1)
+            final = transport.start(payload(), self.context('new-physical-id')).result(2)
+            self.assertEqual(final, response())
+            self.assertEqual(len(sockets), 2)
+            self.assertEqual(sum(chunk.startswith(b'POST ') for wire in sockets for chunk in wire.sent), 1)
+            self.assertNotIn('fixture-access-secret', json.dumps(evidence))
+            self.assertNotIn('fixture-account-secret', json.dumps(evidence))
+            self.assertIsNone(caught.exception.__cause__)
+            self.assertIsNone(caught.exception.__context__)
+
     def test_partial_candidate_survives_transport_future_without_replay(self):
         raw=event('response.function_call_arguments.delta',delta='{"candidate":{"values":[1]}}')
         transport,connection=self.make(FakeConnection(raw=raw))

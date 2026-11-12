@@ -173,6 +173,11 @@ class _Diagnostics:
                           outcome='failed' if error else 'completed')
         if error is not None:
             self.value['failure_kind'] = _failure_kind(error)
+            if (type(error) is ssl.SSLEOFError and
+                    getattr(error, 'reason', None) == 'UNEXPECTED_EOF_WHILE_READING' and
+                    self.value.get('stage') == 'tls' and self.value.get('send_state') == 'not_started' and
+                    self.value.get('http_status') is None and not self.value.get('partial_output_observed')):
+                self.value['failure_kind'] = 'tls_unexpected_eof'
 
 
 class _IODeadline:

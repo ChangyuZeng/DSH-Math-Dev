@@ -1,5 +1,6 @@
 """Deterministic P0 transport fixtures. Only the gateway's loopback server uses sockets."""
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from copy import deepcopy
 from io import BytesIO
 import errno
@@ -109,7 +110,66 @@ def host(connection=None, **options):
     return HostTransport(**{**defaults, **options})
 
 
+def unexpected_eof(reason='UNEXPECTED_EOF_WHILE_READING', kind=ssl.SSLEOFError):
+    error = kind(ssl.SSL_ERROR_EOF, SECRET)
+    error.reason = reason
+    return error
+
+
+@contextmanager
+def offline_tls(failures):
+    """Inject sockets at the existing host boundary; retain real TLS/send staging."""
+    created = []
+    class Socket(FakeSocket):
+        def __init__(self, failure):
+            super().__init__()
+            self.failure, self.sent, self.handshakes = failure, [], 0
+        def connect(self, address): pass
+        def do_handshake(self):
+            self.handshakes += 1
+            if self.failure is not None:
+                raise self.failure
+        def sendall(self, raw): self.sent.append(raw)
+        def close(self): pass
+    def create(*args, **kwargs):
+        wire = Socket(failures[len(created)])
+        created.append(wire)
+        return wire
+    class Connection(_DeadlineHTTPSConnection):
+        def connect(self):
+            self.diagnostics.enter('tls')
+            self.sock = create()
+            self.sock.do_handshake()
+        def getresponse(self):
+            return FakeResponse(terminal())
+    def factory(*args, **kwargs):
+        return Connection(*args, **kwargs)
+    yield created, factory
+
+
 class TransportV2(unittest.TestCase):
+    def test_tls_unexpected_eof_is_exact_static_pre_http_classification(self):
+        class OtherEOF(ssl.SSLEOFError): pass
+        for cause, expected in ((unexpected_eof(), 'tls_unexpected_eof'),
+                (unexpected_eof(kind=OtherEOF), 'tls_protocol'),
+                (unexpected_eof('OTHER'), 'tls_protocol'),
+                (unexpected_eof(None), 'tls_protocol'),
+                (unexpected_eof('unexpected_eof_while_reading'), 'tls_protocol'),
+                (unexpected_eof(kind=ssl.SSLError), 'tls_protocol'),
+                (unexpected_eof(kind=ssl.SSLCertVerificationError), 'tls_certificate')):
+            receipts = []
+            with self.subTest(expected=expected), offline_tls([cause]) as (sockets, factory):
+                with self.assertRaises(GateError) as caught:
+                    host(connection_factory=factory, evidence_sink=receipts.append).start(request_body(), context())
+                self.assertEqual(receipts[0]['failure_kind'], expected)
+                self.assertEqual(receipts[0]['stage'], 'tls')
+                self.assertEqual(receipts[0]['send_state'], 'not_started')
+                self.assertNotIn('http_status', receipts[0])
+                self.assertEqual(retryable_transport_failure(caught.exception), expected == 'tls_unexpected_eof')
+                self.assertEqual(sockets[0].handshakes, 1)
+                self.assertEqual(sockets[0].sent, [])
+                self.assert_redacted(caught.exception, receipts)
+
     def assert_redacted(self, error, receipts):
         self.assertNotIn(SECRET, repr(error) + str(error) + json.dumps(receipts))
         self.assertIsNone(error.__context__)
@@ -179,6 +239,7 @@ class TransportV2(unittest.TestCase):
             ('tcp', OSError(errno.ENETUNREACH, SECRET), 'network_unreachable', True),
             ('tcp', TimeoutError(SECRET), 'timeout', True),
             ('tls', ConnectionResetError(errno.ECONNRESET, SECRET), 'connection_reset', True),
+            ('tls', unexpected_eof(), 'tls_unexpected_eof', True),
             ('tls', ssl.SSLCertVerificationError(1, SECRET), 'tls_certificate', False),
             ('tls', ssl.SSLError(1, SECRET), 'tls_protocol', False)):
             with self.subTest(stage=stage, kind=kind):
@@ -448,6 +509,121 @@ class GatewayV2(unittest.TestCase):
         with received:
             raw = received.read()
             return received.status, raw if received.headers['Content-Type'] == 'text/event-stream' else json.loads(raw), dict(received.headers)
+
+    def test_tls_eof_two_failures_then_success_retains_three_physical_ids(self):
+        receipts = []
+        with offline_tls([unexpected_eof(), unexpected_eof(), None]) as (sockets, factory), \
+                patch('gateway.retry_delay', return_value=0):
+            gw = self.gateway(host(connection_factory=factory, evidence_sink=receipts.append))
+            status, body, headers = self.post(gw)
+        self.assertEqual(status, 200, body)
+        accounting = body['four_harness_accounting']
+        ids = accounting['request_ids']
+        self.assertEqual(len(set(ids)), 3)
+        self.assertEqual(json.loads(headers['X-Four-Request-Ids']), ids)
+        self.assertEqual(headers['X-Four-Request-Id'], ids[-1])
+        self.assertEqual([row['status'] for row in accounting['requests']], ['unknown', 'unknown', 'finished'])
+        self.assertEqual([row['transport']['attempt'] for row in accounting['requests']], [1, 2, 3])
+        self.assertEqual([row['transport']['retry_of'] for row in accounting['requests']], [None, ids[0], ids[1]])
+        self.assertEqual(len({row['transport']['semantic_payload_sha256'] for row in accounting['requests']}), 1)
+        snapshot = self.ledger.snapshot('run')
+        for row in snapshot['request_states'][:2]:
+            self.assertEqual(row['state'], 'unknown')
+            self.assertIsNone(row['usage'])
+            self.assertIsNone(row['raw_usage'])
+            self.assertIsNone(row['response_id'])
+            self.assertGreater(row['reservation'], 128000)
+        self.assertEqual(snapshot['request_states'][-1]['response_id'], 'resp_fixture')
+        self.assertIsNone(snapshot['total_tokens'])
+        self.assertEqual([wire.handshakes for wire in sockets], [1, 1, 1])
+        self.assertEqual(sum(chunk.startswith(b'POST ') for wire in sockets for chunk in wire.sent), 1)
+        finished = [item['request_id'] for item in self.ledger.events() if item['type'] == 'request_finished']
+        self.assertEqual(finished, [ids[-1]])
+        self.assertNotIn(SECRET, json.dumps(body) + json.dumps(receipts) + json.dumps(self.ledger.events()))
+
+    def test_tls_eof_exhaustion_stops_at_three_unknown_attempts(self):
+        with offline_tls([unexpected_eof()] * 4) as (sockets, factory), \
+                patch('gateway.retry_delay', return_value=0):
+            status, body, _ = self.post(self.gateway(host(connection_factory=factory)))
+        self.assertEqual((status, body['error']['code']), (409, 'TRANSPORT_SEND'))
+        self.assertEqual(len(sockets), 3)
+        self.assertEqual([wire.handshakes for wire in sockets], [1, 1, 1])
+        self.assertFalse(any(wire.sent for wire in sockets))
+        self.assertEqual(len(body['four_harness_accounting']['request_ids']), 3)
+        snapshot = self.ledger.snapshot('run')
+        self.assertEqual([row['state'] for row in snapshot['request_states']], ['unknown'] * 3)
+        self.assertTrue(all(row['usage'] is None and row['response_id'] is None for row in snapshot['request_states']))
+        self.assertIsNotNone(snapshot['terminal'])
+        self.assertIsNone(snapshot['total_tokens'])
+
+    def test_tls_eof_cancellation_during_retry_wait_dispatches_no_second_attempt(self):
+        with offline_tls([unexpected_eof(), None]) as (sockets, factory):
+            gw = self.gateway(host(connection_factory=factory))
+            record = self.ledger.record
+            def cancel_on_retry(run, kind, **data):
+                record(run, kind, **data)
+                if kind == 'retry_scheduled':
+                    gw.cancel_event.set()
+            with patch.object(self.ledger, 'record', side_effect=cancel_on_retry):
+                status, body, _ = self.post(gw)
+        self.assertEqual((status, body['error']['code']), (409, 'STOPPED'))
+        self.assertEqual(len(sockets), 1)
+        self.assertEqual(self.ledger.snapshot('run')['requests'], 1)
+        self.assertFalse(sockets[0].sent)
+
+    def test_tls_eof_on_last_120th_reservation_cannot_create_attempt_121(self):
+        for _ in range(119):
+            rid = self.ledger.reserve_request('run', 'worker', self.payload)
+            self.ledger.start_request(rid)
+            self.ledger.finish_request(rid, response())
+        with offline_tls([unexpected_eof(), None]) as (sockets, factory), \
+                patch('gateway.retry_delay', return_value=0):
+            status, body, _ = self.post(self.gateway(host(connection_factory=factory)))
+        self.assertEqual((status, body['error']['code']), (409, 'REQUEST_BUDGET'))
+        self.assertEqual(len(sockets), 1)
+        self.assertEqual(self.ledger.snapshot('run')['requests'], 120)
+        self.assertEqual(len(body['four_harness_accounting']['request_ids']), 1)
+        self.assertIsNone(self.ledger.snapshot('run')['request_states'][-1]['usage'])
+
+    def test_tls_eof_retry_proof_rejects_wrong_stage_send_http_and_partial_output(self):
+        base = dict(format='four-harness-transport-v2', failure_kind='tls_unexpected_eof',
+                    stage='tls', send_state='not_started')
+        for change in ({'stage': 'dns'}, {'stage': 'tcp'}, {'stage': 'send'},
+                       {'stage': 'response_headers'}, {'stage': 'stream'}, {'send_state': 'started'},
+                       {'send_state': 'completed'}, {'send_state': 'unknown'}, {'http_status': 200},
+                       {'partial_output_observed': True}, {'failure_kind': 'tls_protocol'},
+                       {'failure_kind': 'tls_certificate'}, {'format': 'other'}):
+            with self.subTest(change=change):
+                error = GateError('TRANSPORT_SEND', 'safe')
+                error.evidence = {**base, **change}
+                self.assertFalse(retryable_transport_failure(error))
+
+    def assert_tls_eof_after_send_not_retryable(self, stage):
+        connection = TimedConnection(Clock(), send_error=unexpected_eof() if stage == 'send' else None)
+        if stage == 'response_headers':
+            def fail_headers(): raise unexpected_eof()
+            connection.getresponse = fail_headers
+        if stage == 'stream':
+            class BrokenStream(FakeResponse):
+                def read1(self, count): raise unexpected_eof()
+            connection.upstream = BrokenStream(b'')
+        status, body, _ = self.post(self.gateway(host(connection)))
+        self.assertEqual(status, 409)
+        self.assertEqual(len(connection.sent), 1)
+        self.assertEqual(self.ledger.snapshot('run')['requests'], 1)
+        evidence = body['four_harness_accounting']['requests'][0]['transport']
+        self.assertEqual(evidence['stage'], stage)
+        self.assertNotEqual(evidence['failure_kind'], 'tls_unexpected_eof')
+        self.assertNotIn(SECRET, json.dumps(body) + json.dumps(self.ledger.events()))
+
+    def test_tls_eof_send_never_retries(self):
+        self.assert_tls_eof_after_send_not_retryable('send')
+
+    def test_tls_eof_headers_never_retries(self):
+        self.assert_tls_eof_after_send_not_retryable('response_headers')
+
+    def test_tls_eof_stream_never_retries(self):
+        self.assert_tls_eof_after_send_not_retryable('stream')
 
     def test_every_physical_retry_is_projected_with_unknown_usage_and_final_core_only(self):
         final = response(usage={'input_tokens': 10, 'output_tokens': 2, 'total_tokens': 12})

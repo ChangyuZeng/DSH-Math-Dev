@@ -167,8 +167,10 @@ def retryable_transport_failure(error):
     return (isinstance(error, GateError) and error.code == 'TRANSPORT_SEND' and isinstance(evidence, dict)
             and evidence.get('format') == 'four-harness-transport-v2'
             and evidence.get('stage') in {'dns', 'tcp', 'tls'} and evidence.get('send_state') == 'not_started'
-            and evidence.get('failure_kind') in {'dns_temporary', 'timeout', 'connection_refused',
-                'connection_reset', 'network_unreachable', 'host_unreachable'}
+            and (evidence.get('failure_kind') in {'dns_temporary', 'timeout', 'connection_refused',
+                'connection_reset', 'network_unreachable', 'host_unreachable'} or
+                evidence.get('failure_kind') == 'tls_unexpected_eof' and evidence.get('stage') == 'tls'
+                and evidence.get('http_status') is None)
             and not evidence.get('partial_output_observed'))
 
 
