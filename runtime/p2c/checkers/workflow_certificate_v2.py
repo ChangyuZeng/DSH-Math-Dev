@@ -13,9 +13,9 @@ import json
 from pathlib import Path
 import sys
 
-VERSION = "workflow-certificate-v2.1"
-CERTIFICATE_SOURCE_SHA256 = "fcfe7e400942705bf71473f6968df581d84d86965ce43e29f3f26b70e9df52b1"
-TASK_IDS = ("D1", "D2", "D3", "D4", "D5", "D6", "D7", "H1", "H2", "H3", "S1")
+VERSION = "workflow-certificate-v2.2"
+CERTIFICATE_SOURCE_SHA256 = "239a13acc2ce99834971e0596290f336ec87f22bd4f365bb2525f5dbf48a4271"
+TASK_IDS = ("D1", "D2", "D3", "D4", "D5", "D6", "D7", "D8", "D9", "H1", "H2", "H3", "S1")
 PREFIX = "workflow_certificate_v2_"
 CHECKS = ["legal", "target_met"]
 VALUES = ["valid", "target_met", "H", "D", "task_sha256", "certificate_source_sha256", "detail"]
@@ -76,7 +76,7 @@ def _contract(card, raw):
         "task": deepcopy(card), "problem_fields": problem_fields, "obligation_fields": obligation_fields,
         "problem": {"title": card["id"] + ": " + card["kind"].replace("_", " "), **deepcopy(problem_fields),
                     "target_type": "construct", "parent": None, "relation": "root", "sources": [card["source"]],
-                    "knowledge_status": "synthetic_fixture"},
+                    "knowledge_status": "known_result" if card['id'] in ('D8', 'D9') else "synthetic_fixture"},
         "checker": {"id": checker_id, "code_sha256": hashlib.sha256(rendered).hexdigest(),
                     "task_sha256": card["sha256"]},
         "certificate_source_sha256": CERTIFICATE_SOURCE_SHA256,

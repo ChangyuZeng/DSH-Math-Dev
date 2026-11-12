@@ -49,14 +49,14 @@ def toy(n, size):
 class Session1Certificates(unittest.TestCase):
     def test_cards_and_legacy_hash_bytes_are_stable(self):
         cards = c.cards()
-        self.assertEqual(len(cards), 14)
+        self.assertEqual(len(cards), 16)
         legacy = cards[:12]
         self.assertEqual({t['id']: t['sha256'] for t in legacy}, LEGACY_HASHES)
         for card in cards:
             bare = dict(card)
             expected = bare.pop('sha256')
             self.assertEqual(hashlib.sha256(c.canonical(bare).encode()).hexdigest(), expected)
-        additions = {t['id']: t for t in cards[12:]}
+        additions = {t['id']: t for t in cards[12:14]}
         self.assertEqual(set(additions), {'D7', 'S1'})
         self.assertEqual(additions['D7']['parameters'], {'n': 42, 'clique_size': 5})
         self.assertEqual(additions['S1']['parameters'], {'n': 17, 'clique_size': 4})
@@ -163,7 +163,7 @@ print(json.dumps(result, sort_keys=True))
         for task_id in fixed.TASK_IDS:
             self.assertIsNotNone(re.fullmatch(patterns[0], fixed.PREFIX + task_id))
             self.assertIsNotNone(get(fixed.PREFIX + task_id))
-        for task_id in ('D0', 'D8', 'D17', 'H0', 'H4', 'H6', 'R0', 'R1', 'R2', 'R6', 'R11', 'S0', 'S2', 'X1', 'D7x'):
+        for task_id in ('D0', 'D10', 'D17', 'H0', 'H4', 'H6', 'R0', 'R1', 'R2', 'R6', 'R11', 'S0', 'S2', 'X1', 'D7x'):
             checker_id = fixed.PREFIX + task_id
             self.assertIsNone(re.fullmatch(patterns[0], checker_id))
             self.assertIsNone(get(checker_id))

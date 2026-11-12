@@ -93,6 +93,23 @@ def check(task, candidate):
         # Evaluate both colors even when the first already contains a clique.
         forbidden=[has_clique(neighbors,(1<<n)-1,size) for neighbors in adjacency]
         ok=not any(forbidden)
+    elif k=='cyclic_difference_set':
+        modulus=p['v'];size=p['k'];multiplicity=p['lambda']
+        if len(v)!=size or len(set(v))!=size or any(not 0<=x<modulus for x in v):
+            raise ValueError('Expected k distinct residues in 0..v-1')
+        counts=[0]*modulus
+        for a in v:
+            for b in v:
+                if a!=b:counts[(a-b)%modulus]+=1
+        ok=all(count==multiplicity for count in counts[1:])
+    elif k=='turan_k4_3':
+        n=p['n'];triples=list(itertools.combinations(range(n),3))
+        if len(v)!=len(triples) or any(x not in (0,1) for x in v):
+            raise ValueError('Expected one 0/1 indicator per triple in i<j<k lexicographic order')
+        edges={triple for triple,bit in zip(triples,v) if bit}
+        forbidden=any(all(triple in edges for triple in itertools.combinations(vertices,3))
+                      for vertices in itertools.combinations(range(n),4))
+        ok=len(edges)>=p['min_edges'] and not forbidden
     elif k=='magic_square':
         n=p['n'];target=n*(n*n+1)//2
         if len(v)!=n*n or set(v)!=set(range(1,n*n+1)):raise ValueError('Expected a normal square permutation')
@@ -224,7 +241,13 @@ def cards():
        'A finite construction task; acceptance checks every possible monochromatic K5 in both colors.'),
       ('S1','session1_acceptance','construction','ramsey_coloring',{'n':17,'clique_size':4},
        'Construct a two-coloring of every edge of the complete graph on vertices 0..16 with no monochromatic K4 in either color. Encode exactly 136 values in {0,1}, one for each edge (i,j) in lexicographic order with i<j (i outermost, j increasing). This is an independent acceptance subgoal and does not count as a subsequent research task.',
-       'A finite construction exists; acceptance checks every possible monochromatic K4 in both colors.')]
+       'A finite construction exists; acceptance checks every possible monochromatic K4 in both colors.'),
+      ('D8','session2_dev','multistep_derivation','cyclic_difference_set',{'v':1057,'k':33,'lambda':1},
+       'Construct a subset of exactly 33 distinct residues in the cyclic group Z/1057Z such that every nonzero residue occurs exactly once among the ordered differences a-b with a and b distinct elements of the subset. Encode the 33 residues as integers in 0..1056; order is free. Only this finite construction is requested.',
+       'A finite cyclic difference-set construction is known to exist.'),
+      ('D9','session2_dev','open_problem_finite_subtask','turan_k4_3',{'n':30,'min_edges':2350},
+       'Construct a 3-uniform hypergraph on vertices 0..29 with at least 2350 edges, such that no four vertices contain all four of their 3-element subsets as edges. Encode exactly 4060 values in {0,1}, one per triple (i,j,k) in lexicographic order with i<j<k (i outermost, then j, then k). Only this finite lower-bound witness is requested; no optimality or asymptotic Turan-density claim is requested.',
+       'A finite lower-bound construction is known; the general ordinary tetrahedron Turan-density problem is separate.')]
     # Original reserve R1 (CRT) remains immutable and unregistered.
     # S1 is an acceptance-only subgoal with its own unambiguous identifier.
     result=[]
@@ -238,6 +261,11 @@ def cards():
               'independent_check':'Fresh Python process; exact integer finite verification, no model judgment.',
               'check_cost':'Polynomial finite enumeration/DP; actual wall and CPU time recorded per invocation.',
               'version':1,'requires_persistent_intermediates':ident in ('D5','D6')}
+        if ident in ('D8','D9'):
+            card['generation_seed']=None
+            card['source']=('Singer, A theorem in finite projective geometry and some applications to number theory (1938), doi:10.1090/S0002-9947-1938-1501951-4; finite cyclic difference-set instance.'
+                            if ident=='D8' else
+                            'Turan ordinary tetrahedron problem; finite 30-vertex lower-bound instance, distinct from uniform Turan density. See Keevash, Hypergraph Turan Problems (2011), doi:10.1017/CBO9781139004114.004.')
         card['sha256']=hashlib.sha256(canonical(card).encode()).hexdigest();result.append(card)
     return result
 
