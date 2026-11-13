@@ -66,6 +66,8 @@
 !/audit-reader.mjs
 !/workflow_store.py
 !/workflow_context.py
+!/workflow_checkpoints.py
+!/workflow_tool_view.mjs
 !/workflow_service.py
 !/workflow_strategy.py
 !/workflow_runner.mjs

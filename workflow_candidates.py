@@ -152,9 +152,23 @@ def _raw_candidate(candidate, raw_arguments):
 
 
 def _archive_candidate(store, project_id, run_id, action_id, call_id, run, action, ids,
-                       candidate, raw_arguments, candidate_kind):
+                       candidate, raw_arguments, candidate_kind, source_arguments=None):
     problem, contract = _target(store, run, action, candidate_kind)
     normalized, raw = _raw_candidate(candidate, raw_arguments)
+    source_raw = None
+    source = None
+    if source_arguments is not None:
+        require(candidate_kind == "certificate" and type(source_arguments) is str,
+                "CANDIDATE_BINDING", "File source arguments must be exact JSON text for a certificate")
+        source_raw = source_arguments.encode("utf-8")
+        require(len(source_raw) <= MAX_BYTES, "TOO_LARGE", "Source arguments exceed archive limit")
+        source = decode(source_raw)
+        fields(source, "candidate_file")
+        fields(source["candidate_file"], "path sha256 size")
+        descriptor = source["candidate_file"]
+        sha(descriptor["sha256"])
+        require(type(descriptor["path"]) is str and type(descriptor["size"]) is int and descriptor["size"] >= 0,
+                "CANDIDATE_BINDING", "Expected file identity with integer byte size")
     problem_ref = run["spec"]["problem_ref"]
     frozen = run["spec"]["execution"]["checker"]
     scope = contract["obligation_fields"]["scope"] if contract else "External candidate for this exact problem; human review required."
@@ -162,13 +176,17 @@ def _archive_candidate(store, project_id, run_id, action_id, call_id, run, actio
                "action_id": action_id, "call_id": call_id, "candidate_kind": candidate_kind,
                "problem_ref": problem_ref, "checker": frozen, "candidate_sha256": _hash(normalized),
                "candidate_raw_sha256": _hash(raw), "raw_arguments_supplied": raw_arguments is not None,
-               "tool_arguments_sha256": digest({"candidate": candidate}),
+               "tool_arguments_sha256": digest(source if source is not None else {"candidate": candidate}),
                "native_checker_sha256": contract["native_checker_sha256"] if contract else None,
                "certificate_source_sha256": contract["certificate_source_sha256"] if contract else None}
+    if source_raw is not None:
+        binding.update(source_arguments_sha256=_hash(source_raw), candidate_file=source["candidate_file"])
     witness = store._archive_bytes(normalized, "candidate.json")
     provenance = [store._archive_bytes(canonical(binding), "candidate-binding.json")]
     if raw_arguments is not None:
         provenance.append(store._archive_bytes(raw, "raw-arguments.json"))
+    if source_raw is not None:
+        provenance.append(store._archive_bytes(source_raw, "source-arguments.json"))
     if contract:
         _, source = certificates.source_bytes()
         provenance.append(store._archive_bytes(source, "certificates.py"))
@@ -207,7 +225,7 @@ def _archive_candidate(store, project_id, run_id, action_id, call_id, run, actio
 
 
 def archive_candidate(root, project_id, run_id, action_id, call_id, candidate,
-                      raw_arguments=None, candidate_kind="certificate"):
+                      raw_arguments=None, candidate_kind="certificate", source_arguments=None):
     """Archive canonical candidate and optional exact raw arguments, idempotently.
 
     candidate_raw_sha256 hashes raw_arguments when supplied; otherwise it equals
@@ -218,7 +236,7 @@ def archive_candidate(root, project_id, run_id, action_id, call_id, candidate,
     projects, run, action, ids, origin = _context(root, project_id, run_id, action_id, call_id)
     with projects.open_project(project_id, writable=True, actor=CANDIDATE_ACTOR, origin=origin) as (_, store):
         return _archive_candidate(store, project_id, run_id, action_id, call_id, run, action, ids,
-                                  candidate, raw_arguments, candidate_kind)
+                                  candidate, raw_arguments, candidate_kind, source_arguments)
 
 
 def _attachment_bytes(store, obj, name):
@@ -238,8 +256,10 @@ def _load_candidate(store, project_id, run_id, action_id, call_id, run, action, 
     binding = decode(_attachment_bytes(store, provenance, "candidate-binding.json"))
     candidate = decode(_attachment_bytes(store, evidence, "candidate.json"))
     raw = _attachment_bytes(store, provenance, "raw-arguments.json") if binding["raw_arguments_supplied"] else None
+    source_arguments = (_attachment_bytes(store, provenance, "source-arguments.json").decode("utf-8")
+                        if "source_arguments_sha256" in binding else None)
     expected = _archive_candidate(store, project_id, run_id, action_id, call_id, run, action, ids,
-                                  candidate, raw, binding["candidate_kind"])
+                                  candidate, raw, binding["candidate_kind"], source_arguments)
     require(_json_bytes(supplied) == _json_bytes(expected), "CANDIDATE_BINDING", "Candidate receipt identities, hashes or exact references differ")
     return expected
 

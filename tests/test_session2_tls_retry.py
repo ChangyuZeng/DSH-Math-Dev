@@ -190,6 +190,9 @@ else:
             config = {'modules': str(plain.MODULES), 'gateway': gateway.url+'/M/worker', 'sessionId': run,
                       'events': str(isolated/'native-events.jsonl'), 'prompt': 'Offline public certificate fixture: '+task.read_text(),
                       'tools': [{k:v for k,v in tool.items() if k!='type'} for tool in gateway.manifest_tools(run)]}
+            tool_view = isolated/'workflow_tool_view.mjs'
+            tool_view.write_bytes((SOURCE/'workflow_tool_view.mjs').read_bytes())
+            config['toolViewModule'] = tool_view.as_uri()
             save(isolated/'config.json', config)
             driver = isolated/'runner.mjs'
             driver.write_bytes((PLAIN/'runner.mjs').read_bytes())

@@ -90,10 +90,11 @@ def _state(root, request):
     return WorkflowStore(root).dispatch(request)
 
 
-def context(root, project_id, run_id, kind, target_ref=None, dependency_refs=None, route_id=None):
+def context(root, project_id, run_id, kind, target_ref=None, dependency_refs=None, route_id=None, checkpoint_refs=None):
     with transaction(root, project_id):
         run = WorkflowStore(root).dispatch({'action': 'read', 'project_id': project_id, 'run_id': run_id})
-        return build_snapshot(root, project_id, run['spec'], kind, target_ref, dependency_refs, route_id)
+        return build_snapshot(root, project_id, run['spec'], kind, target_ref, dependency_refs, route_id,
+                              checkpoint_refs=checkpoint_refs, checkpoint_run=run)
 
 
 def _proposal(run, attempt):
@@ -209,6 +210,11 @@ def dispatch_internal(root, action, args):
         from workflow_tool_store import tool_receipt
         with transaction(root, args['project_id']):
             return tool_receipt(root, **args)
+    if action == 'workflow-checkpoint':
+        from workflow_checkpoints import archive_checkpoint
+        fields(args, 'project_id run_id action_id operation_id authorization')
+        with transaction(root, args['project_id']):
+            return archive_checkpoint(root, **args)
     if action in ('workflow-candidate', 'workflow-candidate-check'):
         from workflow_candidates import archive_candidate, archive_check
         with transaction(root, args['project_id']):

@@ -137,10 +137,24 @@ export function createMeteredPorts({gateway, bindings, fetchImpl = globalThis.fe
     },
   };
   const toolPort = {
-    async dispatch(name, args, {callId, parentRequestId, role = 'worker', signal}) {
+    async prepareCandidate(name, args, {callId, parentRequestId, role = 'worker', signal}) {
+      if (!['check', 'submit'].includes(name) || !manifest?.tools.some(tool => tool.name === name) ||
+          typeof callId !== 'string' || !callId || !parentRequestId) {
+        throw fault('TOOL_IDENTITY', 'Candidate preparation requires a declared tool, native call and physical parent');
+      }
+      const {value} = await post(role, 'prepare-candidate', {name, arguments: args}, {signal, parentRequestId, callId});
+      if (value.ok === false && value.error && value.metrics?.phase === 'candidate_preparation') return value;
+      if (typeof value.prepare_id !== 'string' || !value.prepare_id || value.candidate_sha256 !== hash(value.candidate) ||
+          canonical(value.candidate_file) !== canonical(args.candidate_file)) {
+        throw fault('CANDIDATE_BINDING', 'Prepared candidate receipt differs from the requested snapshot');
+      }
+      return value;
+    },
+    async dispatch(name, args, {callId, parentRequestId, role = 'worker', signal, preparedCandidate}) {
       if (!manifest?.tools.some(tool => tool.name === name)) throw fault('TOOL_CAPABILITY', 'Tool is outside the frozen capability');
       if (typeof callId !== 'string' || !callId || !parentRequestId) throw fault('TOOL_IDENTITY', 'A native call and physical parent are required');
-      return (await post(role, 'tools', {name, arguments: args}, {signal, parentRequestId, callId})).value;
+      return (await post(role, 'tools', {name, arguments: args,
+        ...(preparedCandidate === undefined ? {} : {prepared_candidate: preparedCandidate})}, {signal, parentRequestId, callId})).value;
     },
   };
   return Object.freeze({modelPort: Object.freeze(modelPort), toolPort: Object.freeze(toolPort)});

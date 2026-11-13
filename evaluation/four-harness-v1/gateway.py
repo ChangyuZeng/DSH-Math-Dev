@@ -31,14 +31,23 @@ WINDOW = {'offset': INTEGER, 'length': {'type': 'integer', 'minimum': 1, 'maximu
 CANDIDATE = schema({'pairs': {'type': 'array', 'minItems': 15, 'maxItems': 15,
                             'items': {'type': 'array', 'minItems': 2, 'maxItems': 2,
                                       'items': {'type': 'integer', 'minimum': 0}}}}, ['pairs'])
+CANDIDATE_FILE = schema({'path': STRING, 'sha256': {'type': 'string', 'pattern': '^[0-9a-f]{64}$'},
+                         'size': INTEGER}, ['path', 'sha256', 'size'])
+
+
+def certificate_schema(candidate):
+    return {**schema({'candidate': candidate, 'candidate_file': CANDIDATE_FILE}),
+            'oneOf': [{'required': ['candidate']}, {'required': ['candidate_file']}]}
+
+
 TOOL_SCHEMAS = [
     ('materials_list', 'List the frozen common materials by ID and hash.', schema({})),
     ('materials_read', 'Read a byte window of a frozen material.', schema({'id': STRING, **WINDOW}, ['id'])),
     ('workspace_read', 'Read a byte window of a file in this run only.', schema({'path': STRING, **WINDOW}, ['path'])),
     ('workspace_write', 'Write a bounded UTF-8 file in this run only.', schema({'path': STRING, 'text': STRING}, ['path', 'text'])),
     ('compute', 'Run Python in the fixed offline compute sandbox.', schema({'code': STRING}, ['code'])),
-    ('check', 'Compute the frozen exact integer certificate score.', schema({'candidate': CANDIDATE}, ['candidate'])),
-    ('submit', 'Submit an immutable certificate for independent exact checking.', schema({'candidate': CANDIDATE}, ['candidate'])),
+    ('check', 'Compute the frozen exact integer certificate score.', certificate_schema(CANDIDATE)),
+    ('submit', 'Submit an immutable certificate for independent exact checking.', certificate_schema(CANDIDATE)),
 ]
 TOOL_NAMES = {name for name, _, _ in TOOL_SCHEMAS}
 INTERNAL_NAMES = {'materials_list': 'materials.list', 'materials_read': 'materials.read',
@@ -280,7 +289,7 @@ class Gateway:
                     arm, role, run_id = binding['arm'], binding['role'], binding['run_id']
                     base = f'/{arm}/{role}'
                     path = urlsplit(self.path)
-                    require(not path.query and path.path in {base + '/v1/responses', base + '/responses', base + '/tools', base + '/manifest', base + '/intrinsic'},
+                    require(not path.query and path.path in {base + '/v1/responses', base + '/responses', base + '/tools', base + '/prepare-candidate', base + '/manifest', base + '/intrinsic'},
                             'ENDPOINT', 'Unregistered role or endpoint')
                     length = self.headers.get('Content-Length')
                     require(length is not None and length.isdecimal() and 0 < int(length) <= 2 * 1024 * 1024,
@@ -311,8 +320,8 @@ class Gateway:
                                               required=binding.get('require_native_metadata', False))
                     explicit_parent = self.headers.get('X-Four-Parent-Request-Id')
                     native_tool_parent = (tool_parent(gateway.ledger, run_id, metadata, explicit_parent)
-                                          if path.path.endswith(('/intrinsic', '/tools')) else None)
-                    if path.path.endswith(('/intrinsic', '/tools')) and (native_tool_parent or gateway.cold_scopes.get(run_id) == 'optimization'):
+                                          if path.path.endswith(('/intrinsic', '/tools', '/prepare-candidate')) else None)
+                    if path.path.endswith(('/intrinsic', '/tools', '/prepare-candidate')) and (native_tool_parent or gateway.cold_scopes.get(run_id) == 'optimization'):
                         with gateway.lifecycle:
                             require(native_tool_parent in gateway.validated_requests, 'NATIVE_PARENT_UNKNOWN',
                                     'Tool parent lacks a fully validated completed response')
@@ -333,8 +342,10 @@ class Gateway:
                         gateway.ledger.tool_event(run_id, event)
                         self.reply(200, {'ok': True, 'tool_id': event['request_id'], 'parent_request_id': native_tool_parent})
                         return
-                    if path.path.endswith('/tools'):
-                        require(set(payload) == {'name', 'arguments'} and payload['name'] in INTERNAL_NAMES,
+                    if path.path.endswith(('/tools', '/prepare-candidate')):
+                        preparing = path.path.endswith('/prepare-candidate')
+                        expected_keys = {'name', 'arguments'}
+                        require((set(payload) == expected_keys or not preparing and set(payload) == expected_keys | {'prepared_candidate'}) and payload['name'] in INTERNAL_NAMES,
                                 'TOOL_NOT_ALLOWED', 'Only common tool names are permitted')
                         require(gateway.cold_scopes.get(run_id) != 'smoke' or not target_tool(payload['name']),
                                 'TOOL_NOT_ALLOWED', 'Target checker/submission is unavailable in non-target smoke')
@@ -345,11 +356,30 @@ class Gateway:
                         audit_id = 'native-tool-' + digest([run_id, role, native_tool_parent,
                                                             native_call_id or secrets.token_hex(16)])
                         if gateway.audit_sink is not None:
-                            gateway.audit_sink('tool_request', audit_id, {
+                            gateway.audit_sink('candidate_prepare_request' if preparing else 'tool_request', audit_id, {
                                 'run_id': run_id, 'role': role, 'parent_request_id': native_tool_parent,
                                 'native_call_id': native_call_id, **deepcopy(payload)})
-                        result = gateway.tools[run_id].call(INTERNAL_NAMES[payload['name']], payload['arguments'],
-                                                            cancel_event=gateway.cancel_event)
+                        candidate_binding = {'run_id': run_id, 'role': role, 'parent_request_id': native_tool_parent,
+                                             'call_id': native_call_id}
+                        if preparing or 'prepared_candidate' in payload:
+                            require(payload['name'] in {'check', 'submit'} and native_call_id is not None and
+                                    native_tool_parent in gateway.validated_requests,
+                                    'CANDIDATE_PREPARE_BINDING', 'Host preparation needs a validated parent and native call identity')
+                        if preparing:
+                            from tools import ToolError
+                            try:
+                                result = gateway.tools[run_id].prepare_candidate(payload['name'], payload['arguments'],
+                                    binding=candidate_binding, cancel_event=gateway.cancel_event)
+                            except ToolError as error:
+                                result = error.receipt
+                            if gateway.audit_sink is not None:
+                                gateway.audit_sink('candidate_prepare_response', audit_id, deepcopy(result))
+                            self.reply(200, result)
+                            return
+                        options = {'cancel_event': gateway.cancel_event}
+                        if 'prepared_candidate' in payload:
+                            options.update(prepared_candidate=payload['prepared_candidate'], candidate_binding=candidate_binding)
+                        result = gateway.tools[run_id].call(INTERNAL_NAMES[payload['name']], payload['arguments'], **options)
                         if native_tool_parent:
                             result['metrics']['model_request_id'] = native_tool_parent
                             gateway.ledger.record(run_id, 'native_tool_context', tool_request_id=result['metrics']['request_id'],
@@ -554,7 +584,7 @@ class Gateway:
             require(scope == 'optimization', 'TOOL_SCOPE', 'Custom certificates require optimization scope')
             for tool in result:
                 if target_tool(tool['name']):
-                    tool['parameters'] = schema({'candidate': self.candidate_schema}, ['candidate'])
+                    tool['parameters'] = certificate_schema(self.candidate_schema)
         return result
 
     def check_cold_materials(self, run_id):

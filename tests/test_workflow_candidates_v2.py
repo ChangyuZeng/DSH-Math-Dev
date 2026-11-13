@@ -114,6 +114,21 @@ class CandidateTests(unittest.TestCase):
             function(*args, **kwargs)
         self.assertEqual(raised.exception.code, code, str(raised.exception))
 
+    def test_file_source_provenance_and_original_tool_argument_binding(self):
+        value = {"values": [2 ** 100 + 1]}
+        source = ' { "candidate_file" : {"path":"candidate.json","sha256":"' + 'a' * 64 + '","size":123} } '
+        raw = canonical({"candidate": value}).decode()
+        receipt = self.candidate(value, raw_arguments=raw, source_arguments=source)
+        self.assertEqual(receipt["candidate_sha256"], digest(value))
+        self.assertEqual(receipt["source_arguments_sha256"], hashlib.sha256(source.encode()).hexdigest())
+        self.assertEqual(receipt["tool_arguments_sha256"], digest(decode(source.encode())))
+        self.assertEqual(self.attachment(receipt["provenance_ref"], "source-arguments.json"), source.encode())
+        self.assertEqual(self.attachment(receipt["provenance_ref"], "raw-arguments.json"), raw.encode())
+        result = self.result(receipt)
+        result["metrics"]["params_sha256"] = receipt["tool_arguments_sha256"]
+        self.assertEqual(self.checked(receipt, result)["result_status"], "fail")
+        self.error("OPERATION_CONFLICT", self.candidate, value, raw_arguments=raw, source_arguments=source + ' ')
+
     def test_exact_raw_bytes_bigint_refs_and_model_origin(self):
         number = (1 << 255) + 9007199254740993
         value = {"values": [number]}

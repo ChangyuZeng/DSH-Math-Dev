@@ -27,8 +27,10 @@ for _name in ('schema', 'backend', 'workflow_store', 'workflow_context', 'workfl
 SOURCE_PINS = {
     'workflow_runner.mjs': 'af7beeac207c59eae4c0b1fa8a2712ade6a4d8afccb30b234e6b73a4e4feb061',
     'workflow_store.py': 'c26f5bc4fdf5514312a99ad920fca6e16105ba93d0ff9c6600de808aacce58a3',
-    'workflow_context.py': 'a410b202124d51417eff42f738d88dc9db96d09a4de4d9f5f8b53168e7eec3b4',
-    'workflow_service.py': 'c599fff41ef98f33722b8b2f22a427c760b39ac4393753e50c140233c652c200',
+    # Pins track this release's common product modules. Historical experiments
+    # retain their original pins in the untouched Session2 source worktree.
+    'workflow_context.py': 'a0209d9c9d6ef7285937a63a61bb51f6a8a95590e9c150f9ce04cbccb6ce4e25',
+    'workflow_service.py': 'db90988e3b8a1aea2711fea9f54b341587ea34bf469b53b9c031e40535d5661a',
 }
 
 from backend import Projects, checked_root, write_new

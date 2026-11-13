@@ -116,6 +116,27 @@ def _json_bytes(value):
         raise ToolError("invalid_arguments", "arguments must be finite JSON values") from exc
 
 
+_UNPREPARED = object()
+
+
+def _strict_json(data):
+    def pairs(items):
+        result = {}
+        for key, value in items:
+            if key in result:
+                raise ValueError("duplicate JSON key")
+            result[key] = value
+        return result
+    def constant(_value):
+        raise ValueError("nonfinite JSON constant")
+    try:
+        value = json.loads(data.decode("utf-8"), object_pairs_hook=pairs, parse_constant=constant)
+        _json_bytes(value)  # Also reject overflowed floats and invalid Unicode.
+        return value
+    except (ValueError, UnicodeError, RecursionError, ToolError) as exc:
+        raise ToolError("invalid_candidate_json", "candidate file must contain strict finite UTF-8 JSON") from exc
+
+
 def _hash(data):
     return hashlib.sha256(data).hexdigest()
 
@@ -399,6 +420,7 @@ class CommonTools:
         self.run_id = run_id
         self._initial_run_id = run_id
         self._call_count = 0
+        self._prepared_candidates = {}
         self.limits = limits or ToolLimits()
         self.accounting = accounting
         self.run_root = _absolute(run_root)
@@ -522,7 +544,67 @@ class CommonTools:
             raise ToolError("artifact_limit", "persistent artifact quota exceeded")
         return entries, workspace_bytes + submission_bytes, count + submission_count
 
-    def call(self, name, arguments=None, *, cancel_event=None):
+    def _candidate_snapshot(self, args):
+        _arguments(args, (), ("candidate", "candidate_file"))
+        if ("candidate" in args) == ("candidate_file" in args):
+            raise ToolError("invalid_arguments", "exactly one candidate or candidate_file is required")
+        source = None
+        if "candidate_file" in args:
+            source = args["candidate_file"]
+            _arguments(source, ("path", "sha256", "size"))
+            if (type(source["sha256"]) is not str or len(source["sha256"]) != 64 or
+                    any(c not in "0123456789abcdef" for c in source["sha256"]) or
+                    type(source["size"]) is not int or not 0 <= source["size"] <= self.limits.max_file_bytes):
+                raise ToolError("invalid_arguments", "candidate_file requires lowercase SHA256 and bounded integer size")
+            raw = self.workspace.read(source["path"])
+            if len(raw) != source["size"] or _hash(raw) != source["sha256"]:
+                raise ToolError("candidate_file_mismatch", "candidate file differs from expected SHA256 or size")
+            candidate = _strict_json(raw)
+        else:
+            candidate = args["candidate"]
+        data = _json_bytes(candidate)
+        if len(data) > self.limits.max_file_bytes:
+            raise ToolError("file_limit", "candidate exceeds per-file limit")
+        return data, source
+
+    def prepare_candidate(self, name, arguments, *, binding, cancel_event=None):
+        """Host-only resolve, never a checker: exact bytes are pinned until dispatch.
+
+        The gateway supplies binding from authenticated run/role/parent/call IDs.
+        Tokens are process-local, single-use, and intentionally cannot cold-resume.
+        """
+        with self._lock:
+            started, parent_cpu = time.monotonic(), time.thread_time()
+            prepare_id = uuid.uuid4().hex
+            audit = {"prepare_id": prepare_id, "run_id": self.run_id, "tool": name,
+                     "binding": binding, "prepared_at": _utc()}
+            try:
+                if name not in ("check", "submit") or type(binding) is not dict:
+                    raise ToolError("invalid_arguments", "only bound certificate tools can prepare")
+                audit["params_sha256"] = _hash(_json_bytes(arguments))
+                if cancel_event is not None and cancel_event.is_set():
+                    raise ToolError("cancelled", "candidate preparation cancelled")
+                data, source = self._candidate_snapshot(arguments)
+                if source is None:
+                    raise ToolError("invalid_arguments", "inline candidates do not need preparation")
+                # Persist exact canonical bytes before returning authority to archive.
+                snapshot = self._retain_candidate(data, reserve_receipt=name == "submit")
+                self._prepared_candidates[prepare_id] = (name, audit["params_sha256"], _json_bytes(binding), snapshot, source, time.monotonic() + 300)
+                audit.update(ok=True, candidate_sha256=_hash(data), source=source)
+                return {"prepare_id": prepare_id, "candidate": _strict_json(data),
+                        "candidate_sha256": _hash(data), "candidate_file": source}
+            except ToolError as exc:
+                audit.update(ok=False, error={"code": exc.code, "message": str(exc)})
+                failure = {"ok": False, "error": dict(audit["error"])}
+                exc.receipt = {**failure, "metrics": {"request_id": "prepare-" + prepare_id,
+                    "run_id": self.run_id, "tool": name, "params_sha256": audit.get("params_sha256"),
+                    "result_sha256": _hash(_json_bytes(failure)), "phase": "candidate_preparation"}}
+                raise
+            finally:
+                audit.update(wall_seconds=time.monotonic() - started, cpu_seconds=time.thread_time() - parent_cpu)
+                self.control.write("prepare-receipt-" + prepare_id + ".json", _json_bytes(audit), exclusive=True)
+
+    def call(self, name, arguments=None, *, cancel_event=None, prepared_candidate=_UNPREPARED, candidate_binding=None):
         started, parent_cpu = time.monotonic(), time.thread_time()
         request_id = uuid.uuid4().hex
         metrics = {"request_id": request_id, "run_id": self.run_id, "tool": name if type(name) is str else None,
@@ -554,7 +636,17 @@ class CommonTools:
                     raise ToolError("cancelled", "tool call cancelled before dispatch")
                 if name not in TOOL_NAMES:
                     raise ToolError("unknown_tool", "unknown common tool")
-                result = self._dispatch(name, args, cancel_event)
+                snapshot = None
+                if prepared_candidate is not _UNPREPARED:
+                    prepared = self._prepared_candidates.pop(prepared_candidate, None) if type(prepared_candidate) is str else None
+                    if (prepared is None or name != prepared[0] or metrics["params_sha256"] != prepared[1]
+                            or _json_bytes(candidate_binding) != prepared[2] or time.monotonic() > prepared[5]):
+                        raise ToolError("candidate_prepare_binding", "prepared candidate is missing, consumed, or bound to another call")
+                    data = self.submissions.read(prepared[3])
+                    if _hash(data) + ".json" != prepared[3]:
+                        raise ToolError("candidate_prepare_binding", "prepared snapshot hash no longer matches")
+                    snapshot = (data, prepared[4])
+                result = self._dispatch(name, args, cancel_event, snapshot)
                 reply = {"ok": True, "result": result}
             except ToolError as exc:
                 reply = {"ok": False, "error": {"code": exc.code, "message": str(exc)}}
@@ -577,10 +669,13 @@ class CommonTools:
                 except Exception:
                     reply = {"ok": False, "error": {"code": "accounting_failed", "message": "tool completion could not be accounted"},
                              "metrics": dict(metrics)}
+            if name in ("check", "submit"):
+                # Failed resolution/validation and checker failures are evidence too.
+                self.control.write("attempt-" + request_id + ".json", _json_bytes(reply), exclusive=True)
             self._metrics = None
             return reply
 
-    def _dispatch(self, name, args, cancel):
+    def _dispatch(self, name, args, cancel, snapshot=None):
         if name == "materials.list":
             _arguments(args)
             return {"materials": self.material_inventory()}
@@ -636,10 +731,9 @@ class CommonTools:
                 raise ToolError("unsupported_sandbox", "OS containment probe failed; compute is disabled")
             return self._compute(args["code"], cancel)
         if name in ("check", "submit"):
-            _arguments(args, ("candidate",))
-            data = _json_bytes(args["candidate"])
-            if len(data) > self.limits.max_file_bytes:
-                raise ToolError("file_limit", "candidate exceeds per-file limit")
+            data, source = snapshot if snapshot is not None else self._candidate_snapshot(args)
+            if name == "check":
+                self._retain_candidate(data)
             self._frozen_checker()
             if name == "check":
                 started = time.thread_time()
@@ -648,9 +742,27 @@ class CommonTools:
                 except ValueError as exc:
                     checked = {"legal": False, "H": None, "D": self._audit.D, "target_met": False, "error": str(exc)}
                 return dict(checked, checker_sha256=self.checker_sha256,
-                            candidate_sha256=_hash(data), checker_cpu_seconds=time.thread_time() - started)
-            return self._submit(data, cancel)
+                            candidate_sha256=_hash(data), checker_cpu_seconds=time.thread_time() - started,
+                            **({"candidate_file": source} if source is not None else {}))
+            receipt = self._submit(data, cancel)
+            if source is not None:
+                receipt = dict(receipt, candidate_file=source)
+            return receipt
         raise ToolError("unknown_tool", "unknown common tool")
+
+    def _retain_candidate(self, data, *, reserve_receipt=False):
+        name = _hash(data) + ".json"
+        _, total, count = self._totals()
+        existing = name in dict(self.submissions.inventory()[0])
+        if (total + (0 if existing else len(data)) + (4096 if reserve_receipt else 0) > self.limits.artifact_bytes or
+                count + (0 if existing else 1) + int(reserve_receipt) > self.limits.max_files):
+            raise ToolError("artifact_limit", "candidate archive exceeds artifact quota")
+        if existing:
+            if self.submissions.read(name) != data:
+                raise ToolError("immutable", "stored candidate hash no longer matches")
+        else:
+            self.submissions.write(name, data, exclusive=True)
+        return name
 
     def _submit(self, data, cancel):
         if self.limits.max_file_bytes < 4096:
@@ -660,7 +772,8 @@ class CommonTools:
         _, total, count = self._totals()
         submission_entries, _, _ = self.submissions.inventory()
         existing = candidate_name in dict(submission_entries)
-        if total + (0 if existing else len(data)) + 4096 > self.limits.artifact_bytes or count + 2 > self.limits.max_files:
+        if (total + (0 if existing else len(data)) + 4096 > self.limits.artifact_bytes or
+                count + (0 if existing else 1) + 1 > self.limits.max_files):
             raise ToolError("artifact_limit", "submission exceeds artifact quota including receipt reservation")
         if existing:
             if self.submissions.read(candidate_name) != data:

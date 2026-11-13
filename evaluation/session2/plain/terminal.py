@@ -157,9 +157,12 @@ def run_fixture(output, task_id, responses, *, registration_sha256=None, timeout
     # user's home and historical experiments remain outside that root.
     driver = isolated / 'runner.mjs'
     shutil.copyfile(HERE / 'runner.mjs', driver)
+    tool_view = isolated / 'workflow_tool_view.mjs'
+    shutil.copyfile(HERE.parents[2] / 'workflow_tool_view.mjs', tool_view)
     prompt = ('Construct and explicitly submit an exact certificate for the frozen public task. '
               'Preserve useful intermediate work in the isolated workspace.\n' + json.dumps(public, ensure_ascii=False))
     config = {'modules': str(MODULES), 'gateway': route, 'sessionId': run_id,
+              'toolViewModule': tool_view.as_uri(),
               'events': str(isolated / 'native-events.jsonl'), 'prompt': prompt,
               'tools': [{k: v for k, v in tool.items() if k != 'type'} for tool in gateway.manifest_tools(run_id)],
               'qualificationCompact': qualification_compact}

@@ -4,6 +4,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { AsyncLocalStorage } from 'node:async_hooks';
 const options = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const {projectToolResult} = await import(options.toolViewModule ?? new URL('../../../workflow_tool_view.mjs', import.meta.url).href);
 const modules = options.modules;
 const load = (name) => import(pathToFileURL(path.join(modules, '@deepseek-ai', name, 'lib/index.js')).href);
 const { Context } = await load('cordis');
@@ -71,7 +72,9 @@ ctx.on('agent/error', ({error}) => journal({type: 'native_error', message: Strin
 const catalog = options.tools;
 const allowed = new Set(catalog.map(tool => tool.name));
 for (const tool of catalog) ctx.tools.register({...tool,
-      output: {schema: {}, render: (_args, value) => [{type: 'text', text: JSON.stringify(value)}]},
+      // execute returns the complete receipt; only native model rendering projects it.
+      output: {schema: {}, render: (_args, value) => [{type: 'text', text: JSON.stringify(
+        projectToolResult(tool.name, value, {request_id: value?.metrics?.request_id ?? null}))}]},
       async execute(args, exec) {
         const parent = calls.get(exec.callId) ?? lastRequest;
         if (!parent) throw new Error('MISSING_TOOL_PARENT');

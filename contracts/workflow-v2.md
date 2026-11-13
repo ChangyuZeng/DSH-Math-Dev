@@ -34,6 +34,20 @@ The public D5/D6 recovery instructions require the arrays themselves as the top-
 
 An audit pause remains in force when an already-started solve finishes, including the last slot of a phase. Finishing that slot cannot itself open the promotion gate. Machine checks for matching source, isolation and checker identity are not a certificate that no differential implementation defect exists; independent findings can disqualify the comparison.
 
+## Shared tool views and research checkpoints
+
+The model-facing tool view is derived only after full tool archival, candidate binding and accounting. Plain and workflow execution use the same projection module. Mathematical payloads, errors, output truncation, unknown fields and independent-check receipts remain complete. Any retained result hash still identifies the original full result; a compact model view does not replace the audit record. Byte reduction is not a measured token saving or evidence of mathematical improvement.
+
+Search checkpoints require explicit authorization and exact persisted evidence. Problem revision, checker identity, candidate content, recovery code, seed and search scope are bound independently. Original objectives and proxy scores are distinct. A model-provided score cannot grant verified status; registered program Review evidence must bind the same candidate and checker. A later action consumes only explicitly selected, fresh checkpoints and includes their recoverable material in its context. Stale, damaged or mismatched references fail closed. Saving a checkpoint alone is not evidence that another action reused it. Checkpoints do not select routes, shorten budgets, add model calls or authorize replay of an interrupted tool effect.
+
+## Hash-bound certificate files
+
+`check` and `submit` accept exactly one of `candidate` or `candidate_file`. The latter is `{path, sha256, size}`: a relative workspace path, lowercase SHA-256 of the exact UTF-8 file bytes, and bounded integer byte size. Existing safe-directory rules reject traversal, symlinks, hardlinks, nonregular files and replacement during reading. Strict JSON parsing rejects malformed encoding, duplicate keys and nonfinite numbers. Mathematical acceptance still belongs to the unchanged registered checker.
+
+For the workflow path, a host-only preparation operation resolves the file once, retains canonical candidate bytes and issues a process-local, single-use token bound to the run, role, parent request, native call, tool and original arguments. The workflow archives this resolved candidate before dispatch; dispatch consumes the same immutable snapshot rather than reopening the mutable workspace file. Tokens expire after five minutes and cannot cold-resume. Inline candidates retain their existing archival path. The common tools also support file arguments for plain execution.
+
+File-byte hashes, original source arguments, resolved raw arguments and canonical candidate hashes have separate meanings and remain separately auditable. A known preparation rejection produces a durable failure receipt and completes the workflow tool claim without inventing a candidate or falling back to a second read. Unknown transport/effect outcomes remain uncertain. Timeout, invalid JSON, wrong hash, cancellation and invalid mathematical candidates are retained failures. Successful `check` does not stop; successful independent `submit` retains the existing stop rule and exact same archived candidate.
+
 ## Interrupted runs and exports
 
 A live runtime may serve successive manual steps while its process remains open. Its durable lineage claim is never removed to obtain a fresh budget. A used or interrupted runtime cannot cold-start a pristine gateway under the same or continued lineage; retained logs support reconciliation, not automatic effect replay. The UI consequently does not offer v2 continuation as a working resume feature. Preparation of a separate run requires a new explicit user action and is not an experiment retry.
